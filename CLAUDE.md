@@ -4,7 +4,7 @@
 
 ## 專案概況
 
-Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經、全文搜尋、書籤、螢光筆（5 色）、經節筆記、深淺色主題、字級調整、記住閱讀位置。
+Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經、全文搜尋、節位快速跳轉（約3:16）、搜尋歷史、主題閱讀、人生情境入口、每日經文、讀經進度、書籤、螢光筆（5 色）、經節筆記（含觀察/相信/行動三欄模板）、筆記匯出（Markdown 到剪貼簿）、深淺色主題、字級調整、記住閱讀位置。
 
 - 狀態管理：Riverpod（`flutter_riverpod`，Notifier/FutureProvider）
 - 使用者資料：sqflite（只存書籤/螢光筆/筆記；**經文不進 DB**）
@@ -18,12 +18,14 @@ Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經、全�
 lib/
   main.dart                 App 入口，ProviderScope + MaterialApp
   models/models.dart        Book/VerseRef/Bookmark/Highlight/Note
+  data/topics.dart          主題/情境精選經文（節位字串，有測試守著有效性）
   services/
-    database_service.dart   SQLite（含升版框架，見下）
+    database_service.dart   SQLite（含升版框架，見下；目前 v2）
     bible_repository.dart   經文載入與搜尋
+    verse_locator.dart      節位解析（「約3:16」→ bookId/章/節）
   providers/providers.dart  所有 Riverpod providers
   theme/app_theme.dart      深淺色主題 + 螢光筆顏色
-  screens/                  home / chapter / search / bookmarks / settings
+  screens/                  home / chapter / search / bookmarks / settings / topics
 assets/bible/cuv.json       和合本經文（見「經文資料」）
 ```
 
@@ -36,7 +38,7 @@ assets/bible/cuv.json       和合本經文（見「經文資料」）
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 v1。升版時：
+`database_service.dart`，目前 v2（v2 加了 reading_log 讀經紀錄表）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）
@@ -65,9 +67,37 @@ flutter analyze
 flutter test
 ```
 
+## Firebase 接入步驟（要在 Mac 上做）
+
+1. Firebase Console 建專案（console.firebase.google.com），開 Authentication（Google/Apple）與 Firestore
+2. `dart pub global activate flutterfire_cli`，然後專案根目錄跑 `flutterfire configure`（產生 `firebase_options.dart`）
+3. `flutter pub add firebase_core firebase_auth cloud_firestore`
+4. pod install 記得語系前綴（見上）；第一次需要 GitHub 連線
+5. 然後回來叫 Claude 寫 sync service：本地 SQLite 為主、Firestore 為備份，
+   四張表（bookmarks/highlights/notes/reading_log）各要 upload/download，
+   以 `updated_at`/`created_at` 做 last-write-wins
+
+## 構想白板 backlog（Heptabase「聖經app架構」，2026-07-05 版）
+
+已做 ✅ / 未做 ⬜（雲=需要後端/Firebase，容=需要人工內容）
+
+**一、基本功能**：✅ 章節瀏覽、字級、夜間模式、複製整節　⬜ 段落自然分段、顯示另一語言（需第二譯本 asset）
+**二、註解內容模組**（容）：⬜ 整篇前導讀（大意/目的/作者/背景）、每節注釋、生活應用、經文串連——需要內容資料源，架構上加一個 annotations asset/表即可
+**三、搜尋與索引**：✅ 全文搜尋、節位快速鍵、搜尋歷史、筆記搜尋（筆記頁）　⬜ 人物/地點/事件搜尋（容）、模糊搜尋（打錯也找到）
+**四、主題式閱讀**：✅ 主題分類頁、人生情境入口、每日經文　⬜ 主題導讀/讀經計畫、聽聖經（TTS）
+**五、個人信仰整理**：✅ 經文筆記、三欄模板（觀察/相信/行動）、收藏（書籤）、螢光多色、筆記匯出（Markdown）、讀經紀錄/進度　⬜ 主日證道筆記（結構化表單）、我的信仰地圖、PDF/Word 匯出、私密/公開（雲）
+**六、疑問 Q&A**（雲）：⬜ 全部——提問/分類/審核/通知，需要後端與管理者
+**七、交叉與知識架構**（容）：⬜ 相關經文推薦、平行對照、時間軸、人物關係圖——需要 cross-reference 資料集（可找 OpenBible.info cross-refs，公有領域）
+**八、帳號與技術**（雲）：⬜ 帳號系統、Google/Apple 登入、雲端同步、版本紀錄　✅ 自動儲存（本地即存）
+**九、120堂課程學習區**（容）：⬜ 白板上還是空的
+**資料整理卡**：⬜ 語音朗讀/提問、向量化知識庫（AI 問答）、離線優先（✅ 已是 offline-first）、混合快取
+**新想法**：⬜ 共讀小組（雲）、代禱連結（雲）
+
 ## 待辦
 
-- [ ] Firebase 雲端同步（Mac 上 flutterfire configure；auth + Firestore 備份；sync service 含每表 upload/download）
-- [ ] 讀經計畫 / 每日經文
+- [ ] Firebase 雲端同步（見上方步驟；做完接 sync service）
+- [ ] 註解內容模組的資料格式設計（等第一批註解內容）
+- [ ] 交叉引用資料集（OpenBible cross-refs）→ 相關經文推薦
+- [ ] 主日證道筆記表單（白板欄位：主題/日期/經文/筆記/三一位格的話/實踐/感想）
+- [ ] 聽聖經（flutter_tts）
 - [ ] iOS 真機測試（icon、launch screen 還是預設的）
-- [ ] Heptabase 構想白板的內容待補進來（連結需要登入，session 內打不開）

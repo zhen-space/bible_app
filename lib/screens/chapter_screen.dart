@@ -27,10 +27,21 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     super.initState();
     _bookId = widget.bookId;
     _chapter = widget.chapter;
-    // 記住閱讀位置
+    // 記住閱讀位置 + 讀經紀錄
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(lastReadProvider.notifier).set(_bookId, _chapter);
+      _logRead();
     });
+  }
+
+  Future<void> _logRead() async {
+    try {
+      await ref
+          .read(databaseServiceProvider)
+          .markChapterRead(_bookId, _chapter);
+    } finally {
+      ref.invalidate(readChapterCountProvider);
+    }
   }
 
   void _goTo(int bookId, int chapter) {
@@ -39,6 +50,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       _chapter = chapter;
     });
     ref.read(lastReadProvider.notifier).set(bookId, chapter);
+    _logRead();
   }
 
   /// 上一章／下一章，跨書卷自動接續。
@@ -337,8 +349,26 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('${book.name} $_chapter:$verseNo 筆記',
-                style: Theme.of(ctx).textTheme.titleMedium),
+            Row(
+              children: [
+                Expanded(
+                  child: Text('${book.name} $_chapter:$verseNo 筆記',
+                      style: Theme.of(ctx).textTheme.titleMedium),
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.view_column_outlined, size: 18),
+                  label: const Text('三欄模板'),
+                  onPressed: () {
+                    // 觀察 / 相信 / 行動 三欄整理模板
+                    final t = controller.text;
+                    controller.text =
+                        '${t.isEmpty ? '' : '$t\n'}【觀察】\n\n【相信】\n\n【行動】\n';
+                    controller.selection = TextSelection.collapsed(
+                        offset: controller.text.indexOf('\n【相信】'));
+                  },
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: controller,

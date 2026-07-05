@@ -7,6 +7,10 @@ import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
+import 'topics_screen.dart';
+
+/// 全聖經總章數（66 卷合計），讀經進度分母。
+const int kTotalChapters = 1189;
 
 /// 首頁：舊約/新約書卷列表 + 繼續閱讀。
 class HomeScreen extends ConsumerWidget {
@@ -29,6 +33,14 @@ class HomeScreen extends ConsumerWidget {
               onPressed: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const SearchScreen()),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.category_outlined),
+              tooltip: '主題閱讀',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TopicsScreen()),
               ),
             ),
             IconButton(
@@ -57,11 +69,13 @@ class HomeScreen extends ConsumerWidget {
           error: (e, _) => Center(child: Text('載入經文失敗：$e')),
           data: (books) => Column(
             children: [
+              const _DailyVerseCard(),
               if (lastRead != null)
                 _ContinueReadingBar(
                   book: books[lastRead.bookId - 1],
                   chapter: lastRead.chapter,
                 ),
+              const _ReadingProgressBar(),
               Expanded(
                 child: TabBarView(
                   children: [
@@ -79,6 +93,88 @@ class HomeScreen extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 每日經文卡片。
+class _DailyVerseCard extends ConsumerWidget {
+  const _DailyVerseCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dailyAsync = ref.watch(dailyVerseProvider);
+    final daily = dailyAsync.value;
+    if (daily == null) return const SizedBox.shrink();
+
+    final booksAsync = ref.watch(booksProvider);
+    final books = booksAsync.value;
+    if (books == null) return const SizedBox.shrink();
+    final book = books[daily.bookId - 1];
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) =>
+                ChapterScreen(bookId: daily.bookId, chapter: daily.chapter),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('今日經文',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.primary)),
+              const SizedBox(height: 6),
+              Text(daily.text, style: const TextStyle(height: 1.6)),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  '—${book.name} ${daily.chapter}:${daily.verse}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 讀經進度（已讀章數 / 1189）。
+class _ReadingProgressBar extends ConsumerWidget {
+  const _ReadingProgressBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(readChapterCountProvider).value ?? 0;
+    if (count == 0) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: count / kTotalChapters,
+                minHeight: 6,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('已讀 $count / $kTotalChapters 章',
+              style: Theme.of(context).textTheme.bodySmall),
+        ],
       ),
     );
   }

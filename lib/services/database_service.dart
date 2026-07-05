@@ -11,7 +11,7 @@ import '../models/models.dart';
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 1;
+  static const _dbVersion = 2;
 
   Database? _db;
 
@@ -65,10 +65,24 @@ class DatabaseService {
     ''');
     await db.execute(
         'CREATE INDEX idx_notes_ref ON notes(book_id, chapter, verse)');
+    await _createReadingLogTable(db); // v2
+  }
+
+  Future<void> _createReadingLogTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE reading_log (
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        read_at INTEGER NOT NULL,
+        PRIMARY KEY(book_id, chapter)
+      )
+    ''');
   }
 
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
-    // if (oldV < 2) { await db.execute('ALTER TABLE ...'); }
+    if (oldV < 2) {
+      await _createReadingLogTable(db);
+    }
   }
 
   // ---- Bookmarks ----
@@ -207,5 +221,28 @@ class DatabaseService {
       whereArgs: [bookId, chapter],
     );
     return {for (final r in rows) r['verse'] as int: Note.fromMap(r)};
+  }
+
+  // ---- Reading log（讀經紀錄）----
+
+  Future<void> markChapterRead(int bookId, int chapter) async {
+    final db = await database;
+    await db.insert(
+      'reading_log',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'read_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 已讀章數。
+  Future<int> getReadChapterCount() async {
+    final db = await database;
+    final rows =
+        await db.rawQuery('SELECT COUNT(*) AS c FROM reading_log');
+    return rows.first['c'] as int;
   }
 }

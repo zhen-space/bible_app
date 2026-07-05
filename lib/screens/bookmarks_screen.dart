@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
@@ -16,6 +17,13 @@ class BookmarksScreen extends ConsumerWidget {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('我的標記'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.ios_share),
+              tooltip: '匯出筆記（Markdown）',
+              onPressed: () => _exportNotes(context, ref),
+            ),
+          ],
           bottom: const TabBar(
             tabs: [Tab(text: '書籤'), Tab(text: '螢光筆'), Tab(text: '筆記')],
           ),
@@ -25,6 +33,36 @@ class BookmarksScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+}
+
+/// 把全部筆記整理成 Markdown 複製到剪貼簿（白板「筆記匯出」的第一步；
+/// PDF/Word 匯出之後再加）。
+Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final books = await ref.read(booksProvider.future);
+    final notes = await ref.read(allNotesProvider.future);
+    if (notes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('還沒有筆記可匯出')));
+      return;
+    }
+    final buf = StringBuffer('# 我的經文筆記\n');
+    for (final n in notes) {
+      final book = books[n.bookId - 1];
+      final text = book.chapters[n.chapter - 1][n.verse - 1];
+      buf
+        ..writeln()
+        ..writeln('## ${book.name} ${n.chapter}:${n.verse}')
+        ..writeln('> $text')
+        ..writeln()
+        ..writeln(n.content);
+    }
+    await Clipboard.setData(ClipboardData(text: buf.toString()));
+    messenger.showSnackBar(
+        SnackBar(content: Text('已複製 ${notes.length} 則筆記（Markdown）')));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
   }
 }
 

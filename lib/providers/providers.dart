@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/topics.dart';
 import '../models/models.dart';
 import '../services/bible_repository.dart';
 import '../services/database_service.dart';
+import '../services/verse_locator.dart';
 
 final bibleRepositoryProvider = Provider((ref) => BibleRepository());
 final databaseServiceProvider = Provider((ref) => DatabaseService());
@@ -133,6 +135,58 @@ class ChapterMarks {
     required this.notes,
   });
 }
+
+/// 搜尋歷史（最多 20 筆，持久化）。
+class SearchHistoryNotifier extends Notifier<List<String>> {
+  static const _key = 'search_history';
+
+  @override
+  List<String> build() {
+    _load();
+    return const [];
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      state = prefs.getStringList(_key) ?? const [];
+    } catch (_) {}
+  }
+
+  Future<void> add(String query) async {
+    final q = query.trim();
+    if (q.isEmpty) return;
+    state = [q, ...state.where((e) => e != q)].take(20).toList();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_key, state);
+  }
+
+  Future<void> clear() async {
+    state = const [];
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_key);
+  }
+}
+
+final searchHistoryProvider =
+    NotifierProvider<SearchHistoryNotifier, List<String>>(
+        SearchHistoryNotifier.new);
+
+/// 已讀章數（全聖經 1,189 章）。
+final readChapterCountProvider = FutureProvider<int>(
+    (ref) => ref.watch(databaseServiceProvider).getReadChapterCount());
+
+/// 每日經文：依日期從主題經文池中固定挑一節（同一天大家看到同一節）。
+final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
+  final books = await ref.watch(booksProvider.future);
+  final pool = dailyVersePool();
+  final day = DateTime.now().difference(DateTime(2024)).inDays;
+  final loc = VerseLocator.parse(pool[day % pool.length], books)!;
+  final text =
+      books[loc.bookId - 1].chapters[loc.chapter - 1][loc.verse! - 1];
+  return VerseRef(
+      bookId: loc.bookId, chapter: loc.chapter, verse: loc.verse!, text: text);
+});
 
 final allBookmarksProvider = FutureProvider<List<Bookmark>>(
     (ref) => ref.watch(databaseServiceProvider).getAllBookmarks());
