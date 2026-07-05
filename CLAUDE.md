@@ -53,6 +53,14 @@ assets/bible/cuv.json       和合本經文（見「經文資料」）
 4. **所有 async load 都要 try-catch，且 finally 裡收尾**（不然畫面一直轉圈）；DB 寫入後在 `finally` 裡 invalidate providers
 5. 測試後門（跳過登入等）加的時候就記進下方待辦，上線前移除
 
+## 網頁版與 Render 部署
+
+- 平台雙軌：手機用原生 sqflite，網頁用 WASM+IndexedDB（`db_factory_native.dart` / `db_factory_web.dart` 條件式 import）
+- 字型：打包 Noto Sans TC **子集**（`assets/fonts/NotoSansTC.ttf`，依聖經全文 3,240 字 + UI 文案子集化，12MB→1.1MB）。若 UI 新增子集外的字會顯示不出來 → 重跑子集化（fonttools subset，字集含 cuv.json 全部字元 + UI 文案）
+- `web/index.html` 鎖定 **完整版 CanvasKit**（`canvasKitVariant: "full"`）：chromium 精簡版在部分環境整頁無字，勿改回
+- build 一律 `flutter build web --release --no-web-resources-cdn`（不依賴 Google CDN）
+- 部署：Render 靜態站，`render.yaml` + `render-build.sh`（Render 上會自己下載 Flutter、抓 sqlite3.wasm、build；本機環境抓不到 sqlite3.wasm 是網路政策，Render 上沒問題）
+
 ## Mac 環境注意事項
 
 1. Flutter SPM 已停用：`flutter config --no-enable-swift-package-manager`
