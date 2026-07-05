@@ -7,9 +7,13 @@ import '../models/models.dart';
 class AppTheme {
   static const _seed = Color(0xFF6D4C41); // 溫暖的棕色，讀經氛圍
 
+  /// 打包的繁中字型（網頁版不依賴 Google CDN，各平台字型一致）。
+  static const _fontFamily = 'NotoSansTC';
+
   static ThemeData light = ThemeData(
     colorScheme: ColorScheme.fromSeed(seedColor: _seed),
     useMaterial3: true,
+    fontFamily: _fontFamily,
     scaffoldBackgroundColor: const Color(0xFFFDFBF7),
   );
 
@@ -19,6 +23,7 @@ class AppTheme {
       brightness: Brightness.dark,
     ),
     useMaterial3: true,
+    fontFamily: _fontFamily,
   );
 
   /// 螢光筆顏色（深淺色各一組，不寫死單一色）。

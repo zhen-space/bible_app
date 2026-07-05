@@ -1,7 +1,8 @@
-import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:sqflite/sqflite.dart'
+    show Database, ConflictAlgorithm, OpenDatabaseOptions;
 
 import '../models/models.dart';
+import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dart';
 
 /// SQLite 資料庫服務，只存使用者資料（經文本身在 asset，不進 DB）。
 ///
@@ -21,12 +22,14 @@ class DatabaseService {
   }
 
   Future<Database> _open() async {
-    final dbPath = await getDatabasesPath();
-    return openDatabase(
-      join(dbPath, _dbName),
-      version: _dbVersion,
-      onCreate: (db, version) async => _createAllTables(db),
-      onUpgrade: _onUpgrade,
+    // dbFactory 依平台切換：手機用原生 sqflite，網頁用 WASM + IndexedDB
+    return dbFactory.openDatabase(
+      await resolveDbPath(_dbName),
+      options: OpenDatabaseOptions(
+        version: _dbVersion,
+        onCreate: (db, version) async => _createAllTables(db),
+        onUpgrade: _onUpgrade,
+      ),
     );
   }
 

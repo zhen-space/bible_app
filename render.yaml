@@ -1,0 +1,17 @@
+# Render Blueprint：靜態網站部署 Flutter Web 版
+# 在 render.com 用「New +」→「Blueprint」連這個 repo 即可。
+services:
+  - type: web
+    name: bible-app
+    runtime: static
+    branch: claude/bible-app-setup-xi8bvd
+    buildCommand: ./render-build.sh
+    staticPublishPath: build/web
+    headers:
+      # sqlite3 WASM 在部分瀏覽器需要 COOP/COEP 才能用共享記憶體
+      - path: /*
+        name: Cross-Origin-Embedder-Policy
+        value: require-corp
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin
