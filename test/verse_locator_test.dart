@@ -70,6 +70,52 @@ void main() {
     });
   });
 
+  group('註解資料', () {
+    final raw = File('assets/annotations/annotations.json').readAsStringSync();
+    final data = json.decode(raw) as Map<String, dynamic>;
+
+    test('章導讀 key 格式為 書卷id:章 且在範圍內', () {
+      final chapters = (data['chapters'] as Map).keys.cast<String>();
+      for (final k in chapters) {
+        final parts = k.split(':');
+        expect(parts.length, 2, reason: 'bad chapter key: $k');
+        final bookId = int.parse(parts[0]);
+        final ch = int.parse(parts[1]);
+        expect(bookId, inInclusiveRange(1, 66));
+        expect(ch, inInclusiveRange(1, books[bookId - 1].chapterCount),
+            reason: '$k 超出章數');
+      }
+    });
+
+    test('節註解 key 格式為 書卷id:章:節 且在範圍內', () {
+      final verses = (data['verses'] as Map).keys.cast<String>();
+      for (final k in verses) {
+        final parts = k.split(':');
+        expect(parts.length, 3, reason: 'bad verse key: $k');
+        final bookId = int.parse(parts[0]);
+        final ch = int.parse(parts[1]);
+        final v = int.parse(parts[2]);
+        expect(bookId, inInclusiveRange(1, 66));
+        expect(ch, inInclusiveRange(1, books[bookId - 1].chapterCount));
+        expect(v, inInclusiveRange(1, books[bookId - 1].chapters[ch - 1].length),
+            reason: '$k 超出節數');
+      }
+    });
+
+    test('所有交叉引用節位都能解析', () {
+      final verses = (data['verses'] as Map);
+      for (final entry in verses.entries) {
+        final refs = ((entry.value as Map)['crossRefs'] as List?) ?? [];
+        for (final r in refs.cast<String>()) {
+          // 交叉引用可能帶範圍（約1:1-3），取破折號前解析
+          final head = r.split('-').first;
+          expect(VerseLocator.parse(head, books), isNotNull,
+              reason: '${entry.key} 的交叉引用無法解析：$r');
+        }
+      }
+    });
+  });
+
   group('聖經資料完整性', () {
     test('66 卷、1189 章、31102+ 節', () {
       expect(books.length, 66);

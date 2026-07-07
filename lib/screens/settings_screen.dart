@@ -11,6 +11,7 @@ class SettingsScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
     final fontSize = ref.watch(fontSizeProvider);
+    final readingMode = ref.watch(readingModeProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('設定')),
@@ -59,6 +60,13 @@ class SettingsScreen extends ConsumerWidget {
               '起初，　神創造天地。',
               style: TextStyle(fontSize: fontSize, height: 1.7),
             ),
+          ),
+          SwitchListTile(
+            title: const Text('整章連續閱讀'),
+            subtitle: const Text('關閉為逐節分行；讀經畫面右上角也能切換'),
+            value: readingMode == ReadingMode.flowing,
+            onChanged: (_) =>
+                ref.read(readingModeProvider.notifier).toggle(),
           ),
           const Divider(),
           const AboutListTile(

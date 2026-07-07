@@ -6,14 +6,17 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import 'chapter_screen.dart';
 
-/// 書籤 / 螢光筆 / 筆記 總覽。
+/// 書籤 / 螢光筆 / 筆記 總覽。[initialTab] 0=書籤 1=螢光筆 2=筆記。
 class BookmarksScreen extends ConsumerWidget {
-  const BookmarksScreen({super.key});
+  final int initialTab;
+
+  const BookmarksScreen({super.key, this.initialTab = 0});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return DefaultTabController(
       length: 3,
+      initialIndex: initialTab,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('我的標記'),

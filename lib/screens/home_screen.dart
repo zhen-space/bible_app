@@ -76,6 +76,7 @@ class HomeScreen extends ConsumerWidget {
                   chapter: lastRead.chapter,
                 ),
               const _ReadingProgressBar(),
+              const _RecentNotesBar(),
               Expanded(
                 child: TabBarView(
                   children: [
@@ -176,6 +177,99 @@ class _ReadingProgressBar extends ConsumerWidget {
               style: Theme.of(context).textTheme.bodySmall),
         ],
       ),
+    );
+  }
+}
+
+/// 首頁「個人筆記」區：最近筆記橫向預覽，點開回到該節。
+class _RecentNotesBar extends ConsumerWidget {
+  const _RecentNotesBar();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
+    final books = ref.watch(booksProvider).value;
+    if (notes.isEmpty || books == null) return const SizedBox.shrink();
+    final recent = notes.take(8).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('我的筆記',
+                  style: Theme.of(context).textTheme.titleSmall),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const BookmarksScreen(initialTab: 2),
+                  ),
+                ),
+                child: const Text('看全部'),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(
+          height: 96,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            itemCount: recent.length,
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, i) {
+              final n = recent[i];
+              final book = books[n.bookId - 1];
+              return SizedBox(
+                width: 200,
+                child: Card(
+                  margin: EdgeInsets.zero,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(12),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ChapterScreen(
+                            bookId: n.bookId, chapter: n.chapter),
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${book.name} ${n.chapter}:${n.verse}',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .labelMedium
+                                  ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary)),
+                          const SizedBox(height: 4),
+                          Expanded(
+                            child: Text(
+                              n.content,
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

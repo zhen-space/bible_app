@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -76,5 +77,16 @@ void main() {
     // 讀經畫面：創 1:1
     expect(find.textContaining('起初', findRichText: true), findsWidgets);
     expect(find.text('創世記 第 1 章'), findsOneWidget);
+
+    // 章前導讀（在畫面頂端）
+    expect(find.text('本章導讀'), findsOneWidget);
+
+    // 章後統整在章末，捲到底才可見（創 1 有 31 節）
+    await tester.dragUntilVisible(
+      find.text('本章重點'),
+      find.byType(Scrollable).first,
+      const Offset(0, -400),
+    );
+    expect(find.text('本章重點'), findsOneWidget);
   });
 }

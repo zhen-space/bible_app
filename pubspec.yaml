@@ -65,6 +65,7 @@ flutter:
 
   assets:
     - assets/bible/
+    - assets/annotations/
 
   fonts:
     - family: NotoSansTC

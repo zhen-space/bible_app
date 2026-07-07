@@ -4,7 +4,7 @@
 
 ## 專案概況
 
-Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經、全文搜尋、節位快速跳轉（約3:16）、搜尋歷史、主題閱讀、人生情境入口、每日經文、讀經進度、書籤、螢光筆（5 色）、經節筆記（含觀察/相信/行動三欄模板）、筆記匯出（Markdown 到剪貼簿）、深淺色主題、字級調整、記住閱讀位置。
+Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經（**兩種閱讀模式**：逐節分行／整章連續）、章前導讀＋章後統整、每節註解（注釋/關鍵字/生活應用/交叉引用可跳轉）、全文搜尋、節位快速跳轉（約3:16）、搜尋歷史、主題閱讀、人生情境入口、每日經文、讀經進度、首頁個人筆記、書籤、螢光筆（5 色）、經節筆記（含觀察/相信/行動三欄模板）、筆記匯出（Markdown 到剪貼簿）、深淺色主題、字級調整、記住閱讀位置。
 
 - 狀態管理：Riverpod（`flutter_riverpod`，Notifier/FutureProvider）
 - 使用者資料：sqflite（只存書籤/螢光筆/筆記；**經文不進 DB**）
@@ -23,11 +23,22 @@ lib/
     database_service.dart   SQLite（含升版框架，見下；目前 v2）
     bible_repository.dart   經文載入與搜尋
     verse_locator.dart      節位解析（「約3:16」→ bookId/章/節）
+    annotation_repository.dart  註解內容載入（章導讀/節註解，可插拔）
   providers/providers.dart  所有 Riverpod providers
   theme/app_theme.dart      深淺色主題 + 螢光筆顏色
   screens/                  home / chapter / search / bookmarks / settings / topics
 assets/bible/cuv.json       和合本經文（見「經文資料」）
+assets/annotations/annotations.json  註解內容（見「註解內容模組」）
 ```
+
+## 註解內容模組（白板二）
+
+- 資料在 `assets/annotations/annotations.json`，**內容可插拔、可缺**（缺就不顯示，不擋讀經）。
+- key 格式：`書卷id:章`（章導讀：大意/目的/作者/背景/分段/重點）、`書卷id:章:節`（節註解：注釋/關鍵字/生活應用/交叉引用）。書卷 id：創=1、詩=19、太=40、約=43。
+- 交叉引用（crossRefs）是節位字串，讀經頁點了會跳轉；可帶範圍（約1:1-3），跳轉時取破折號前。
+- 目前只有 3 章示範內容（創1、詩23、約3）。**補內容 = 編輯這個 JSON**，不用改程式。
+- 有測試守著：所有 key 在範圍內、所有交叉引用能解析。
+- 「每句可個人註解但公開須經審核」需要後端（Firebase + 管理者審核），尚未做。
 
 ## 經文資料
 
@@ -56,7 +67,8 @@ assets/bible/cuv.json       和合本經文（見「經文資料」）
 ## 網頁版與 Render 部署
 
 - 平台雙軌：手機用原生 sqflite，網頁用 WASM+IndexedDB（`db_factory_native.dart` / `db_factory_web.dart` 條件式 import）
-- 字型：打包 Noto Sans TC **子集**（`assets/fonts/NotoSansTC.ttf`，依聖經全文 3,240 字 + UI 文案子集化，12MB→1.1MB）。若 UI 新增子集外的字會顯示不出來 → 重跑子集化（fonttools subset，字集含 cuv.json 全部字元 + UI 文案）
+- 字型：打包 Noto Sans TC **子集**（`assets/fonts/NotoSansTC.ttf`，約 3,266 字，12MB→1.1MB）。**字集來源＝聖經全文 ∪ annotations.json ∪ `lib/**/*.dart` 裡所有 CJK 字**（用正則抓原始碼裡的中文，未來新增 UI 文案只要重跑腳本就涵蓋，不用手維護字表）。
+- 重跑子集化步驟：下載完整版 NotoSansTC variable font → `fonttools varLib.instancer 字型 wght=400 -o 400.ttf` → 掃 cuv.json/annotations.json/lib 收字 → `fonttools subset 400.ttf --text-file=字集 --output-file=assets/fonts/NotoSansTC.ttf --layout-features='*'`。（**注意：assets 裡的字型已是子集，重跑前要重新下載完整版**）
 - `web/index.html` 鎖定 **完整版 CanvasKit**（`canvasKitVariant: "full"`）：chromium 精簡版在部分環境整頁無字，勿改回
 - build 一律 `flutter build web --release --no-web-resources-cdn`（不依賴 Google CDN）
 - 部署：Render 靜態站，`render.yaml` + `render-build.sh`（Render 上會自己下載 Flutter、抓 sqlite3.wasm、build；本機環境抓不到 sqlite3.wasm 是網路政策，Render 上沒問題）
@@ -89,11 +101,11 @@ flutter test
 
 已做 ✅ / 未做 ⬜（雲=需要後端/Firebase，容=需要人工內容）
 
-**一、基本功能**：✅ 章節瀏覽、字級、夜間模式、複製整節　⬜ 段落自然分段、顯示另一語言（需第二譯本 asset）
-**二、註解內容模組**（容）：⬜ 整篇前導讀（大意/目的/作者/背景）、每節注釋、生活應用、經文串連——需要內容資料源，架構上加一個 annotations asset/表即可
+**一、基本功能**：✅ 章節瀏覽、字級、夜間模式、複製整節、**兩種閱讀模式（逐節/整章連續）**　⬜ 顯示另一語言（需第二譯本 asset）
+**二、註解內容模組**：✅ 架構＋UI＋範例內容（章前導讀 大意/目的/作者/背景/分段、章後統整重點、每節 注釋/關鍵字/生活應用/交叉引用可跳轉）　⬜ 補齊各章內容（容，編輯 annotations.json）、每節公開註解審核（雲）
 **三、搜尋與索引**：✅ 全文搜尋、節位快速鍵、搜尋歷史、筆記搜尋（筆記頁）　⬜ 人物/地點/事件搜尋（容）、模糊搜尋（打錯也找到）
 **四、主題式閱讀**：✅ 主題分類頁、人生情境入口、每日經文　⬜ 主題導讀/讀經計畫、聽聖經（TTS）
-**五、個人信仰整理**：✅ 經文筆記、三欄模板（觀察/相信/行動）、收藏（書籤）、螢光多色、筆記匯出（Markdown）、讀經紀錄/進度　⬜ 主日證道筆記（結構化表單）、我的信仰地圖、PDF/Word 匯出、私密/公開（雲）
+**五、個人信仰整理**：✅ 經文筆記、三欄模板（觀察/相信/行動）、收藏（書籤）、螢光多色、筆記匯出（Markdown）、讀經紀錄/進度、**首頁個人筆記預覽**　⬜ 主日證道筆記（結構化表單）、我的信仰地圖、PDF/Word 匯出、私密/公開（雲）
 **六、疑問 Q&A**（雲）：⬜ 全部——提問/分類/審核/通知，需要後端與管理者
 **七、交叉與知識架構**（容）：⬜ 相關經文推薦、平行對照、時間軸、人物關係圖——需要 cross-reference 資料集（可找 OpenBible.info cross-refs，公有領域）
 **八、帳號與技術**（雲）：⬜ 帳號系統、Google/Apple 登入、雲端同步、版本紀錄　✅ 自動儲存（本地即存）
@@ -104,8 +116,8 @@ flutter test
 ## 待辦
 
 - [ ] Firebase 雲端同步（見上方步驟；做完接 sync service）
-- [ ] 註解內容模組的資料格式設計（等第一批註解內容）
-- [ ] 交叉引用資料集（OpenBible cross-refs）→ 相關經文推薦
+- [ ] **補齊註解內容**（目前只有創1/詩23/約3 三章範例，格式已定，編輯 annotations.json 即可）
+- [ ] 交叉引用資料集（OpenBible cross-refs）→ 自動產生更多 crossRefs
 - [ ] 主日證道筆記表單（白板欄位：主題/日期/經文/筆記/三一位格的話/實踐/感想）
 - [ ] 聽聖經（flutter_tts）
 - [ ] iOS 真機測試（icon、launch screen 還是預設的）

@@ -4,12 +4,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/topics.dart';
 import '../models/models.dart';
+import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/database_service.dart';
 import '../services/verse_locator.dart';
 
 final bibleRepositoryProvider = Provider((ref) => BibleRepository());
 final databaseServiceProvider = Provider((ref) => DatabaseService());
+final annotationRepositoryProvider = Provider((ref) => AnnotationRepository());
 
 /// 全部書卷（App 啟動時載入一次）。
 final booksProvider = FutureProvider<List<Book>>((ref) {
@@ -80,6 +82,41 @@ class FontSizeNotifier extends Notifier<double> {
 
 final fontSizeProvider =
     NotifierProvider<FontSizeNotifier, double>(FontSizeNotifier.new);
+
+/// 閱讀模式：逐節（一句一行）或整章（連續段落）。持久化。
+enum ReadingMode { verse, flowing }
+
+class ReadingModeNotifier extends Notifier<ReadingMode> {
+  static const _key = 'reading_mode';
+
+  @override
+  ReadingMode build() {
+    _load();
+    return ReadingMode.verse;
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_key);
+      if (v != null) {
+        state = ReadingMode.values.firstWhere((m) => m.name == v,
+            orElse: () => ReadingMode.verse);
+      }
+    } catch (_) {}
+  }
+
+  Future<void> toggle() async {
+    state = state == ReadingMode.verse
+        ? ReadingMode.flowing
+        : ReadingMode.verse;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, state.name);
+  }
+}
+
+final readingModeProvider =
+    NotifierProvider<ReadingModeNotifier, ReadingMode>(ReadingModeNotifier.new);
 
 /// 上次閱讀位置（書卷+章），持久化。
 class LastReadNotifier extends Notifier<({int bookId, int chapter})?> {
@@ -186,6 +223,16 @@ final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
       books[loc.bookId - 1].chapters[loc.chapter - 1][loc.verse! - 1];
   return VerseRef(
       bookId: loc.bookId, chapter: loc.chapter, verse: loc.verse!, text: text);
+});
+
+/// 章導讀 + 該章的節註解（白板「二、註解內容模組」）。
+final chapterAnnotationProvider = FutureProvider.family<
+    ({ChapterAnnotation? chapter, Map<int, VerseAnnotation> verses}),
+    ({int bookId, int chapter})>((ref, args) async {
+  final repo = ref.watch(annotationRepositoryProvider);
+  final chapter = await repo.chapter(args.bookId, args.chapter);
+  final verses = await repo.versesIn(args.bookId, args.chapter);
+  return (chapter: chapter, verses: verses);
 });
 
 final allBookmarksProvider = FutureProvider<List<Bookmark>>(

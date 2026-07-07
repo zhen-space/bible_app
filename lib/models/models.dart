@@ -78,6 +78,88 @@ class Bookmark {
       };
 }
 
+/// 章前導讀（白板「二、註解內容模組」的整篇前導讀）。
+/// 內容來自 `assets/annotations/annotations.json`，唯讀、可缺（沒有就不顯示）。
+class ChapterAnnotation {
+  final String? summary; // 段落大意整理
+  final String? purpose; // 目的
+  final String? author; // 作者
+  final String? background; // 歷史／文化背景
+  final List<String> outline; // 分段大綱，例：「1-5 光的創造」
+  final String? conclusion; // 章後統整：重點（一句話）
+
+  const ChapterAnnotation({
+    this.summary,
+    this.purpose,
+    this.author,
+    this.background,
+    this.outline = const [],
+    this.conclusion,
+  });
+
+  bool get hasIntro =>
+      summary != null ||
+      purpose != null ||
+      author != null ||
+      background != null ||
+      outline.isNotEmpty;
+
+  factory ChapterAnnotation.fromJson(Map<String, dynamic> j) {
+    final intro = (j['intro'] as Map<String, dynamic>?) ?? const {};
+    return ChapterAnnotation(
+      summary: intro['summary'] as String?,
+      purpose: intro['purpose'] as String?,
+      author: intro['author'] as String?,
+      background: intro['background'] as String?,
+      outline:
+          (j['outline'] as List?)?.map((e) => e as String).toList() ?? const [],
+      conclusion: j['conclusion'] as String?,
+    );
+  }
+}
+
+/// 關鍵字解釋。
+class Keyword {
+  final String word;
+  final String note;
+
+  const Keyword(this.word, this.note);
+}
+
+/// 每節註解（注釋／生活應用／經文串連）。內容唯讀、可缺。
+class VerseAnnotation {
+  final String? commentary; // 注釋：每句背後意義
+  final List<Keyword> keywords; // 關鍵字解釋
+  final String? applicationCategory; // 生活應用分類
+  final String? application; // 生活應用建議
+  final List<String> crossRefs; // 經文串連（節位字串，可跳轉）
+
+  const VerseAnnotation({
+    this.commentary,
+    this.keywords = const [],
+    this.applicationCategory,
+    this.application,
+    this.crossRefs = const [],
+  });
+
+  factory VerseAnnotation.fromJson(Map<String, dynamic> j) {
+    final app = j['application'] as Map<String, dynamic>?;
+    return VerseAnnotation(
+      commentary: j['commentary'] as String?,
+      keywords: (j['keywords'] as List?)
+              ?.map((e) => Keyword(
+                  (e as Map)['word'] as String, e['note'] as String))
+              .toList() ??
+          const [],
+      applicationCategory: app?['category'] as String?,
+      application: app?['text'] as String?,
+      crossRefs:
+          (j['crossRefs'] as List?)?.map((e) => e as String).toList() ??
+              const [],
+    );
+  }
+}
+
 /// 螢光筆顏色（存 DB 用 index，勿改順序，只能往後加）。
 enum HighlightColor { yellow, green, blue, pink, orange }
 
