@@ -225,6 +225,12 @@ final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
       bookId: loc.bookId, chapter: loc.chapter, verse: loc.verse!, text: text);
 });
 
+/// 整卷書的導讀＋統整（獨立標籤方格用）。
+final bookAnnotationProvider =
+    FutureProvider.family<BookAnnotation?, int>((ref, bookId) {
+  return ref.watch(annotationRepositoryProvider).book(bookId);
+});
+
 /// 章導讀 + 該章的節註解（白板「二、註解內容模組」）。
 final chapterAnnotationProvider = FutureProvider.family<
     ({ChapterAnnotation? chapter, Map<int, VerseAnnotation> verses}),

@@ -89,4 +89,34 @@ void main() {
     );
     expect(find.text('本章重點'), findsOneWidget);
   });
+
+  testWidgets('章節格最前導讀、最後統整方格 → 開啟卷導讀頁', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final books = loadBooks();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          booksProvider.overrideWith((ref) async => books),
+          databaseServiceProvider.overrideWithValue(FakeDatabaseService()),
+          // 卷導讀無內容 → 立即回 null，避免轉圈動畫卡住 pumpAndSettle
+          bookAnnotationProvider.overrideWith((ref, bookId) => null),
+        ],
+        child: const BibleApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 展開創世記，章節格前後應各有導讀/統整方格
+    await tester.tap(find.text('創世記'));
+    await tester.pumpAndSettle();
+    expect(find.text('導讀'), findsOneWidget);
+    expect(find.text('統整'), findsOneWidget);
+
+    // 點導讀方格 → 卷導讀頁（尚無內容顯示待填）
+    await tester.tap(find.text('導讀'));
+    await tester.pumpAndSettle();
+    expect(find.text('創世記 · 導讀'), findsOneWidget);
+    expect(find.textContaining('尚未填寫'), findsOneWidget);
+  });
 }

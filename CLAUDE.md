@@ -33,7 +33,7 @@ lib/
     annotation_repository.dart  註解內容載入（章導讀/節註解，可插拔）
   providers/providers.dart  所有 Riverpod providers
   theme/app_theme.dart      深淺色主題 + 螢光筆顏色
-  screens/                  home / chapter / search / bookmarks / settings / topics
+  screens/                  home / chapter / search / bookmarks / settings / topics / book_overview
 assets/bible/cuv.json       和合本經文（見「經文資料」）
 assets/annotations/annotations.json  註解內容（見「註解內容模組」）
 ```
@@ -41,7 +41,12 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 ## 註解內容模組（白板二）
 
 - 資料在 `assets/annotations/annotations.json`，**內容可插拔、可缺**（缺就不顯示，不擋讀經）。
-- key 格式：`書卷id:章`（章導讀：大意/目的/作者/背景/分段/重點）、`書卷id:章:節`（節註解：注釋/關鍵字/生活應用/交叉引用）。書卷 id：創=1、詩=19、太=40、約=43。
+- key 格式：
+  - `books['書卷id']`：**整卷導讀＋統整**（獨立標籤方格，見下），格式 `{ intro:{summary,purpose,author,background}, outline:[...], summary:'統整文字' }`
+  - `書卷id:章`：章導讀（大意/目的/作者/背景/分段/重點）
+  - `書卷id:章:節`：節註解（注釋/關鍵字/生活應用/交叉引用）
+  - 書卷 id：創=1、詩=19、太=40、約=43。
+- **導讀／統整標籤方格**：書卷章節格最前面固定一個「導讀」方格、最後面一個「統整」方格（`_OverviewBox`），開 `BookOverviewScreen`。方格永遠在；沒內容時顯示待填空白頁（不代寫內容）。
 - 交叉引用（crossRefs）是節位字串，讀經頁點了會跳轉；可帶範圍（約1:1-3），跳轉時取破折號前。
 - 目前只有 3 章示範內容（創1、詩23、約3）。**補內容 = 編輯這個 JSON**，不用改程式。
 - 有測試守著：所有 key 在範圍內、所有交叉引用能解析。

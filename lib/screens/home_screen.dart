@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import 'book_overview_screen.dart';
 import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'search_screen.dart';
@@ -331,7 +332,8 @@ class _BookList extends StatelessWidget {
   }
 }
 
-/// 章節格。注意：不用 GridView（在可捲動父層裡會出問題），用 Wrap。
+/// 章節格。最前面是「導讀」、最後面是「統整」標籤方格（獨立於各章）。
+/// 注意：不用 GridView（在可捲動父層裡會出問題），用 Wrap。
 class _ChapterGrid extends StatelessWidget {
   final Book book;
 
@@ -344,6 +346,18 @@ class _ChapterGrid extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: [
+        _OverviewBox(
+          label: '導讀',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => BookOverviewScreen(
+                  bookId: book.id,
+                  bookName: book.name,
+                  kind: OverviewKind.intro),
+            ),
+          ),
+        ),
         for (var c = 1; c <= book.chapterCount; c++)
           InkWell(
             borderRadius: BorderRadius.circular(8),
@@ -364,7 +378,53 @@ class _ChapterGrid extends StatelessWidget {
               child: Text('$c', style: TextStyle(color: scheme.onSurface)),
             ),
           ),
+        _OverviewBox(
+          label: '統整',
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => BookOverviewScreen(
+                  bookId: book.id,
+                  bookName: book.name,
+                  kind: OverviewKind.summary),
+            ),
+          ),
+        ),
       ],
+    );
+  }
+}
+
+/// 導讀／統整標籤方格（與章節格同大小，配色區隔）。
+class _OverviewBox extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _OverviewBox({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: scheme.onPrimaryContainer,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
     );
   }
 }

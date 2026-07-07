@@ -118,6 +118,26 @@ class ChapterAnnotation {
   }
 }
 
+/// 整卷書層級的導讀與統整（獨立於各章，白板「二、註解內容模組」）。
+/// 內容由使用者自己寫在 annotations.json 的 `books` 區；缺就顯示空白待填頁。
+class BookAnnotation {
+  final ChapterAnnotation? intro; // 導讀：大意/目的/作者/背景/分段
+  final String? summary; // 統整：整卷重點
+
+  const BookAnnotation({this.intro, this.summary});
+
+  bool get hasIntro => intro != null && intro!.hasIntro;
+  bool get hasSummary => summary != null && summary!.trim().isNotEmpty;
+
+  factory BookAnnotation.fromJson(Map<String, dynamic> j) {
+    final intro = ChapterAnnotation.fromJson(j);
+    return BookAnnotation(
+      intro: (intro.hasIntro) ? intro : null,
+      summary: j['summary'] as String?,
+    );
+  }
+}
+
 /// 關鍵字解釋。
 class Keyword {
   final String word;

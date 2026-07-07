@@ -1,5 +1,7 @@
 {
-  "_note": "註解內容資料。key：'書卷id:章' 為章導讀，'書卷id:章:節' 為節註解。內容可缺，缺就不顯示。書卷id：創1 太40 約43 詩19。",
+  "_note": "註解內容資料。內容一律由使用者親寫，Claude 不代填。key 格式：books['書卷id'] 為整卷導讀/統整；'書卷id:章' 為章導讀；'書卷id:章:節' 為節註解。內容可缺，缺就不顯示（導讀/統整方格永遠在，缺內容時顯示待填頁）。書卷id：創1 太40 約43 詩19。",
+  "_books_format": "books['1'] = { intro: {summary,purpose,author,background}, outline:[...], summary:'整卷統整文字' }",
+  "books": {},
   "chapters": {
     "1:1": {
       "intro": {

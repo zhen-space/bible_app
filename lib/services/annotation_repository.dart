@@ -18,6 +18,7 @@ import '../models/models.dart';
 /// ```
 /// key 用 `書卷id:章`（章註解）與 `書卷id:章:節`（節註解）。缺就不顯示。
 class AnnotationRepository {
+  Map<String, BookAnnotation>? _books;
   Map<String, ChapterAnnotation>? _chapters;
   Map<String, VerseAnnotation>? _verses;
 
@@ -27,6 +28,8 @@ class AnnotationRepository {
       final raw =
           await rootBundle.loadString('assets/annotations/annotations.json');
       final data = json.decode(raw) as Map<String, dynamic>;
+      _books = ((data['books'] as Map?) ?? {}).map((k, v) => MapEntry(
+          k as String, BookAnnotation.fromJson(v as Map<String, dynamic>)));
       _chapters = ((data['chapters'] as Map?) ?? {}).map((k, v) => MapEntry(
           k as String,
           ChapterAnnotation.fromJson(v as Map<String, dynamic>)));
@@ -34,9 +37,16 @@ class AnnotationRepository {
           k as String, VerseAnnotation.fromJson(v as Map<String, dynamic>)));
     } catch (_) {
       // asset 缺失或格式錯誤：當作沒有註解，不擋讀經。
+      _books = {};
       _chapters = {};
       _verses = {};
     }
+  }
+
+  /// 整卷書的導讀＋統整（沒有就回 null，頁面顯示待填空白）。
+  Future<BookAnnotation?> book(int bookId) async {
+    await _ensureLoaded();
+    return _books!['$bookId'];
   }
 
   Future<ChapterAnnotation?> chapter(int bookId, int chapter) async {
