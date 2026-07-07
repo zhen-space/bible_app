@@ -17,6 +17,7 @@ class SettingsScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('設定')),
       body: ListView(
         children: [
+          const _AccountSection(),
           const _SectionHeader('外觀'),
           RadioListTile<ThemeMode>(
             title: const Text('跟隨系統'),
@@ -79,6 +80,60 @@ class SettingsScreen extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 帳號與雲端備份（Firebase 未初始化時整段隱藏，離線功能不受影響）。
+class _AccountSection extends ConsumerWidget {
+  const _AccountSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!ref.watch(firebaseReadyProvider)) return const SizedBox.shrink();
+    final user = ref.watch(authUserProvider).value;
+    final status = ref.watch(syncStatusProvider);
+    final notifier = ref.read(syncStatusProvider.notifier);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _SectionHeader('帳號與雲端備份'),
+        if (user == null)
+          ListTile(
+            leading: const Icon(Icons.login),
+            title: const Text('使用 Google 登入'),
+            subtitle: const Text('登入後書籤、螢光筆、筆記、讀經紀錄會備份到雲端'),
+            onTap: notifier.signIn,
+          )
+        else ...[
+          ListTile(
+            leading: const Icon(Icons.account_circle),
+            title: Text(user.displayName ?? '已登入'),
+            subtitle: Text(user.email ?? ''),
+          ),
+          ListTile(
+            leading: const Icon(Icons.cloud_sync),
+            title: const Text('立即同步'),
+            onTap: notifier.syncNow,
+          ),
+          ListTile(
+            leading: const Icon(Icons.logout),
+            title: const Text('登出'),
+            onTap: notifier.signOut,
+          ),
+        ],
+        if (status != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(status,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+          ),
+        const Divider(),
+      ],
     );
   }
 }

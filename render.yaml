@@ -7,11 +7,5 @@ services:
     branch: claude/bible-app-setup-xi8bvd
     buildCommand: ./render-build.sh
     staticPublishPath: build/web
-    headers:
-      # sqlite3 WASM 在部分瀏覽器需要 COOP/COEP 才能用共享記憶體
-      - path: /*
-        name: Cross-Origin-Embedder-Policy
-        value: require-corp
-      - path: /*
-        name: Cross-Origin-Opener-Policy
-        value: same-origin
+    # 注意：不要加 COOP/COEP headers——same-origin 會擋 Firebase Google 登入
+    # 的彈出視窗；sqflite 的 WASM 實測不需要這些 header（走 IndexedDB）。

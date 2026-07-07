@@ -248,4 +248,100 @@ class DatabaseService {
         await db.rawQuery('SELECT COUNT(*) AS c FROM reading_log');
     return rows.first['c'] as int;
   }
+
+  Future<List<Map<String, dynamic>>> getReadingLog() async {
+    final db = await database;
+    return db.query('reading_log');
+  }
+
+  // ---- 雲端同步用 upsert（last-write-wins 合併）----
+
+  /// 書籤：已存在就略過（書籤沒有內容可比新舊）。
+  Future<void> upsertBookmark(
+      int bookId, int chapter, int verse, int createdAt) async {
+    final db = await database;
+    await db.insert(
+      'bookmarks',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': createdAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  /// 螢光筆：以 created_at 較新者為準。
+  Future<void> upsertHighlight(int bookId, int chapter, int verse,
+      int colorIndex, int createdAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'highlights',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    if (existing.isNotEmpty &&
+        (existing.first['created_at'] as int) >= createdAt) {
+      return;
+    }
+    await db.insert(
+      'highlights',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'color': colorIndex,
+        'created_at': createdAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 筆記：以 updated_at 較新者為準。
+  Future<void> upsertNote(int bookId, int chapter, int verse, String content,
+      int createdAt, int updatedAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'notes',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    if (existing.isEmpty) {
+      await db.insert('notes', {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'content': content,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      });
+    } else if ((existing.first['updated_at'] as int) < updatedAt) {
+      await db.update(
+        'notes',
+        {'content': content, 'updated_at': updatedAt},
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
+    }
+  }
+
+  /// 讀經紀錄：保留較新的 read_at。
+  Future<void> upsertReadingLog(int bookId, int chapter, int readAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'reading_log',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    if (existing.isNotEmpty &&
+        (existing.first['read_at'] as int) >= readAt) {
+      return;
+    }
+    await db.insert(
+      'reading_log',
+      {'book_id': bookId, 'chapter': chapter, 'read_at': readAt},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
 }

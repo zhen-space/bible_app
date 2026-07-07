@@ -1,3 +1,5 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +9,7 @@ import '../models/models.dart';
 import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/database_service.dart';
+import '../services/sync_service.dart';
 import '../services/verse_locator.dart';
 
 final bibleRepositoryProvider = Provider((ref) => BibleRepository());
@@ -247,3 +250,60 @@ final allHighlightsProvider = FutureProvider<List<Highlight>>(
     (ref) => ref.watch(databaseServiceProvider).getAllHighlights());
 final allNotesProvider = FutureProvider<List<Note>>(
     (ref) => ref.watch(databaseServiceProvider).getAllNotes());
+
+// ---- 帳號與雲端同步（Firebase；未初始化時功能自動隱藏）----
+
+/// Firebase 是否可用（main 裡 init 成功才會有 app）。
+final firebaseReadyProvider = Provider<bool>((ref) => Firebase.apps.isNotEmpty);
+
+/// 目前登入的使用者（null = 未登入或 Firebase 不可用）。
+final authUserProvider = StreamProvider<User?>((ref) {
+  if (Firebase.apps.isEmpty) return Stream.value(null);
+  return FirebaseAuth.instance.authStateChanges();
+});
+
+final syncServiceProvider =
+    Provider((ref) => SyncService(ref.watch(databaseServiceProvider)));
+
+/// 同步狀態機：idle / syncing / 完成或錯誤訊息。
+class SyncStatusNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  /// 執行一次完整同步；結束後刷新所有標記 providers。
+  Future<void> syncNow() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+    state = '同步中…';
+    try {
+      state = await ref.read(syncServiceProvider).syncAll(user.uid);
+    } catch (e) {
+      state = '同步失敗：$e';
+    } finally {
+      ref.invalidate(allBookmarksProvider);
+      ref.invalidate(allHighlightsProvider);
+      ref.invalidate(allNotesProvider);
+      ref.invalidate(readChapterCountProvider);
+      ref.invalidate(chapterMarksProvider);
+    }
+  }
+
+  /// Google 登入（web 用 popup），成功後自動同步一次。
+  Future<void> signIn() async {
+    state = null;
+    try {
+      await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+      await syncNow();
+    } catch (e) {
+      state = '登入失敗：$e';
+    }
+  }
+
+  Future<void> signOut() async {
+    await FirebaseAuth.instance.signOut();
+    state = null;
+  }
+}
+
+final syncStatusProvider =
+    NotifierProvider<SyncStatusNotifier, String?>(SyncStatusNotifier.new);

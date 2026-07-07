@@ -17,7 +17,7 @@ Flutter 聖經 App，和合本（繁體）離線讀經。功能：讀經（**兩
 - 使用者資料：sqflite（只存書籤/螢光筆/筆記；**經文不進 DB**）
 - 經文來源：`assets/bible/cuv.json`（約 3.3MB，66 卷 31,104 節），啟動時載入記憶體，搜尋直接掃記憶體
 - 設定持久化：shared_preferences（主題、字級、閱讀位置）
-- Firebase：**尚未加入**。規劃為「本地 SQLite 為主、Firestore 為備份」，需在 Mac 上跑 `flutterfire configure` 後加 firebase_core/firebase_auth/cloud_firestore，並建 sync service（每個資料表都要有 upload/download）
+- Firebase：**已接（Web 先行）**。專案 `bible-app-c0eac`；`lib/firebase_options.dart` 只有 web 設定（iOS/Android 之後在 Mac 跑 `flutterfire configure` 覆蓋該檔）。Google 登入（popup）＋ Firestore 雲端備份：`services/sync_service.dart` 四表雙向 LWW 合併（bookmarks/highlights/notes/reading_log→`users/{uid}/...`）。**v1 不同步刪除**（需 tombstone，未做）。main() 裡 init 失敗不擋 App；未登入一切照常。**新資料表記得加進 sync service**。
 
 ## 目錄結構
 
@@ -84,6 +84,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - `web/index.html` 鎖定 **完整版 CanvasKit**（`canvasKitVariant: "full"`）：chromium 精簡版在部分環境整頁無字，勿改回
 - build 一律 `flutter build web --release --no-web-resources-cdn`（不依賴 Google CDN）
 - 部署：Render 靜態站，`render.yaml` + `render-build.sh`（Render 上會自己下載 Flutter、抓 sqlite3.wasm、build；本機環境抓不到 sqlite3.wasm 是網路政策，Render 上沒問題）
+- **不要在 render.yaml 加 COOP/COEP headers**：same-origin 會擋 Firebase 登入 popup；sqflite WASM 不需要（走 IndexedDB）
 
 ## Mac 環境注意事項
 
@@ -127,7 +128,8 @@ flutter test
 
 ## 待辦
 
-- [ ] Firebase 雲端同步（見上方步驟；做完接 sync service）
+- [ ] 同步刪除（tombstone）——目前刪掉的書籤/筆記同步後會從雲端回來
+- [ ] 管理後台（同 App 內管理員模式；等公開註解/Q&A 功能一起做）
 - [ ] **補齊註解內容**（目前只有創1/詩23/約3 三章範例，格式已定，編輯 annotations.json 即可）
 - [ ] 交叉引用資料集（OpenBible cross-refs）→ 自動產生更多 crossRefs
 - [ ] 主日證道筆記表單（白板欄位：主題/日期/經文/筆記/三一位格的話/實踐/感想）
