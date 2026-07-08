@@ -64,11 +64,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 首頁：書卷列表 + 今日經文
-    expect(find.text('創世記'), findsOneWidget);
+    // 首頁：引導式入口（今日經文 + 四大入口卡）
     expect(find.text('今日經文'), findsOneWidget);
+    expect(find.text('讀聖經'), findsOneWidget);
+    expect(find.text('主題閱讀'), findsOneWidget);
 
-    // 展開創世記 → 點第 1 章
+    // 讀聖經 → 書卷列表 → 展開創世記 → 點第 1 章
+    await tester.tap(find.text('讀聖經'));
+    await tester.pumpAndSettle();
+    expect(find.text('創世記'), findsOneWidget);
     await tester.tap(find.text('創世記'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('1').first);
@@ -107,7 +111,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 展開創世記，章節格前後應各有導讀/統整方格
+    // 讀聖經 → 展開創世記，章節格前後應各有導讀/統整方格
+    await tester.tap(find.text('讀聖經'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('創世記'));
     await tester.pumpAndSettle();
     expect(find.text('導讀'), findsOneWidget);

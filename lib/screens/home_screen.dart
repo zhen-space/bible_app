@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
-import 'book_overview_screen.dart';
 import 'bookmarks_screen.dart';
+import 'books_screen.dart';
 import 'chapter_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -13,86 +13,133 @@ import 'topics_screen.dart';
 /// 全聖經總章數（66 卷合計），讀經進度分母。
 const int kTotalChapters = 1189;
 
-/// 首頁：舊約/新約書卷列表 + 繼續閱讀。
+/// 首頁：引導式入口——今日經文、繼續閱讀、四大入口卡。
+/// 書卷列表在「讀聖經」（BooksScreen）。
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final booksAsync = ref.watch(booksProvider);
     final lastRead = ref.watch(lastReadProvider);
+    final books = ref.watch(booksProvider).value;
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('聖經 · 和合本'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.search),
-              tooltip: '搜尋經文',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SearchScreen()),
-              ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('聖經 · 和合本'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: '設定',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
             ),
-            IconButton(
-              icon: const Icon(Icons.category_outlined),
-              tooltip: '主題閱讀',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TopicsScreen()),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.collections_bookmark_outlined),
-              tooltip: '書籤與筆記',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const BookmarksScreen()),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: '設定',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              ),
-            ),
-          ],
-          bottom: const TabBar(
-            tabs: [Tab(text: '舊約'), Tab(text: '新約')],
           ),
-        ),
-        body: booksAsync.when(
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('載入經文失敗：$e')),
-          data: (books) => Column(
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const _DailyVerseCard(),
+          const SizedBox(height: 12),
+          if (lastRead != null && books != null) ...[
+            _ContinueReadingCard(
+              book: books[lastRead.bookId - 1],
+              chapter: lastRead.chapter,
+            ),
+            const SizedBox(height: 12),
+          ],
+          // 四大入口（2×2；不用 GridView，避免捲動父層衝突）
+          Row(
             children: [
-              const _DailyVerseCard(),
-              if (lastRead != null)
-                _ContinueReadingBar(
-                  book: books[lastRead.bookId - 1],
-                  chapter: lastRead.chapter,
-                ),
-              const _ReadingProgressBar(),
-              const _RecentNotesBar(),
-              Expanded(
-                child: TabBarView(
-                  children: [
-                    _BookList(
-                        books: books
-                            .where((b) => b.testament == 'ot')
-                            .toList()),
-                    _BookList(
-                        books: books
-                            .where((b) => b.testament == 'nt')
-                            .toList()),
-                  ],
-                ),
+              _EntryCard(
+                icon: Icons.menu_book,
+                label: '讀聖經',
+                subtitle: '66 卷書',
+                onTap: () => _push(context, const BooksScreen()),
+              ),
+              const SizedBox(width: 12),
+              _EntryCard(
+                icon: Icons.category_outlined,
+                label: '主題閱讀',
+                subtitle: '主題與心情',
+                onTap: () => _push(context, const TopicsScreen()),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              _EntryCard(
+                icon: Icons.search,
+                label: '搜尋',
+                subtitle: '經文與節位',
+                onTap: () => _push(context, const SearchScreen()),
+              ),
+              const SizedBox(width: 12),
+              _EntryCard(
+                icon: Icons.collections_bookmark_outlined,
+                label: '我的標記',
+                subtitle: '書籤與筆記',
+                onTap: () => _push(context, const BookmarksScreen()),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const _ReadingProgressBar(),
+          const _RecentNotesSection(),
+        ],
+      ),
+    );
+  }
+
+  static void _push(BuildContext context, Widget screen) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  }
+}
+
+/// 入口卡（首頁 2×2）。
+class _EntryCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _EntryCard({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Expanded(
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              children: [
+                Icon(icon, size: 32, color: scheme.primary),
+                const SizedBox(height: 8),
+                Text(label,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 2),
+                Text(subtitle,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: scheme.outline)),
+              ],
+            ),
           ),
         ),
       ),
@@ -106,17 +153,18 @@ class _DailyVerseCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final dailyAsync = ref.watch(dailyVerseProvider);
-    final daily = dailyAsync.value;
-    if (daily == null) return const SizedBox.shrink();
-
-    final booksAsync = ref.watch(booksProvider);
-    final books = booksAsync.value;
-    if (books == null) return const SizedBox.shrink();
+    final daily = ref.watch(dailyVerseProvider).value;
+    final books = ref.watch(booksProvider).value;
+    if (daily == null || books == null) {
+      // 佔位，避免載入完成時版面跳動
+      return const SizedBox(height: 120);
+    }
     final book = books[daily.bookId - 1];
+    final scheme = Theme.of(context).colorScheme;
 
     return Card(
-      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      margin: EdgeInsets.zero,
+      color: scheme.primaryContainer,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => Navigator.push(
@@ -127,24 +175,57 @@ class _DailyVerseCard extends ConsumerWidget {
           ),
         ),
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('今日經文',
-                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.primary)),
-              const SizedBox(height: 6),
-              Text(daily.text, style: const TextStyle(height: 1.6)),
-              const SizedBox(height: 6),
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: scheme.onPrimaryContainer)),
+              const SizedBox(height: 8),
+              Text(daily.text,
+                  style: TextStyle(
+                      fontSize: 17,
+                      height: 1.7,
+                      color: scheme.onPrimaryContainer)),
+              const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
                 child: Text(
                   '—${book.name} ${daily.chapter}:${daily.verse}',
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: scheme.onPrimaryContainer),
                 ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 繼續閱讀卡。
+class _ContinueReadingCard extends StatelessWidget {
+  final Book book;
+  final int chapter;
+
+  const _ContinueReadingCard({required this.book, required this.chapter});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ListTile(
+        leading: const Icon(Icons.auto_stories),
+        title: Text('繼續閱讀：${book.name} 第 $chapter 章'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ChapterScreen(bookId: book.id, chapter: chapter),
           ),
         ),
       ),
@@ -161,7 +242,7 @@ class _ReadingProgressBar extends ConsumerWidget {
     final count = ref.watch(readChapterCountProvider).value ?? 0;
     if (count == 0) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           Expanded(
@@ -182,9 +263,9 @@ class _ReadingProgressBar extends ConsumerWidget {
   }
 }
 
-/// 首頁「個人筆記」區：最近筆記橫向預覽，點開回到該節。
-class _RecentNotesBar extends ConsumerWidget {
-  const _RecentNotesBar();
+/// 首頁「我的筆記」預覽：最近筆記橫向捲動，點開回到該節。
+class _RecentNotesSection extends ConsumerWidget {
+  const _RecentNotesSection();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -197,19 +278,16 @@ class _RecentNotesBar extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('我的筆記',
-                  style: Theme.of(context).textTheme.titleSmall),
+              Text('我的筆記', style: Theme.of(context).textTheme.titleSmall),
               TextButton(
                 onPressed: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) =>
-                        const BookmarksScreen(initialTab: 2),
-                  ),
+                      builder: (_) => const BookmarksScreen(initialTab: 2)),
                 ),
                 child: const Text('看全部'),
               ),
@@ -220,7 +298,6 @@ class _RecentNotesBar extends ConsumerWidget {
           height: 96,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: recent.length,
             separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (context, i) {
@@ -271,160 +348,6 @@ class _RecentNotesBar extends ConsumerWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ContinueReadingBar extends StatelessWidget {
-  final Book book;
-  final int chapter;
-
-  const _ContinueReadingBar({required this.book, required this.chapter});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.primaryContainer,
-      child: ListTile(
-        leading: Icon(Icons.auto_stories, color: scheme.onPrimaryContainer),
-        title: Text(
-          '繼續閱讀：${book.name} 第 $chapter 章',
-          style: TextStyle(color: scheme.onPrimaryContainer),
-        ),
-        trailing:
-            Icon(Icons.chevron_right, color: scheme.onPrimaryContainer),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                ChapterScreen(bookId: book.id, chapter: chapter),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BookList extends StatelessWidget {
-  final List<Book> books;
-
-  const _BookList({required this.books});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      itemCount: books.length,
-      itemBuilder: (context, i) {
-        final book = books[i];
-        return ExpansionTile(
-          title: Text(book.name),
-          subtitle: Text('${book.chapterCount} 章'),
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _ChapterGrid(book: book),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// 章節格。最前面是「導讀」、最後面是「統整」標籤方格（獨立於各章）。
-/// 注意：不用 GridView（在可捲動父層裡會出問題），用 Wrap。
-class _ChapterGrid extends StatelessWidget {
-  final Book book;
-
-  const _ChapterGrid({required this.book});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: [
-        _OverviewBox(
-          label: '導讀',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => BookOverviewScreen(
-                  bookId: book.id,
-                  bookName: book.name,
-                  kind: OverviewKind.intro),
-            ),
-          ),
-        ),
-        for (var c = 1; c <= book.chapterCount; c++)
-          InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ChapterScreen(bookId: book.id, chapter: c),
-              ),
-            ),
-            child: Container(
-              width: 44,
-              height: 44,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text('$c', style: TextStyle(color: scheme.onSurface)),
-            ),
-          ),
-        _OverviewBox(
-          label: '統整',
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => BookOverviewScreen(
-                  bookId: book.id,
-                  bookName: book.name,
-                  kind: OverviewKind.summary),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 導讀／統整標籤方格（與章節格同大小，配色區隔）。
-class _OverviewBox extends StatelessWidget {
-  final String label;
-  final VoidCallback onTap;
-
-  const _OverviewBox({required this.label, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: onTap,
-      child: Container(
-        width: 44,
-        height: 44,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: scheme.primaryContainer,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: scheme.onPrimaryContainer,
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ),
     );
   }
 }
