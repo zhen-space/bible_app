@@ -50,7 +50,8 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - 交叉引用（crossRefs）是節位字串，讀經頁點了會跳轉；可帶範圍（約1:1-3），跳轉時取破折號前。
 - 目前只有 3 章示範內容（創1、詩23、約3）。**補內容 = 編輯這個 JSON**，不用改程式。
 - 有測試守著：所有 key 在範圍內、所有交叉引用能解析。
-- 「每句可個人註解但公開須經審核」需要後端（Firebase + 管理者審核），尚未做。
+- **管理後台（App 內）**：管理者（`kAdminEmail`＝使用者本人）登入後，設定頁出現「內容管理」。可在 App 內撰寫卷導讀/統整、章導讀/重點、節註解，存 Firestore `annotations` collection（doc id：`book_{id}` / `chapter_{id}_{章}` / `verse_{id}_{章}_{節}`，資料形狀同 asset JSON）。讀經端 `cloudAnnotationsProvider` 啟動抓一次，**雲端優先、asset 為底**合併。⛔ 內容仍由使用者親寫，Claude 只維護編輯器。
+- 「每句可個人註解但公開須經審核」（多人投稿）尚未做；目前只有管理者一人可寫。
 
 ## 經文資料
 

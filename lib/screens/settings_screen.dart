@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
+import 'admin_screen.dart';
 
 /// 設定：外觀主題、字級。
 class SettingsScreen extends ConsumerWidget {
@@ -117,6 +118,16 @@ class _AccountSection extends ConsumerWidget {
             title: const Text('立即同步'),
             onTap: notifier.syncNow,
           ),
+          if (ref.watch(isAdminProvider))
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings),
+              title: const Text('內容管理（後台）'),
+              subtitle: const Text('撰寫導讀、統整、每節註解並發布'),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
+              ),
+            ),
           ListTile(
             leading: const Icon(Icons.logout),
             title: const Text('登出'),

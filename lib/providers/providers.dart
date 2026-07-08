@@ -8,9 +8,14 @@ import '../data/topics.dart';
 import '../models/models.dart';
 import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
+import '../services/content_service.dart';
 import '../services/database_service.dart';
 import '../services/sync_service.dart';
 import '../services/verse_locator.dart';
+
+/// 管理者帳號（後台入口只對這個 Google 帳號顯示；
+/// Firestore 規則端也用同一個 email 把關）。
+const String kAdminEmail = 'zhen20091212@gmail.com';
 
 final bibleRepositoryProvider = Provider((ref) => BibleRepository());
 final databaseServiceProvider = Provider((ref) => DatabaseService());
@@ -228,20 +233,56 @@ final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
       bookId: loc.bookId, chapter: loc.chapter, verse: loc.verse!, text: text);
 });
 
-/// 整卷書的導讀＋統整（獨立標籤方格用）。
+final contentServiceProvider = Provider((ref) => ContentService());
+
+/// 雲端內容層：annotations collection 全部 doc（Firebase 不可用或離線時為空，
+/// 讀經端自動退回 asset 內容）。
+final cloudAnnotationsProvider =
+    FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const {};
+  try {
+    return await ref.watch(contentServiceProvider).fetchAll();
+  } catch (_) {
+    return const {};
+  }
+});
+
+/// 整卷書的導讀＋統整（獨立標籤方格用）。雲端優先、asset 為底。
 final bookAnnotationProvider =
-    FutureProvider.family<BookAnnotation?, int>((ref, bookId) {
+    FutureProvider.family<BookAnnotation?, int>((ref, bookId) async {
+  final cloud = await ref.watch(cloudAnnotationsProvider.future);
+  final doc = cloud['book_$bookId'];
+  if (doc != null) return BookAnnotation.fromJson(doc);
   return ref.watch(annotationRepositoryProvider).book(bookId);
 });
 
-/// 章導讀 + 該章的節註解（白板「二、註解內容模組」）。
+/// 章導讀 + 該章的節註解（白板「二、註解內容模組」）。雲端優先、asset 為底。
 final chapterAnnotationProvider = FutureProvider.family<
     ({ChapterAnnotation? chapter, Map<int, VerseAnnotation> verses}),
     ({int bookId, int chapter})>((ref, args) async {
   final repo = ref.watch(annotationRepositoryProvider);
-  final chapter = await repo.chapter(args.bookId, args.chapter);
+  final cloud = await ref.watch(cloudAnnotationsProvider.future);
+
+  final cloudChapter = cloud['chapter_${args.bookId}_${args.chapter}'];
+  final chapter = cloudChapter != null
+      ? ChapterAnnotation.fromJson(cloudChapter)
+      : await repo.chapter(args.bookId, args.chapter);
+
   final verses = await repo.versesIn(args.bookId, args.chapter);
+  final prefix = 'verse_${args.bookId}_${args.chapter}_';
+  cloud.forEach((k, v) {
+    if (k.startsWith(prefix)) {
+      final verseNo = int.tryParse(k.substring(prefix.length));
+      if (verseNo != null) verses[verseNo] = VerseAnnotation.fromJson(v);
+    }
+  });
   return (chapter: chapter, verses: verses);
+});
+
+/// 是否為管理者（後台入口顯示條件）。
+final isAdminProvider = Provider<bool>((ref) {
+  final user = ref.watch(authUserProvider).value;
+  return user?.email == kAdminEmail;
 });
 
 final allBookmarksProvider = FutureProvider<List<Bookmark>>(
