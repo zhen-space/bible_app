@@ -188,6 +188,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 else
                   _FlowingChapter(
                     verses: verses,
+                    english: englishReady
+                        ? [for (var v = 1; v <= verses.length; v++) en(v)]
+                        : null,
                     fontSize: fontSize,
                     highlights: marks.highlights,
                     annotated: verseAnns.keys.toSet(),
@@ -585,6 +588,7 @@ class _VerseTile extends StatelessWidget {
 /// 整章連續模式：所有節連成段落，節號上標，仍可逐節點擊與顯示螢光筆。
 class _FlowingChapter extends StatefulWidget {
   final List<String> verses;
+  final List<String?>? english; // 中英對照開啟時每節英文（對齊 verses）
   final double fontSize;
   final Map<int, HighlightColor> highlights;
   final Set<int> annotated;
@@ -592,6 +596,7 @@ class _FlowingChapter extends StatefulWidget {
 
   const _FlowingChapter({
     required this.verses,
+    required this.english,
     required this.fontSize,
     required this.highlights,
     required this.annotated,
@@ -659,6 +664,19 @@ class _FlowingChapterState extends State<_FlowingChapter> {
         ),
         recognizer: recognizer,
       ));
+      // 中英對照：整章連續模式下，每節中文後緊接英文（灰字）
+      final en = widget.english != null ? widget.english![i] : null;
+      if (en != null) {
+        spans.add(TextSpan(
+          text: ' $en',
+          style: TextStyle(
+            fontSize: widget.fontSize * 0.8,
+            height: 1.9,
+            color: scheme.onSurface.withValues(alpha: 0.55),
+          ),
+          recognizer: recognizer,
+        ));
+      }
     }
 
     return Padding(

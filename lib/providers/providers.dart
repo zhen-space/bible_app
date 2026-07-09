@@ -374,6 +374,20 @@ class SyncStatusNotifier extends Notifier<String?> {
     }
   }
 
+  /// Apple 登入（web 用 popup）。需 Firebase 啟用 Apple provider。
+  Future<void> signInApple() async {
+    state = null;
+    try {
+      final provider = OAuthProvider('apple.com')
+        ..addScope('email')
+        ..addScope('name');
+      await FirebaseAuth.instance.signInWithPopup(provider);
+      await syncNow();
+    } catch (e) {
+      state = '登入失敗：$e';
+    }
+  }
+
   Future<void> signOut() async {
     await FirebaseAuth.instance.signOut();
     state = null;

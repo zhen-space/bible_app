@@ -5,65 +5,108 @@ import '../models/models.dart';
 /// 深淺色主題。所有畫面顏色一律透過 Theme 或 [highlightColor] 取得，
 /// 不在 widget 裡寫死顏色（深色模式第一天就要對）。
 class AppTheme {
-  // 配色：淺色＝白底＋藍＋金＋黑字；深色＝深藍底＋白字＋金。
-  static const _blue = Color(0xFF1565C0); // 主色藍
-  static const _blueLight = Color(0xFF7FB0E8); // 深色模式的亮藍
-  static const _gold = Color(0xFFC9A227); // 金（強調）
-  static const _goldDark = Color(0xFFD4AF37); // 深色模式的金
-  static const _ink = Color(0xFF1A1A1A); // 黑字
-  static const _navy = Color(0xFF0B1D33); // 深藍底
-  static const _navySurface = Color(0xFF10243D); // 深藍卡片
+  // 配色：淺色＝天空藍底＋黑字＋金圖標；深色＝深藍底＋白字＋金圖標。
+  static const _gold = Color(0xFFC9A227); // 金（圖標/強調）
+  static const _goldDark = Color(0xFFD8B84A); // 深色模式的金（亮一點）
+  static const _ink = Color(0xFF1C1C1E); // 黑字（iOS label 黑）
+  static const _skyBg = Color(0xFFEAF4FC); // 天空藍背景（淺）
+  static const _skyCard = Color(0xFFFFFFFF); // 白卡片（浮在天空藍上）
+  static const _skyContainer = Color(0xFFDCEBFA); // 淺藍容器
+  static const _navy = Color(0xFF0A1626); // 深藍底
+  static const _navyCard = Color(0xFF13233A); // 深藍卡片
+  static const _navyContainer = Color(0xFF1C3350); // 深藍容器
 
   /// 打包的繁中字型（網頁版不依賴 Google CDN，各平台字型一致）。
   static const _fontFamily = 'NotoSansTC';
 
+  // iOS 風大標題（左對齊、粗體、稍大）。
+  static const _titleStyle = TextStyle(
+    fontFamily: _fontFamily,
+    fontSize: 20,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.3,
+  );
+
   static final ThemeData light = ThemeData(
     colorScheme: ColorScheme.fromSeed(
-      seedColor: _blue,
+      seedColor: _gold,
       brightness: Brightness.light,
     ).copyWith(
-      primary: _blue,
+      primary: _gold, // 圖標/強調＝金
       onPrimary: Colors.white,
       secondary: _gold,
       onSecondary: Colors.white,
       tertiary: _gold,
-      onTertiary: Colors.white,
-      surface: Colors.white,
+      surface: _skyCard,
       onSurface: _ink,
+      surfaceContainerHighest: _skyContainer,
+      surfaceContainerHigh: _skyContainer,
+      primaryContainer: _skyContainer,
+      onPrimaryContainer: _ink,
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
-    scaffoldBackgroundColor: Colors.white,
-    appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.white,
-      foregroundColor: _ink,
+    scaffoldBackgroundColor: _skyBg,
+    iconTheme: const IconThemeData(color: _gold),
+    cardTheme: CardThemeData(
       elevation: 0,
-      scrolledUnderElevation: 1,
+      color: _skyCard,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      margin: EdgeInsets.zero,
     ),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: _skyBg,
+      foregroundColor: _ink, // 標題黑字
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      titleTextStyle: _titleStyle,
+      iconTheme: IconThemeData(color: _gold), // leading 金
+      actionsIconTheme: IconThemeData(color: _gold), // actions 金
+    ),
+    listTileTheme: const ListTileThemeData(iconColor: _gold),
   );
 
   static final ThemeData dark = ThemeData(
     colorScheme: ColorScheme.fromSeed(
-      seedColor: _blue,
+      seedColor: _gold,
       brightness: Brightness.dark,
     ).copyWith(
-      primary: _blueLight,
+      primary: _goldDark,
       onPrimary: _navy,
       secondary: _goldDark,
       onSecondary: _navy,
       tertiary: _goldDark,
-      surface: _navySurface,
+      surface: _navyCard,
       onSurface: Colors.white,
+      surfaceContainerHighest: _navyContainer,
+      surfaceContainerHigh: _navyContainer,
+      primaryContainer: _navyContainer,
+      onPrimaryContainer: Colors.white,
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
     scaffoldBackgroundColor: _navy,
+    iconTheme: const IconThemeData(color: _goldDark),
+    cardTheme: CardThemeData(
+      elevation: 0,
+      color: _navyCard,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      margin: EdgeInsets.zero,
+    ),
     appBarTheme: const AppBarTheme(
       backgroundColor: _navy,
       foregroundColor: Colors.white,
       elevation: 0,
-      scrolledUnderElevation: 1,
+      scrolledUnderElevation: 0,
+      centerTitle: false,
+      titleTextStyle: _titleStyle,
+      iconTheme: IconThemeData(color: _goldDark),
+      actionsIconTheme: IconThemeData(color: _goldDark),
     ),
+    listTileTheme: const ListTileThemeData(iconColor: _goldDark),
   );
 
   /// 螢光筆顏色（深淺色各一組，不寫死單一色）。
