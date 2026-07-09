@@ -5,16 +5,19 @@ import '../models/models.dart';
 /// 深淺色主題。所有畫面顏色一律透過 Theme 或 [highlightColor] 取得，
 /// 不在 widget 裡寫死顏色（深色模式第一天就要對）。
 class AppTheme {
-  // 配色：淺色＝天空藍底＋黑字＋金圖標；深色＝深藍底＋白字＋金圖標。
-  static const _gold = Color(0xFFC9A227); // 金（圖標/強調）
-  static const _goldDark = Color(0xFFD8B84A); // 深色模式的金（亮一點）
-  static const _ink = Color(0xFF1C1C1E); // 黑字（iOS label 黑）
-  static const _skyBg = Color(0xFFEAF4FC); // 天空藍背景（淺）
-  static const _skyCard = Color(0xFFFFFFFF); // 白卡片（浮在天空藍上）
-  static const _skyContainer = Color(0xFFDCEBFA); // 淺藍容器
-  static const _navy = Color(0xFF0A1626); // 深藍底
-  static const _navyCard = Color(0xFF13233A); // 深藍卡片
-  static const _navyContainer = Color(0xFF1C3350); // 深藍容器
+  // 品牌藍（使用者指定）：淺藍 #0086CC、深藍 #005B98。
+  // 配色：淺色＝白底＋黑字＋金圖標＋藍強調；深色＝深藍底＋白字＋金圖標。
+  static const _blue = Color(0xFF0086CC); // 淺藍（主色）
+  static const _blueDeep = Color(0xFF005B98); // 深藍
+  static const _blueOnDark = Color(0xFF3EA8E5); // 深色模式用的亮藍
+  static const _gold = Color(0xFFC9A227); // 金（圖標）
+  static const _goldDark = Color(0xFFD8B84A); // 深色模式的金
+  static const _ink = Color(0xFF1C1C1E); // 黑字
+  static const _cardBorder = Color(0xFFE4E8EE); // 白卡片在白底上的細邊
+  static const _greyContainer = Color(0xFFEEF3F7); // 淺灰藍容器（章節格等）
+  static const _navy = Color(0xFF071726); // 深藍底
+  static const _navyCard = Color(0xFF0E2438); // 深藍卡片
+  static const _navyContainer = Color(0xFF16324B); // 深藍容器
 
   /// 打包的繁中字型（網頁版不依賴 Google CDN，各平台字型一致）。
   static const _fontFamily = 'NotoSansTC';
@@ -29,34 +32,37 @@ class AppTheme {
 
   static final ThemeData light = ThemeData(
     colorScheme: ColorScheme.fromSeed(
-      seedColor: _gold,
+      seedColor: _blue,
       brightness: Brightness.light,
     ).copyWith(
-      primary: _gold, // 圖標/強調＝金
+      primary: _blue, // 強調藍
       onPrimary: Colors.white,
       secondary: _gold,
       onSecondary: Colors.white,
       tertiary: _gold,
-      surface: _skyCard,
+      surface: Colors.white,
       onSurface: _ink,
-      surfaceContainerHighest: _skyContainer,
-      surfaceContainerHigh: _skyContainer,
-      primaryContainer: _skyContainer,
-      onPrimaryContainer: _ink,
+      surfaceContainerHighest: _greyContainer,
+      surfaceContainerHigh: _greyContainer,
+      primaryContainer: _blue, // 強調卡（今日經文/導讀方格）＝實心藍
+      onPrimaryContainer: Colors.white,
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
-    scaffoldBackgroundColor: _skyBg,
+    scaffoldBackgroundColor: Colors.white,
     iconTheme: const IconThemeData(color: _gold),
     cardTheme: CardThemeData(
       elevation: 0,
-      color: _skyCard,
+      color: Colors.white,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: _cardBorder),
+      ),
       margin: EdgeInsets.zero,
     ),
     appBarTheme: const AppBarTheme(
-      backgroundColor: _skyBg,
+      backgroundColor: Colors.white,
       foregroundColor: _ink, // 標題黑字
       elevation: 0,
       scrolledUnderElevation: 0,
@@ -66,14 +72,15 @@ class AppTheme {
       actionsIconTheme: IconThemeData(color: _gold), // actions 金
     ),
     listTileTheme: const ListTileThemeData(iconColor: _gold),
+    dividerTheme: const DividerThemeData(color: _cardBorder, thickness: 1),
   );
 
   static final ThemeData dark = ThemeData(
     colorScheme: ColorScheme.fromSeed(
-      seedColor: _gold,
+      seedColor: _blue,
       brightness: Brightness.dark,
     ).copyWith(
-      primary: _goldDark,
+      primary: _blueOnDark,
       onPrimary: _navy,
       secondary: _goldDark,
       onSecondary: _navy,
@@ -82,7 +89,7 @@ class AppTheme {
       onSurface: Colors.white,
       surfaceContainerHighest: _navyContainer,
       surfaceContainerHigh: _navyContainer,
-      primaryContainer: _navyContainer,
+      primaryContainer: _blueDeep, // 強調卡＝深藍
       onPrimaryContainer: Colors.white,
     ),
     useMaterial3: true,

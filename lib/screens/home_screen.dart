@@ -125,7 +125,7 @@ class _EntryCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
             child: Column(
               children: [
-                Icon(icon, size: 32, color: scheme.primary),
+                Icon(icon, size: 32, color: scheme.secondary), // 金
                 const SizedBox(height: 8),
                 Text(label,
                     style: Theme.of(context)
