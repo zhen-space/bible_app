@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../theme/app_theme.dart';
 import 'bookmarks_screen.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
@@ -160,13 +161,16 @@ class _DailyVerseCard extends ConsumerWidget {
       return const SizedBox(height: 120);
     }
     final book = books[daily.bookId - 1];
-    final scheme = Theme.of(context).colorScheme;
+    const onCard = Colors.white; // 漸層藍上一律白字
 
-    return Card(
-      margin: EdgeInsets.zero,
-      color: scheme.primaryContainer,
+    return Container(
+      decoration: BoxDecoration(
+        gradient: AppTheme.brandGradient,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(18),
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
@@ -181,13 +185,13 @@ class _DailyVerseCard extends ConsumerWidget {
             children: [
               Text('今日經文',
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                      color: scheme.onPrimaryContainer)),
+                      color: onCard)),
               const SizedBox(height: 8),
               Text(daily.text,
                   style: TextStyle(
                       fontSize: 17,
                       height: 1.7,
-                      color: scheme.onPrimaryContainer)),
+                      color: onCard)),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerRight,
@@ -196,7 +200,7 @@ class _DailyVerseCard extends ConsumerWidget {
                   style: Theme.of(context)
                       .textTheme
                       .bodySmall
-                      ?.copyWith(color: scheme.onPrimaryContainer),
+                      ?.copyWith(color: onCard),
                 ),
               ),
             ],
@@ -251,6 +255,8 @@ class _ReadingProgressBar extends ConsumerWidget {
               child: LinearProgressIndicator(
                 value: count / kTotalChapters,
                 minHeight: 6,
+                color: AppTheme.accentBlue,
+                backgroundColor: AppTheme.paleBlue.withValues(alpha: 0.35),
               ),
             ),
           ),

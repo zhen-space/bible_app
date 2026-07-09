@@ -5,19 +5,33 @@ import '../models/models.dart';
 /// 深淺色主題。所有畫面顏色一律透過 Theme 或 [highlightColor] 取得，
 /// 不在 widget 裡寫死顏色（深色模式第一天就要對）。
 class AppTheme {
-  // 品牌藍（使用者指定）：淺藍 #0086CC、深藍 #005B98。
-  // 配色：淺色＝白底＋黑字＋金圖標＋藍強調；深色＝深藍底＋白字＋金圖標。
-  static const _blue = Color(0xFF0086CC); // 淺藍（主色）
-  static const _blueDeep = Color(0xFF005B98); // 深藍
-  static const _blueOnDark = Color(0xFF3EA8E5); // 深色模式用的亮藍
+  // 品牌藍漸層（使用者指定四色，由淺到深）：
+  static const _bluePale = Color(0xFF8AC4DE); // 最淺
+  static const _blueMid = Color(0xFF6C9BD2); // 中
+  static const _blue = Color(0xFF0086CC); // 主色
+  static const _blueDeep = Color(0xFF005B98); // 深
+  static const _blueOnDark = Color(0xFF6C9BD2); // 深色模式用的亮藍
   static const _gold = Color(0xFFC9A227); // 金（圖標）
   static const _goldDark = Color(0xFFD8B84A); // 深色模式的金
   static const _ink = Color(0xFF1C1C1E); // 黑字
   static const _cardBorder = Color(0xFFE4E8EE); // 白卡片在白底上的細邊
-  static const _greyContainer = Color(0xFFEEF3F7); // 淺灰藍容器（章節格等）
+  static const _blueContainer = Color(0xFFE4F0F8); // 淺藍容器（章節格等）
   static const _navy = Color(0xFF071726); // 深藍底
   static const _navyCard = Color(0xFF0E2438); // 深藍卡片
   static const _navyContainer = Color(0xFF16324B); // 深藍容器
+
+  /// 今日經文卡等強調處的品牌藍漸層（淺→深）。
+  static const brandGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [_blue, _blueDeep],
+  );
+
+  /// 次要強調藍（進度條、連結）。
+  static const accentBlue = _blueMid;
+
+  /// 最淺品牌藍（章節格底）。
+  static const paleBlue = _bluePale;
 
   /// 打包的繁中字型（網頁版不依賴 Google CDN，各平台字型一致）。
   static const _fontFamily = 'NotoSansTC';
@@ -42,8 +56,8 @@ class AppTheme {
       tertiary: _gold,
       surface: Colors.white,
       onSurface: _ink,
-      surfaceContainerHighest: _greyContainer,
-      surfaceContainerHigh: _greyContainer,
+      surfaceContainerHighest: _blueContainer,
+      surfaceContainerHigh: _blueContainer,
       primaryContainer: _blue, // 強調卡（今日經文/導讀方格）＝實心藍
       onPrimaryContainer: Colors.white,
     ),

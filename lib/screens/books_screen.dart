@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import 'book_overview_screen.dart';
+import '../theme/app_theme.dart';
 import 'chapter_screen.dart';
 
 /// 書卷列表（舊約/新約 分頁 + 章節格）。從首頁「讀聖經」進入。
@@ -106,10 +107,12 @@ class _ChapterGrid extends StatelessWidget {
               height: 44,
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
+                color: AppTheme.paleBlue.withValues(alpha: 0.28),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Text('$c', style: TextStyle(color: scheme.onSurface)),
+              child: Text('$c',
+                  style: TextStyle(
+                      color: scheme.onSurface, fontWeight: FontWeight.w500)),
             ),
           ),
         _OverviewBox(
