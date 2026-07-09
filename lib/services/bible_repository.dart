@@ -8,6 +8,8 @@ import '../models/models.dart';
 /// 經文唯讀，不進 SQLite；搜尋直接掃記憶體（3.1 萬節，毫秒級）。
 class BibleRepository {
   List<Book>? _books;
+  // 英文對照（KJV）：english[bookId-1][章-1][節-1]。首次需要時才載入。
+  List<List<List<String>>>? _english;
 
   Future<List<Book>> loadBooks() async {
     if (_books != null) return _books!;
@@ -17,6 +19,34 @@ class BibleRepository {
         .map((b) => Book.fromJson(b as Map<String, dynamic>))
         .toList();
     return _books!;
+  }
+
+  /// 載入英文 KJV（4.5MB，只有開啟英文對照時才載）。
+  Future<void> loadEnglish() async {
+    if (_english != null) return;
+    final raw = await rootBundle.loadString('assets/bible/kjv.json');
+    final data = json.decode(raw) as Map<String, dynamic>;
+    final books = (data['books'] as List)
+        .cast<Map<String, dynamic>>()
+      ..sort((a, b) => (a['id'] as int).compareTo(b['id'] as int));
+    _english = books
+        .map((b) => (b['chapters'] as List)
+            .map((ch) => (ch as List).cast<String>())
+            .toList())
+        .toList();
+  }
+
+  bool get englishLoaded => _english != null;
+
+  /// 取某節英文；沒有（版本節數差異）就回 null。
+  String? english(int bookId, int chapter, int verse) {
+    final e = _english;
+    if (e == null || bookId < 1 || bookId > e.length) return null;
+    final chapters = e[bookId - 1];
+    if (chapter < 1 || chapter > chapters.length) return null;
+    final verses = chapters[chapter - 1];
+    if (verse < 1 || verse > verses.length) return null;
+    return verses[verse - 1];
   }
 
   Book bookById(int id) => _books![id - 1];

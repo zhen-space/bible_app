@@ -64,13 +64,13 @@ final themeModeProvider =
 /// 內文字級，持久化。
 class FontSizeNotifier extends Notifier<double> {
   static const _key = 'font_size';
-  static const min = 14.0;
-  static const max = 28.0;
+  static const min = 16.0;
+  static const max = 34.0;
 
   @override
   double build() {
     _load();
-    return 18.0;
+    return 21.0; // 預設放大，讀起來更舒服
   }
 
   Future<void> _load() async {
@@ -125,6 +125,40 @@ class ReadingModeNotifier extends Notifier<ReadingMode> {
 
 final readingModeProvider =
     NotifierProvider<ReadingModeNotifier, ReadingMode>(ReadingModeNotifier.new);
+
+/// 中英對照開關（開啟時每節中文下方顯示英文 KJV）。持久化。
+class BilingualNotifier extends Notifier<bool> {
+  static const _key = 'bilingual';
+
+  @override
+  bool build() {
+    _load();
+    return false;
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      state = prefs.getBool(_key) ?? false;
+    } catch (_) {}
+  }
+
+  Future<void> toggle() async {
+    state = !state;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_key, state);
+  }
+}
+
+final bilingualProvider =
+    NotifierProvider<BilingualNotifier, bool>(BilingualNotifier.new);
+
+/// 開啟中英對照時載入英文 KJV（4.5MB，只在需要時載一次）。
+final englishReadyProvider = FutureProvider<bool>((ref) async {
+  if (!ref.watch(bilingualProvider)) return false;
+  await ref.watch(bibleRepositoryProvider).loadEnglish();
+  return true;
+});
 
 /// 上次閱讀位置（書卷+章），持久化。
 class LastReadNotifier extends Notifier<({int bookId, int chapter})?> {

@@ -70,6 +70,13 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: (_) =>
                 ref.read(readingModeProvider.notifier).toggle(),
           ),
+          SwitchListTile(
+            title: const Text('中英對照'),
+            subtitle: const Text('每節中文下方顯示英文（KJV）；讀經畫面右上角也能切換'),
+            value: ref.watch(bilingualProvider),
+            onChanged: (_) =>
+                ref.read(bilingualProvider.notifier).toggle(),
+          ),
           const Divider(),
           const AboutListTile(
             icon: Icon(Icons.info_outline),

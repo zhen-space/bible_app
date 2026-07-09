@@ -7,6 +7,7 @@ import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
 import '../theme/app_theme.dart';
+import 'search_screen.dart';
 
 /// 讀經畫面：一次一章，左右滑或按鈕換章，點經節開操作選單。
 /// 支援兩種閱讀模式（逐節／整章）、章前導讀、章後統整、每節註解。
@@ -33,6 +34,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(lastReadProvider.notifier).set(_bookId, _chapter);
       _logRead();
+      // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
+      ref.read(bibleRepositoryProvider).loadEnglish();
     });
   }
 
@@ -89,6 +92,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final booksAsync = ref.watch(booksProvider);
     final fontSize = ref.watch(fontSizeProvider);
     final mode = ref.watch(readingModeProvider);
+    final bilingual = ref.watch(bilingualProvider);
+    // 觸發英文載入；載入完成後 rebuild 才會有英文
+    final englishReady =
+        bilingual && (ref.watch(englishReadyProvider).value ?? false);
+    final repo = ref.read(bibleRepositoryProvider);
+    String? en(int verseNo) =>
+        englishReady ? repo.english(_bookId, _chapter, verseNo) : null;
 
     return booksAsync.when(
       loading: () => const Scaffold(
@@ -106,13 +116,33 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             .watch(chapterAnnotationProvider(
                 (bookId: _bookId, chapter: _chapter)))
             .value;
-        final chapterAnn = ann?.chapter;
         final verseAnns = ann?.verses ?? const <int, VerseAnnotation>{};
+        // 本卷統整：只在整卷最後一章的末尾顯示（章層級導讀/重點已移除）
+        final bookSummary = _chapter == book.chapterCount
+            ? ref.watch(bookAnnotationProvider(_bookId)).value?.summary
+            : null;
 
         return Scaffold(
           appBar: AppBar(
             title: Text('${book.name} $_chapter'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.search),
+                tooltip: '搜尋經文',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const SearchScreen()),
+                ),
+              ),
+              IconButton(
+                icon: Icon(bilingual ? Icons.translate : Icons.translate_outlined),
+                color: bilingual
+                    ? Theme.of(context).colorScheme.secondary
+                    : null,
+                tooltip: bilingual ? '關閉中英對照' : '中英對照',
+                onPressed: () =>
+                    ref.read(bilingualProvider.notifier).toggle(),
+              ),
               IconButton(
                 icon: Icon(mode == ReadingMode.verse
                     ? Icons.notes
@@ -136,16 +166,16 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             },
             child: ListView(
               key: PageStorageKey('$_bookId-$_chapter'),
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 80),
+              // 左右留白、上下寬鬆，讀起來不擁擠
+              padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
               children: [
-                if (chapterAnn != null && chapterAnn.hasIntro)
-                  _IntroCard(annotation: chapterAnn),
                 if (mode == ReadingMode.verse)
                   ...List.generate(verses.length, (i) {
                     final verseNo = i + 1;
                     return _VerseTile(
                       verseNo: verseNo,
                       text: verses[i],
+                      english: en(verseNo),
                       fontSize: fontSize,
                       highlight: marks.highlights[verseNo],
                       bookmarked: marks.bookmarks.contains(verseNo),
@@ -165,8 +195,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         verseNo, verses[verseNo - 1], marks,
                         verseAnns[verseNo]),
                   ),
-                if (chapterAnn?.conclusion != null)
-                  _ConclusionCard(text: chapterAnn!.conclusion!),
+                if (bookSummary != null)
+                  _BookSummaryCard(bookName: book.name, text: bookSummary),
               ],
             ),
           ),
@@ -235,6 +265,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final db = ref.read(databaseServiceProvider);
     final isBookmarked = marks.bookmarks.contains(verseNo);
     final note = marks.notes[verseNo];
+    // 點開一律附英文（不受對照開關影響，需要英文已載入）——先確保載入
+    ref.read(bibleRepositoryProvider).loadEnglish();
+    final english =
+        ref.read(bibleRepositoryProvider).english(_bookId, _chapter, verseNo);
 
     showModalBottomSheet(
       context: context,
@@ -248,11 +282,24 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           controller: scrollController,
           children: [
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Text(
                 '${book.name} $_chapter:$verseNo　$text',
                 style: Theme.of(ctx).textTheme.bodyLarge,
               ),
+            ),
+            if (english != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  english,
+                  style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(ctx)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.6),
+                      height: 1.5),
+                ),
             ),
             // 螢光筆選色
             Padding(
@@ -439,6 +486,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 class _VerseTile extends StatelessWidget {
   final int verseNo;
   final String text;
+  final String? english; // 中英對照開啟時的 KJV 英文
   final double fontSize;
   final HighlightColor? highlight;
   final bool bookmarked;
@@ -449,6 +497,7 @@ class _VerseTile extends StatelessWidget {
   const _VerseTile({
     required this.verseNo,
     required this.text,
+    required this.english,
     required this.fontSize,
     required this.highlight,
     required this.bookmarked,
@@ -464,52 +513,69 @@ class _VerseTile extends StatelessWidget {
     return InkWell(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: highlight != null
             ? BoxDecoration(
                 color: AppTheme.highlightColor(highlight!, isDark),
                 borderRadius: BorderRadius.circular(4),
               )
             : null,
-        child: Text.rich(
-          TextSpan(
-            children: [
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text.rich(
               TextSpan(
-                text: '$verseNo ',
-                style: TextStyle(
-                  fontSize: fontSize * 0.7,
-                  color: scheme.primary,
-                  fontWeight: FontWeight.bold,
+                children: [
+                  TextSpan(
+                    text: '$verseNo ',
+                    style: TextStyle(
+                      fontSize: fontSize * 0.7,
+                      color: scheme.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  TextSpan(
+                    text: text,
+                    style: TextStyle(fontSize: fontSize, height: 1.8),
+                  ),
+                  if (hasAnnotation)
+                    WidgetSpan(
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: Icon(Icons.menu_book_outlined,
+                            size: 15, color: scheme.tertiary),
+                      ),
+                    ),
+                  if (bookmarked)
+                    const WidgetSpan(
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.bookmark, size: 16),
+                      ),
+                    ),
+                  if (hasNote)
+                    const WidgetSpan(
+                      child: Padding(
+                        padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.sticky_note_2_outlined, size: 16),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (english != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, left: 2),
+                child: Text(
+                  english!,
+                  style: TextStyle(
+                    fontSize: fontSize * 0.82,
+                    height: 1.6,
+                    color: scheme.onSurface.withValues(alpha: 0.62),
+                  ),
                 ),
               ),
-              TextSpan(
-                text: text,
-                style: TextStyle(fontSize: fontSize, height: 1.7),
-              ),
-              if (hasAnnotation)
-                WidgetSpan(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 4),
-                    child: Icon(Icons.menu_book_outlined,
-                        size: 15, color: scheme.tertiary),
-                  ),
-                ),
-              if (bookmarked)
-                const WidgetSpan(
-                  child: Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: Icon(Icons.bookmark, size: 16),
-                  ),
-                ),
-              if (hasNote)
-                const WidgetSpan(
-                  child: Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: Icon(Icons.sticky_note_2_outlined, size: 16),
-                  ),
-                ),
-            ],
-          ),
+          ],
         ),
       ),
     );
@@ -602,119 +668,41 @@ class _FlowingChapterState extends State<_FlowingChapter> {
   }
 }
 
-/// 章前導讀卡（與章同級的標題）。
-class _IntroCard extends StatelessWidget {
-  final ChapterAnnotation annotation;
-
-  const _IntroCard({required this.annotation});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      color: scheme.surfaceContainerHigh,
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.auto_stories, size: 18, color: scheme.primary),
-                const SizedBox(width: 6),
-                Text('本章導讀',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(color: scheme.primary)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (annotation.summary != null)
-              _field('大意', annotation.summary!),
-            if (annotation.purpose != null)
-              _field('目的', annotation.purpose!),
-            if (annotation.author != null)
-              _field('作者', annotation.author!),
-            if (annotation.background != null)
-              _field('背景', annotation.background!),
-            if (annotation.outline.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text('分段',
-                  style: Theme.of(context)
-                      .textTheme
-                      .labelLarge
-                      ?.copyWith(color: scheme.secondary)),
-              const SizedBox(height: 2),
-              for (final line in annotation.outline)
-                Padding(
-                  padding: const EdgeInsets.only(top: 2, left: 4),
-                  child: Text('• $line',
-                      style: Theme.of(context).textTheme.bodyMedium),
-                ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _field(String label, String value) {
-    return Builder(builder: (context) {
-      final scheme = Theme.of(context).colorScheme;
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text.rich(TextSpan(children: [
-          TextSpan(
-            text: '$label　',
-            style: Theme.of(context)
-                .textTheme
-                .labelLarge
-                ?.copyWith(color: scheme.secondary),
-          ),
-          TextSpan(
-            text: value,
-            style:
-                Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.5),
-          ),
-        ])),
-      );
-    });
-  }
-}
-
-/// 章後統整卡（重點一句話）。
-class _ConclusionCard extends StatelessWidget {
+/// 本卷統整卡（顯示在整卷書最後一章的末尾）。
+class _BookSummaryCard extends StatelessWidget {
+  final String bookName;
   final String text;
 
-  const _ConclusionCard({required this.text});
+  const _BookSummaryCard({required this.bookName, required this.text});
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Card(
       color: scheme.primaryContainer,
-      margin: const EdgeInsets.only(top: 16),
+      margin: const EdgeInsets.only(top: 24),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Icon(Icons.lightbulb_outline,
-                    size: 18, color: scheme.onPrimaryContainer),
+                Icon(Icons.workspace_premium,
+                    size: 20, color: scheme.onPrimaryContainer),
                 const SizedBox(width: 6),
-                Text('本章重點',
+                Text('$bookName · 本卷統整',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: scheme.onPrimaryContainer)),
+                        color: scheme.onPrimaryContainer,
+                        fontWeight: FontWeight.w600)),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(text,
                 style: TextStyle(
-                    height: 1.6, color: scheme.onPrimaryContainer)),
+                    height: 1.8,
+                    fontSize: 16,
+                    color: scheme.onPrimaryContainer)),
           ],
         ),
       ),

@@ -78,20 +78,9 @@ void main() {
     await tester.tap(find.text('1').first);
     await tester.pumpAndSettle();
 
-    // 讀經畫面：創 1:1
+    // 讀經畫面：創 1:1（章層級導讀/重點已移除，讀經頁只有經文）
     expect(find.textContaining('起初', findRichText: true), findsWidgets);
     expect(find.text('創世記 第 1 章'), findsOneWidget);
-
-    // 章前導讀（在畫面頂端）
-    expect(find.text('本章導讀'), findsOneWidget);
-
-    // 章後統整在章末，捲到底才可見（創 1 有 31 節）
-    await tester.dragUntilVisible(
-      find.text('本章重點'),
-      find.byType(Scrollable).first,
-      const Offset(0, -400),
-    );
-    expect(find.text('本章重點'), findsOneWidget);
   });
 
   testWidgets('章節格最前導讀、最後統整方格 → 開啟卷導讀頁', (tester) async {
