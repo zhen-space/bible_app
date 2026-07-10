@@ -3,10 +3,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/entities.dart';
+import '../data/topics.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
 import 'chapter_screen.dart';
+import 'topics_screen.dart';
 
 /// 全文搜尋 + 節位快速跳轉（約3:16）+ 搜尋歷史。
 class SearchScreen extends ConsumerStatefulWidget {
@@ -19,6 +22,8 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   List<VerseRef> _results = [];
+  List<Topic> _topics = [];
+  List<BibleEntity> _entities = [];
   ({int bookId, int chapter, int? verse})? _jump;
   bool _searched = false;
   Timer? _debounce;
@@ -40,6 +45,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     if (!mounted) return;
     setState(() {
       _jump = VerseLocator.parse(q, books);
+      _topics = [
+        for (final t in [...topics, ...situations])
+          if (t.name.contains(q.trim()) || q.trim().contains(t.name)) t,
+      ];
+      _entities = searchEntities(q);
       _results = ref.read(bibleRepositoryProvider).search(q);
       _searched = q.trim().isNotEmpty;
     });
@@ -96,8 +106,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               _search(q);
             });
           }
-          if (_jump == null && _results.isEmpty) {
-            return const Center(child: Text('沒有找到符合的經文'));
+          if (_jump == null &&
+              _results.isEmpty &&
+              _topics.isEmpty &&
+              _entities.isEmpty) {
+            return const Center(child: Text('沒有找到符合的結果'));
           }
           return ListView(
             children: [
@@ -108,6 +121,37 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   onTap: () =>
                       _openChapter(_jump!.bookId, _jump!.chapter),
                 ),
+              // 主題
+              if (_topics.isNotEmpty) ...[
+                const _SectionLabel('主題'),
+                for (final t in _topics)
+                  ListTile(
+                    leading: Text(t.emoji,
+                        style: const TextStyle(fontSize: 22)),
+                    title: Text(t.name),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => TopicDetailScreen(topic: t)),
+                    ),
+                  ),
+              ],
+              // 人物／地點／事件
+              if (_entities.isNotEmpty) ...[
+                const _SectionLabel('人物・地點・事件'),
+                for (final e in _entities)
+                  ListTile(
+                    leading: Icon(_entityIcon(e.type)),
+                    title: Text(e.name),
+                    subtitle: Text('${entityTypeLabel(e.type)}　找出全部出現處'),
+                    onTap: () {
+                      _controller.text = e.name;
+                      _search(e.name);
+                    },
+                  ),
+              ],
+              // 經文
+              if (_results.isNotEmpty) const _SectionLabel('經文'),
               for (final r in _results)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -125,6 +169,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+IconData _entityIcon(EntityType t) {
+  switch (t) {
+    case EntityType.person:
+      return Icons.person_outline;
+    case EntityType.place:
+      return Icons.place_outlined;
+    case EntityType.event:
+      return Icons.event_outlined;
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String text;
+
+  const _SectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(text,
+          style: Theme.of(context)
+              .textTheme
+              .labelLarge
+              ?.copyWith(color: Theme.of(context).colorScheme.primary)),
     );
   }
 }

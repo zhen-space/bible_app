@@ -137,29 +137,69 @@ class _HighlightTab extends ConsumerWidget {
   }
 }
 
-class _NoteTab extends ConsumerWidget {
+class _NoteTab extends ConsumerStatefulWidget {
   const _NoteTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_NoteTab> createState() => _NoteTabState();
+}
+
+class _NoteTabState extends ConsumerState<_NoteTab> {
+  String _query = '';
+
+  @override
+  Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
     final notesAsync = ref.watch(allNotesProvider);
 
     return _asyncList2(booksAsync, notesAsync, (books, items) {
       if (items.isEmpty) return const Center(child: Text('還沒有筆記'));
-      return ListView.builder(
-        itemCount: items.length,
-        itemBuilder: (context, i) {
-          final n = items[i];
-          final book = books[n.bookId - 1];
-          return ListTile(
-            leading: const Icon(Icons.sticky_note_2_outlined),
-            title: Text(n.content,
-                maxLines: 3, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${book.name} ${n.chapter}:${n.verse}'),
-            onTap: () => _openChapter(context, n.bookId, n.chapter),
-          );
-        },
+      final q = _query.trim();
+      // 可搜筆記內容、書名、節位（例：約 3:16、觀察、標籤字）
+      final filtered = q.isEmpty
+          ? items
+          : items.where((n) {
+              final book = books[n.bookId - 1];
+              final ref = '${book.name} ${n.chapter}:${n.verse}';
+              return n.content.contains(q) || ref.contains(q);
+            }).toList();
+
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: TextField(
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                hintText: '搜尋筆記（內容、書名、節位）',
+                isDense: true,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              onChanged: (v) => setState(() => _query = v),
+            ),
+          ),
+          Expanded(
+            child: filtered.isEmpty
+                ? const Center(child: Text('沒有符合的筆記'))
+                : ListView.builder(
+                    itemCount: filtered.length,
+                    itemBuilder: (context, i) {
+                      final n = filtered[i];
+                      final book = books[n.bookId - 1];
+                      return ListTile(
+                        leading: const Icon(Icons.sticky_note_2_outlined),
+                        title: Text(n.content,
+                            maxLines: 3, overflow: TextOverflow.ellipsis),
+                        subtitle:
+                            Text('${book.name} ${n.chapter}:${n.verse}'),
+                        onTap: () =>
+                            _openChapter(context, n.bookId, n.chapter),
+                      );
+                    },
+                  ),
+          ),
+        ],
       );
     });
   }

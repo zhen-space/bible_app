@@ -51,28 +51,53 @@ class BibleRepository {
 
   Book bookById(int id) => _books![id - 1];
 
-  /// 全文搜尋，回傳最多 [limit] 筆結果。
-  List<VerseRef> search(String query, {int limit = 100}) {
+  /// 全文搜尋。先找完全符合（子字串），不足時用模糊（子序列：查詢字依序出現，
+  /// 中間可夾雜其他字）補上——打字漏字、順序拆開也找得到。
+  List<VerseRef> search(String query, {int limit = 100, bool fuzzy = true}) {
     final books = _books;
-    if (books == null || query.trim().isEmpty) return [];
-    final q = query.trim();
-    final results = <VerseRef>[];
+    if (books == null) return [];
+    // 去除空白與常見標點，讓「約 3 16」「神・愛」之類也能比對
+    final q = _normalize(query);
+    if (q.isEmpty) return [];
+
+    final exact = <VerseRef>[];
+    final loose = <VerseRef>[];
     for (final book in books) {
       for (var c = 0; c < book.chapters.length; c++) {
         final verses = book.chapters[c];
         for (var v = 0; v < verses.length; v++) {
-          if (verses[v].contains(q)) {
-            results.add(VerseRef(
-              bookId: book.id,
-              chapter: c + 1,
-              verse: v + 1,
-              text: verses[v],
-            ));
-            if (results.length >= limit) return results;
+          final raw = verses[v];
+          final norm = _normalize(raw);
+          if (norm.contains(q)) {
+            exact.add(VerseRef(
+                bookId: book.id, chapter: c + 1, verse: v + 1, text: raw));
+            if (exact.length >= limit) return exact;
+          } else if (fuzzy && q.length >= 2 && _isSubsequence(q, norm)) {
+            if (loose.length < limit) {
+              loose.add(VerseRef(
+                  bookId: book.id, chapter: c + 1, verse: v + 1, text: raw));
+            }
           }
         }
       }
     }
-    return results;
+    final out = exact;
+    for (final r in loose) {
+      if (out.length >= limit) break;
+      out.add(r);
+    }
+    return out;
+  }
+
+  static String _normalize(String s) =>
+      s.replaceAll(RegExp(r'[\s，、。；：！？「」『』（）,.;:!?()　]'), '');
+
+  /// q 的每個字是否依序出現在 text 中（子序列）。
+  static bool _isSubsequence(String q, String text) {
+    var i = 0;
+    for (var j = 0; j < text.length && i < q.length; j++) {
+      if (text[j] == q[i]) i++;
+    }
+    return i == q.length;
   }
 }

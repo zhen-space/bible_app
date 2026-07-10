@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:bible_app/data/entities.dart';
 import 'package:bible_app/data/topics.dart';
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/services/verse_locator.dart';
@@ -113,6 +114,15 @@ void main() {
               reason: '${entry.key} 的交叉引用無法解析：$r');
         }
       }
+    });
+  });
+
+  group('人物/地點/事件索引', () {
+    test('搜尋名稱與別名', () {
+      expect(searchEntities('摩西').map((e) => e.name), contains('摩西'));
+      expect(searchEntities('基督').map((e) => e.name), contains('耶穌'));
+      expect(searchEntities('亞伯蘭').map((e) => e.name), contains('亞伯拉罕'));
+      expect(searchEntities('十字架').map((e) => e.name), contains('釘十字架'));
     });
   });
 
