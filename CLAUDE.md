@@ -56,7 +56,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - 目前只有 3 章示範內容（創1、詩23、約3）。**補內容 = 編輯這個 JSON**，不用改程式。
 - 有測試守著：所有 key 在範圍內、所有交叉引用能解析。
 - **管理後台（App 內）**：管理者（`kAdminEmail`＝使用者本人）登入後，設定頁出現「內容管理」。可在 App 內撰寫卷導讀/統整、章導讀/重點、節註解，存 Firestore `annotations` collection（doc id：`book_{id}` / `chapter_{id}_{章}` / `verse_{id}_{章}_{節}`，資料形狀同 asset JSON）。讀經端 `cloudAnnotationsProvider` 啟動抓一次，**雲端優先、asset 為底**合併。⛔ 內容仍由使用者親寫，Claude 只維護編輯器。
-- 「每句可個人註解但公開須經審核」（多人投稿）尚未做；目前只有管理者一人可寫。
+- **公開註解投稿＋審核**（白板「每句可個人註解但公開須經審核」）：登入者可在讀經頁對經節「投稿公開註解」→ Firestore `submissions`（status pending）。管理者在後台「公開註解審核」佇列 approve/reject；通過會複製到 `public_notes`（所有人可讀），讀經頁經節選單顯示「社群註解」。用 `loc='書卷id_章'` 單欄位查詢，免複合索引。⛔ 這是使用者投稿內容，非 Claude 代寫。
 
 ## 經文資料
 

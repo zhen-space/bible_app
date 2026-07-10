@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/content_service.dart';
 import '../services/verse_locator.dart';
 import '../theme/app_theme.dart';
 import 'search_screen.dart';
@@ -117,6 +118,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 (bookId: _bookId, chapter: _chapter)))
             .value;
         final verseAnns = ann?.verses ?? const <int, VerseAnnotation>{};
+        // 預抓本章社群註解（審核通過的公開投稿）
+        ref.watch(
+            publicNotesProvider((bookId: _bookId, chapter: _chapter)));
         // 本卷統整：只在整卷最後一章的末尾顯示（章層級導讀/重點已移除）
         final bookSummary = _chapter == book.chapterCount
             ? ref.watch(bookAnnotationProvider(_bookId)).value?.summary
@@ -272,6 +276,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     ref.read(bibleRepositoryProvider).loadEnglish();
     final english =
         ref.read(bibleRepositoryProvider).english(_bookId, _chapter, verseNo);
+    // 已審核通過的社群註解（此章一次抓，取本節）
+    final publicNotes = ref
+            .read(publicNotesProvider(
+                (bookId: _bookId, chapter: _chapter)))
+            .value?[verseNo] ??
+        const <PublicNote>[];
 
     showModalBottomSheet(
       context: context,
@@ -390,6 +400,121 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   _jumpToRef(books, ref);
                 },
               ),
+            // 社群註解（已審核通過的公開投稿）
+            if (publicNotes.isNotEmpty) ...[
+              const Divider(height: 24),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                child: Row(children: [
+                  Icon(Icons.groups_outlined,
+                      size: 18, color: Theme.of(ctx).colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text('社群註解',
+                      style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                          color: Theme.of(ctx).colorScheme.primary)),
+                ]),
+              ),
+              for (final n in publicNotes)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(n.content,
+                          style: Theme.of(ctx)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(height: 1.5)),
+                      if (n.author.isNotEmpty)
+                        Text('— ${n.author}',
+                            style: Theme.of(ctx).textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+            ],
+            const Divider(height: 24),
+            ListTile(
+              leading: const Icon(Icons.rate_review_outlined),
+              title: const Text('投稿公開註解'),
+              subtitle: const Text('提交後經審核才會公開顯示'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _submitPublicNote(book, verseNo, text);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 投稿一則公開註解（登入後可投；提交後進待審佇列）。
+  void _submitPublicNote(Book book, int verseNo, String verseText) {
+    final user = ref.read(authUserProvider).value;
+    if (user == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('請先到「設定」用 Google 登入，才能投稿公開註解')));
+      return;
+    }
+    final controller = TextEditingController();
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          left: 16,
+          right: 16,
+          top: 16,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('投稿公開註解 · ${book.name} $_chapter:$verseNo',
+                style: Theme.of(ctx).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text('提交後由管理者審核，通過才會公開顯示。',
+                style: Theme.of(ctx).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              maxLines: 4,
+              autofocus: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: '寫下你對這節的理解或應用…',
+              ),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                onPressed: () async {
+                  final content = controller.text.trim();
+                  Navigator.pop(ctx);
+                  if (content.isEmpty) return;
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    await ref.read(contentServiceProvider).submitPublicNote(
+                          uid: user.uid,
+                          author: user.displayName ?? '',
+                          bookId: _bookId,
+                          chapter: _chapter,
+                          verse: verseNo,
+                          content: content,
+                        );
+                    messenger.showSnackBar(const SnackBar(
+                        content: Text('已提交，待審核通過後公開')));
+                  } catch (e) {
+                    messenger.showSnackBar(
+                        SnackBar(content: Text('提交失敗：$e')));
+                  }
+                },
+                child: const Text('提交審核'),
+              ),
+            ),
             const SizedBox(height: 16),
           ],
         ),

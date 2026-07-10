@@ -324,6 +324,26 @@ final isAdminProvider = Provider<bool>((ref) {
   return user?.email == kAdminEmail;
 });
 
+/// 某章已通過的公開註解（verse → 多則）。Firebase 不可用或離線時為空。
+final publicNotesProvider = FutureProvider.family<Map<int, List<PublicNote>>,
+    ({int bookId, int chapter})>((ref, args) async {
+  if (!ref.watch(firebaseReadyProvider)) return const {};
+  try {
+    return await ref
+        .watch(contentServiceProvider)
+        .approvedNotes(args.bookId, args.chapter);
+  } catch (_) {
+    return const {};
+  }
+});
+
+/// 待審投稿佇列（管理者用）。
+final pendingSubmissionsProvider =
+    FutureProvider<List<PublicSubmission>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(contentServiceProvider).pendingSubmissions();
+});
+
 final allBookmarksProvider = FutureProvider<List<Bookmark>>(
     (ref) => ref.watch(databaseServiceProvider).getAllBookmarks());
 final allHighlightsProvider = FutureProvider<List<Highlight>>(

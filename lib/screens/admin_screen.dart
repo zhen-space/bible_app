@@ -13,28 +13,135 @@ class AdminHomeScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final booksAsync = ref.watch(booksProvider);
+    final pendingCount =
+        ref.watch(pendingSubmissionsProvider).value?.length ?? 0;
+
     return Scaffold(
       appBar: AppBar(title: const Text('內容管理')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (books) => ListView.builder(
-          itemCount: books.length,
-          itemBuilder: (context, i) {
-            final book = books[i];
-            return ListTile(
-              leading: CircleAvatar(child: Text(book.abbr)),
-              title: Text(book.name),
-              subtitle: Text('${book.chapterCount} 章'),
-              trailing: const Icon(Icons.chevron_right),
+        data: (books) => ListView(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.rate_review_outlined),
+              title: const Text('公開註解審核'),
+              subtitle: Text(
+                  pendingCount > 0 ? '$pendingCount 則待審' : '目前沒有待審投稿'),
+              trailing: pendingCount > 0
+                  ? CircleAvatar(
+                      radius: 12,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      child: Text('$pendingCount',
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.white)))
+                  : const Icon(Icons.chevron_right),
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(
-                    builder: (_) => AdminBookScreen(book: book)),
+                MaterialPageRoute(builder: (_) => const AdminReviewScreen()),
               ),
-            );
-          },
+            ),
+            const Divider(),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+              child: Text('撰寫導讀／註解'),
+            ),
+            for (final book in books)
+              ListTile(
+                leading: CircleAvatar(child: Text(book.abbr)),
+                title: Text(book.name),
+                subtitle: Text('${book.chapterCount} 章'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => AdminBookScreen(book: book)),
+                ),
+              ),
+          ],
         ),
+      ),
+    );
+  }
+}
+
+/// 公開註解審核佇列。通過→公開；退回→不顯示。
+class AdminReviewScreen extends ConsumerWidget {
+  const AdminReviewScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pendingAsync = ref.watch(pendingSubmissionsProvider);
+    final books = ref.watch(booksProvider).value;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('公開註解審核')),
+      body: pendingAsync.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        data: (items) {
+          if (items.isEmpty) {
+            return const Center(child: Text('目前沒有待審投稿'));
+          }
+          return ListView.separated(
+            itemCount: items.length,
+            separatorBuilder: (_, _) => const Divider(height: 1),
+            itemBuilder: (context, i) {
+              final s = items[i];
+              final ref2 = books != null
+                  ? '${books[s.bookId - 1].name} ${s.chapter}:${s.verse}'
+                  : '${s.bookId}:${s.chapter}:${s.verse}';
+              return ListTile(
+                title: Text(s.content),
+                subtitle: Text(
+                    '$ref2　${s.author.isEmpty ? "匿名" : s.author}'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.check_circle_outline),
+                      color: Colors.green,
+                      tooltip: '通過',
+                      onPressed: () async {
+                        final m = ScaffoldMessenger.of(context);
+                        try {
+                          await ref
+                              .read(contentServiceProvider)
+                              .approveSubmission(s);
+                          ref.invalidate(pendingSubmissionsProvider);
+                          m.showSnackBar(
+                              const SnackBar(content: Text('已通過並公開')));
+                        } catch (e) {
+                          m.showSnackBar(
+                              SnackBar(content: Text('操作失敗：$e')));
+                        }
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.cancel_outlined),
+                      color: Colors.red,
+                      tooltip: '退回',
+                      onPressed: () async {
+                        final m = ScaffoldMessenger.of(context);
+                        try {
+                          await ref
+                              .read(contentServiceProvider)
+                              .rejectSubmission(s.id);
+                          ref.invalidate(pendingSubmissionsProvider);
+                          m.showSnackBar(
+                              const SnackBar(content: Text('已退回')));
+                        } catch (e) {
+                          m.showSnackBar(
+                              SnackBar(content: Text('操作失敗：$e')));
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }
