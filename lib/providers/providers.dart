@@ -91,8 +91,8 @@ class FontSizeNotifier extends Notifier<double> {
 final fontSizeProvider =
     NotifierProvider<FontSizeNotifier, double>(FontSizeNotifier.new);
 
-/// 閱讀模式：逐節（一句一行）或整章（連續段落）。持久化。
-enum ReadingMode { verse, flowing }
+/// 閱讀模式：逐節（一句一行）或段落（自然分段連續）。持久化。
+enum ReadingMode { verse, paragraph }
 
 class ReadingModeNotifier extends Notifier<ReadingMode> {
   static const _key = 'reading_mode';
@@ -108,15 +108,20 @@ class ReadingModeNotifier extends Notifier<ReadingMode> {
       final prefs = await SharedPreferences.getInstance();
       final v = prefs.getString(_key);
       if (v != null) {
-        state = ReadingMode.values.firstWhere((m) => m.name == v,
-            orElse: () => ReadingMode.verse);
+        // 舊版存的 'flowing' 對應到現在的 paragraph
+        if (v == 'flowing') {
+          state = ReadingMode.paragraph;
+        } else {
+          state = ReadingMode.values.firstWhere((m) => m.name == v,
+              orElse: () => ReadingMode.verse);
+        }
       }
     } catch (_) {}
   }
 
   Future<void> toggle() async {
     state = state == ReadingMode.verse
-        ? ReadingMode.flowing
+        ? ReadingMode.paragraph
         : ReadingMode.verse;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, state.name);

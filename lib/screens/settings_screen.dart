@@ -64,9 +64,9 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
           SwitchListTile(
-            title: const Text('整章連續閱讀'),
-            subtitle: const Text('關閉為逐節分行；讀經畫面右上角也能切換'),
-            value: readingMode == ReadingMode.flowing,
+            title: const Text('段落分段閱讀'),
+            subtitle: const Text('依自然斷句分段呈現；關閉為逐節分行。讀經畫面右上角也能切換'),
+            value: readingMode == ReadingMode.paragraph,
             onChanged: (_) =>
                 ref.read(readingModeProvider.notifier).toggle(),
           ),

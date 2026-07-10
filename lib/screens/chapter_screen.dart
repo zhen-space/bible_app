@@ -147,7 +147,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 icon: Icon(mode == ReadingMode.verse
                     ? Icons.notes
                     : Icons.format_list_numbered),
-                tooltip: mode == ReadingMode.verse ? '整章連續' : '逐節分行',
+                tooltip: mode == ReadingMode.verse ? '段落分段' : '逐節分行',
                 onPressed: () =>
                     ref.read(readingModeProvider.notifier).toggle(),
               ),
@@ -186,7 +186,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     );
                   })
                 else
-                  _FlowingChapter(
+                  _ParagraphChapter(
                     verses: verses,
                     english: englishReady
                         ? [for (var v = 1; v <= verses.length; v++) en(v)]
@@ -585,8 +585,34 @@ class _VerseTile extends StatelessWidget {
   }
 }
 
-/// 整章連續模式：所有節連成段落，節號上標，仍可逐節點擊與顯示螢光筆。
-class _FlowingChapter extends StatefulWidget {
+/// 把整章的節依標點斷句，自動組成自然段落（每段數節）。
+/// 規則：累積到句末標點（。！？」』）且長度夠時斷段，兼顧語意與長度。
+/// 回傳每段的節號清單（1-based）。
+List<List<int>> groupIntoParagraphs(List<String> verses) {
+  const enders = {'。', '！', '？', '」', '』', '.', '!', '?'};
+  final paras = <List<int>>[];
+  var current = <int>[];
+  var len = 0;
+  for (var i = 0; i < verses.length; i++) {
+    final text = verses[i];
+    current.add(i + 1);
+    len += text.characters.length;
+    final last = text.trim().characters.isEmpty
+        ? ''
+        : text.trim().characters.last;
+    final endsSentence = enders.contains(last);
+    if (endsSentence && len >= 90) {
+      paras.add(current);
+      current = <int>[];
+      len = 0;
+    }
+  }
+  if (current.isNotEmpty) paras.add(current);
+  return paras;
+}
+
+/// 段落模式：依自然斷句分段呈現；首行縮排、段間留白；仍可逐節點擊、螢光筆、中英對照。
+class _ParagraphChapter extends StatefulWidget {
   final List<String> verses;
   final List<String?>? english; // 中英對照開啟時每節英文（對齊 verses）
   final double fontSize;
@@ -594,7 +620,7 @@ class _FlowingChapter extends StatefulWidget {
   final Set<int> annotated;
   final void Function(int verseNo) onTapVerse;
 
-  const _FlowingChapter({
+  const _ParagraphChapter({
     required this.verses,
     required this.english,
     required this.fontSize,
@@ -604,10 +630,10 @@ class _FlowingChapter extends StatefulWidget {
   });
 
   @override
-  State<_FlowingChapter> createState() => _FlowingChapterState();
+  State<_ParagraphChapter> createState() => _ParagraphChapterState();
 }
 
-class _FlowingChapterState extends State<_FlowingChapter> {
+class _ParagraphChapterState extends State<_ParagraphChapter> {
   final List<TapGestureRecognizer> _recognizers = [];
 
   void _clearRecognizers() {
@@ -628,10 +654,30 @@ class _FlowingChapterState extends State<_FlowingChapter> {
     _clearRecognizers();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final spans = <InlineSpan>[];
+    final paragraphs = groupIntoParagraphs(widget.verses);
 
-    for (var i = 0; i < widget.verses.length; i++) {
-      final verseNo = i + 1;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final para in paragraphs)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: Text.rich(
+              TextSpan(children: _paragraphSpans(para, isDark, scheme)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  List<InlineSpan> _paragraphSpans(
+      List<int> verseNos, bool isDark, ColorScheme scheme) {
+    final spans = <InlineSpan>[
+      // 首行縮排（全形空格），像書本段落
+      const TextSpan(text: '　　'),
+    ];
+    for (final verseNo in verseNos) {
+      final i = verseNo - 1;
       final recognizer = TapGestureRecognizer()
         ..onTap = () => widget.onTapVerse(verseNo);
       _recognizers.add(recognizer);
@@ -640,7 +686,7 @@ class _FlowingChapterState extends State<_FlowingChapter> {
       spans.add(TextSpan(
         text: ' $verseNo ',
         style: TextStyle(
-          fontSize: widget.fontSize * 0.65,
+          fontSize: widget.fontSize * 0.62,
           color: scheme.primary,
           fontWeight: FontWeight.bold,
           fontFeatures: const [FontFeature.superscripts()],
@@ -664,11 +710,10 @@ class _FlowingChapterState extends State<_FlowingChapter> {
         ),
         recognizer: recognizer,
       ));
-      // 中英對照：整章連續模式下，每節中文後緊接英文（灰字）
       final en = widget.english != null ? widget.english![i] : null;
       if (en != null) {
         spans.add(TextSpan(
-          text: ' $en',
+          text: ' $en ',
           style: TextStyle(
             fontSize: widget.fontSize * 0.8,
             height: 1.9,
@@ -678,11 +723,7 @@ class _FlowingChapterState extends State<_FlowingChapter> {
         ));
       }
     }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text.rich(TextSpan(children: spans)),
-    );
+    return spans;
   }
 }
 
