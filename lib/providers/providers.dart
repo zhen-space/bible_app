@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -388,28 +389,58 @@ class SyncStatusNotifier extends Notifier<String?> {
     }
   }
 
-  /// Google 登入（web 用 popup），成功後自動同步一次。
-  Future<void> signIn() async {
-    state = null;
+  bool _signingIn = false; // 防止連點造成彈窗打架
+
+  Future<void> signIn() => _signInWith(GoogleAuthProvider());
+
+  Future<void> signInApple() => _signInWith(OAuthProvider('apple.com')
+    ..addScope('email')
+    ..addScope('name'));
+
+  /// 登入流程：網頁先試彈窗，被擋就改轉址（手機較穩）；連點會被忽略。
+  Future<void> _signInWith(AuthProvider provider) async {
+    if (_signingIn) return;
+    _signingIn = true;
+    state = '登入中…';
     try {
-      await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+      if (kIsWeb) {
+        try {
+          await FirebaseAuth.instance.signInWithPopup(provider);
+        } on FirebaseAuthException catch (e) {
+          if (e.code == 'popup-blocked' ||
+              e.code == 'cancelled-popup-request' ||
+              e.code == 'web-context-cancelled') {
+            // 手機瀏覽器常擋彈窗 → 改用轉址登入（頁面會重載，回來即已登入）
+            await FirebaseAuth.instance.signInWithRedirect(provider);
+            return;
+          }
+          rethrow;
+        }
+      } else {
+        await FirebaseAuth.instance.signInWithProvider(provider);
+      }
       await syncNow();
+      state = null;
+    } on FirebaseAuthException catch (e) {
+      state = _friendlyError(e);
     } catch (e) {
       state = '登入失敗：$e';
+    } finally {
+      _signingIn = false;
     }
   }
 
-  /// Apple 登入（web 用 popup）。需 Firebase 啟用 Apple provider。
-  Future<void> signInApple() async {
-    state = null;
-    try {
-      final provider = OAuthProvider('apple.com')
-        ..addScope('email')
-        ..addScope('name');
-      await FirebaseAuth.instance.signInWithPopup(provider);
-      await syncNow();
-    } catch (e) {
-      state = '登入失敗：$e';
+  String? _friendlyError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'popup-closed-by-user':
+      case 'cancelled-popup-request':
+        return null; // 使用者自己關掉，不當錯誤
+      case 'operation-not-allowed':
+        return 'Apple 登入尚未在 Firebase 啟用（需管理者設定 Apple 供應商）';
+      case 'unauthorized-domain':
+        return '此網址未授權；請在 Firebase → Authentication → 設定 → 授權網域加入本網站網址';
+      default:
+        return '登入失敗：${e.message ?? e.code}';
     }
   }
 

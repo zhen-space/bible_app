@@ -108,6 +108,11 @@ class _AccountSection extends ConsumerWidget {
       children: [
         const _SectionHeader('帳號與雲端備份'),
         if (user == null) ...[
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('尚未登入'),
+            subtitle: Text('登入後才會顯示帳號、雲端同步與投稿功能'),
+          ),
           ListTile(
             leading: const Icon(Icons.login),
             title: const Text('使用 Google 登入'),
