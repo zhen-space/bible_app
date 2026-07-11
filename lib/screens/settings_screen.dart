@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
+import '../widgets/google_login_button_stub.dart'
+    if (dart.library.js_interop) '../widgets/google_login_button_web.dart';
 import 'admin_screen.dart';
 
 /// 設定：外觀主題、字級。
@@ -113,12 +115,20 @@ class _AccountSection extends ConsumerWidget {
             title: Text('尚未登入'),
             subtitle: Text('登入後才會顯示帳號、雲端同步與投稿功能'),
           ),
-          ListTile(
-            leading: const Icon(Icons.login),
-            title: const Text('使用 Google 登入'),
-            subtitle: const Text('登入後書籤、螢光筆、筆記、讀經紀錄會備份到雲端'),
-            onTap: notifier.signIn,
+          const ListTile(
+            leading: Icon(Icons.cloud_outlined),
+            title: Text('登入以備份到雲端'),
+            subtitle: Text('書籤、螢光筆、筆記、讀經紀錄會自動同步'),
           ),
+          if (gisSupported)
+            // 網頁版：Google 官方登入按鈕（GIS），iPhone/Safari 最可靠
+            googleLoginButton()
+          else
+            ListTile(
+              leading: const Icon(Icons.login),
+              title: const Text('使用 Google 登入'),
+              onTap: notifier.signIn,
+            ),
         ]
         else ...[
           ListTile(
