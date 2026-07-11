@@ -34,6 +34,19 @@
 </head>
 <body>
   <script>
+    // 清掉舊版留下的 service worker 與快取（曾造成更新後白屏、要重整兩次）
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        rs.forEach(function (r) { r.unregister(); });
+      });
+    }
+    if (window.caches && caches.keys) {
+      caches.keys().then(function (keys) {
+        keys.forEach(function (k) { caches.delete(k); });
+      });
+    }
+  </script>
+  <script>
     {{flutter_js}}
     {{flutter_build_config}}
     // 鎖定完整版 CanvasKit：chromium 精簡版的文字排版在部分環境會整頁無字

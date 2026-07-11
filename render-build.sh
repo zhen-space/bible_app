@@ -21,6 +21,7 @@ echo "==> sqflite web binaries (sqlite3.wasm / sqflite_sw.js)"
 dart run sqflite_common_ffi_web:setup
 
 echo "==> flutter build web"
-flutter build web --release --no-web-resources-cdn
+# --pwa-strategy=none：不產生 service worker（舊版快取常在版本更新時卡白屏）
+flutter build web --release --no-web-resources-cdn --pwa-strategy=none
 
 echo "==> Done. Output in build/web"

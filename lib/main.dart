@@ -10,12 +10,15 @@ import 'theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Firebase 目前只設定了 Web；init 失敗不擋 App（離線讀經不受影響）。
+  // Firebase 目前只設定了 Web；init 失敗「或卡住」都不能擋 App。
+  // 注意：Firebase JS SDK 載入失敗時 initializeApp 可能永遠不回來（實測），
+  // 必須加 timeout，否則整個 App 白屏。
   if (kIsWeb) {
     try {
-      await Firebase.initializeApp(options: DefaultFirebaseOptions.web);
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.web)
+          .timeout(const Duration(seconds: 8));
     } catch (_) {
-      // 沒網路或設定問題：登入/同步功能自動隱藏。
+      // 沒網路、設定問題或逾時：登入/同步功能自動隱藏，離線讀經照常。
     }
   }
   runApp(const ProviderScope(child: BibleApp()));
