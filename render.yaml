@@ -9,3 +9,11 @@ services:
     staticPublishPath: build/web
     # 注意：不要加 COOP/COEP headers——same-origin 會擋 Firebase Google 登入
     # 的彈出視窗；sqflite 的 WASM 實測不需要這些 header（走 IndexedDB）。
+    routes:
+      # Firebase 登入處理頁代理到本網域（iOS Safari 擋跨網域登入的正規解法）
+      - type: rewrite
+        source: /__/auth/*
+        destination: https://bible-app-c0eac.firebaseapp.com/__/auth/*
+      - type: rewrite
+        source: /__/firebase/*
+        destination: https://bible-app-c0eac.firebaseapp.com/__/firebase/*

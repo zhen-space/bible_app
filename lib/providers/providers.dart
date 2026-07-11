@@ -369,7 +369,15 @@ final syncServiceProvider =
 /// 同步狀態機：idle / syncing / 完成或錯誤訊息。
 class SyncStatusNotifier extends Notifier<String?> {
   @override
-  String? build() => null;
+  String? build() {
+    // 轉址登入回來（或任何時候從未登入變成已登入）→ 自動同步一次
+    ref.listen(authUserProvider, (prev, next) {
+      if (prev?.value == null && next.value != null) {
+        syncNow();
+      }
+    });
+    return null;
+  }
 
   /// 執行一次完整同步；結束後刷新所有標記 providers。
   Future<void> syncNow() async {
@@ -389,23 +397,26 @@ class SyncStatusNotifier extends Notifier<String?> {
     }
   }
 
-  bool _signingIn = false; // 防止連點造成彈窗打架
+  bool _signingIn = false; // 防止連點
 
-  /// Google 登入。網頁一律用彈窗（iOS Safari 的轉址登入在跨網域會靜默失敗，
-  /// 反而彈窗才可靠）；連點會被忽略；每種失敗都給出明確原因。
+  /// Google 登入。網頁用「轉址」流程：authDomain 已設為本站網域、
+  /// /__/auth/* 由 Render 代理回 Firebase——全程同網域，iOS Safari 也可靠。
+  /// 轉址回來後由 build() 裡的 auth 監聽自動觸發同步。
   Future<void> signIn() async {
     if (_signingIn) return;
     _signingIn = true;
-    state = '正在開啟 Google 登入視窗…';
+    state = '前往 Google 登入…';
     try {
       if (kIsWeb) {
-        await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+        await FirebaseAuth.instance
+            .signInWithRedirect(GoogleAuthProvider());
+        // 頁面即將整頁轉址離開；回來時已是登入狀態
       } else {
         await FirebaseAuth.instance
             .signInWithProvider(GoogleAuthProvider());
+        state = '登入成功，同步中…';
+        await syncNow();
       }
-      state = '登入成功，同步中…';
-      await syncNow();
     } on FirebaseAuthException catch (e) {
       state = _friendlyError(e);
     } catch (e) {
