@@ -391,36 +391,21 @@ class SyncStatusNotifier extends Notifier<String?> {
 
   bool _signingIn = false; // 防止連點造成彈窗打架
 
-  Future<void> signIn() => _signInWith(GoogleAuthProvider());
-
-  Future<void> signInApple() => _signInWith(OAuthProvider('apple.com')
-    ..addScope('email')
-    ..addScope('name'));
-
-  /// 登入流程：網頁先試彈窗，被擋就改轉址（手機較穩）；連點會被忽略。
-  Future<void> _signInWith(AuthProvider provider) async {
+  /// Google 登入。網頁一律用彈窗（iOS Safari 的轉址登入在跨網域會靜默失敗，
+  /// 反而彈窗才可靠）；連點會被忽略；每種失敗都給出明確原因。
+  Future<void> signIn() async {
     if (_signingIn) return;
     _signingIn = true;
-    state = '登入中…';
+    state = '正在開啟 Google 登入視窗…';
     try {
       if (kIsWeb) {
-        try {
-          await FirebaseAuth.instance.signInWithPopup(provider);
-        } on FirebaseAuthException catch (e) {
-          if (e.code == 'popup-blocked' ||
-              e.code == 'cancelled-popup-request' ||
-              e.code == 'web-context-cancelled') {
-            // 手機瀏覽器常擋彈窗 → 改用轉址登入（頁面會重載，回來即已登入）
-            await FirebaseAuth.instance.signInWithRedirect(provider);
-            return;
-          }
-          rethrow;
-        }
+        await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
       } else {
-        await FirebaseAuth.instance.signInWithProvider(provider);
+        await FirebaseAuth.instance
+            .signInWithProvider(GoogleAuthProvider());
       }
+      state = '登入成功，同步中…';
       await syncNow();
-      state = null;
     } on FirebaseAuthException catch (e) {
       state = _friendlyError(e);
     } catch (e) {
@@ -433,14 +418,19 @@ class SyncStatusNotifier extends Notifier<String?> {
   String? _friendlyError(FirebaseAuthException e) {
     switch (e.code) {
       case 'popup-closed-by-user':
+        return '登入視窗被關閉，未完成登入。';
       case 'cancelled-popup-request':
-        return null; // 使用者自己關掉，不當錯誤
+        return '請再點一次「使用 Google 登入」。';
+      case 'popup-blocked':
+        return '瀏覽器擋掉了登入視窗。請到瀏覽器設定允許本網站的彈出式視窗，再試一次。';
       case 'operation-not-allowed':
-        return 'Apple 登入尚未在 Firebase 啟用（需管理者設定 Apple 供應商）';
+        return 'Google 登入尚未在 Firebase 啟用：Authentication → Sign-in method → 啟用 Google。';
       case 'unauthorized-domain':
-        return '此網址未授權；請在 Firebase → Authentication → 設定 → 授權網域加入本網站網址';
+        return '本網站網址未加入授權：Firebase → Authentication → 設定 → 授權網域，新增本站網域。';
+      case 'network-request-failed':
+        return '網路連線失敗，請檢查網路後再試。';
       default:
-        return '登入失敗：${e.message ?? e.code}';
+        return '登入失敗：[${e.code}] ${e.message ?? ''}';
     }
   }
 

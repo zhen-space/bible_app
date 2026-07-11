@@ -119,11 +119,6 @@ class _AccountSection extends ConsumerWidget {
             subtitle: const Text('登入後書籤、螢光筆、筆記、讀經紀錄會備份到雲端'),
             onTap: notifier.signIn,
           ),
-          ListTile(
-            leading: const Icon(Icons.apple),
-            title: const Text('使用 Apple 登入'),
-            onTap: notifier.signInApple,
-          ),
         ]
         else ...[
           ListTile(
