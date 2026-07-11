@@ -118,6 +118,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 (bookId: _bookId, chapter: _chapter)))
             .value;
         final verseAnns = ann?.verses ?? const <int, VerseAnnotation>{};
+        // 段落標題：來自章導讀的「分段」欄（後台可編輯），如「1-8 各支派在營地的位置」
+        final headings = headingsFromOutline(ann?.chapter?.outline ?? const []);
         // 預抓本章社群註解（審核通過的公開投稿）
         ref.watch(
             publicNotesProvider((bookId: _bookId, chapter: _chapter)));
@@ -174,21 +176,25 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
               children: [
                 if (mode == ReadingMode.verse)
-                  ...List.generate(verses.length, (i) {
-                    final verseNo = i + 1;
-                    return _VerseTile(
-                      verseNo: verseNo,
-                      text: verses[i],
-                      english: en(verseNo),
-                      fontSize: fontSize,
-                      highlight: marks.highlights[verseNo],
-                      bookmarked: marks.bookmarks.contains(verseNo),
-                      hasNote: marks.notes.containsKey(verseNo),
-                      hasAnnotation: verseAnns.containsKey(verseNo),
-                      onTap: () => _showVerseActions(books, book, verseNo,
-                          verses[i], marks, verseAnns[verseNo]),
-                    );
-                  })
+                  ...[
+                    for (var i = 0; i < verses.length; i++) ...[
+                      if (headings[i + 1] != null)
+                        _SectionHeading(
+                            text: headings[i + 1]!, fontSize: fontSize),
+                      _VerseTile(
+                        verseNo: i + 1,
+                        text: verses[i],
+                        english: en(i + 1),
+                        fontSize: fontSize,
+                        highlight: marks.highlights[i + 1],
+                        bookmarked: marks.bookmarks.contains(i + 1),
+                        hasNote: marks.notes.containsKey(i + 1),
+                        hasAnnotation: verseAnns.containsKey(i + 1),
+                        onTap: () => _showVerseActions(books, book, i + 1,
+                            verses[i], marks, verseAnns[i + 1]),
+                      ),
+                    ],
+                  ]
                 else
                   _ParagraphChapter(
                     verses: verses,
@@ -198,6 +204,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     fontSize: fontSize,
                     highlights: marks.highlights,
                     annotated: verseAnns.keys.toSet(),
+                    headings: headings,
                     onTapVerse: (verseNo) => _showVerseActions(books, book,
                         verseNo, verses[verseNo - 1], marks,
                         verseAnns[verseNo]),
@@ -710,17 +717,64 @@ class _VerseTile extends StatelessWidget {
   }
 }
 
+/// 解析章導讀「分段」欄成節→標題對照。
+/// 每行格式：「1-8 各支派在營地的位置」或「9 標題」（起始節 + 標題文字）。
+/// 標題內容由使用者在後台撰寫。
+Map<int, String> headingsFromOutline(List<String> outline) {
+  final out = <int, String>{};
+  for (final line in outline) {
+    final m = RegExp(r'^(\d+)(?:\s*[-–~－]\s*\d+)?\s*[、.．:：]?\s*(.+)$')
+        .firstMatch(line.trim());
+    if (m != null) {
+      out[int.parse(m.group(1)!)] = m.group(2)!.trim();
+    }
+  }
+  return out;
+}
+
+/// 段落標題（與章同級的小節標題，如「各支派在營地的位置」）。
+class _SectionHeading extends StatelessWidget {
+  final String text;
+  final double fontSize;
+
+  const _SectionHeading({required this.text, required this.fontSize});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 20, bottom: 6),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: fontSize * 1.1,
+          fontWeight: FontWeight.w700,
+          height: 1.4,
+          color: Theme.of(context).colorScheme.onSurface,
+        ),
+      ),
+    );
+  }
+}
+
 /// 把整章的節依標點斷句，自動組成自然段落（每段數節）。
-/// 規則：累積到句末標點（。！？」』）且長度夠時斷段，兼顧語意與長度。
+/// 規則：累積到句末標點（。！？」』）且長度夠時斷段；
+/// [breakBefore]（段落標題所在節）一定另起新段。
 /// 回傳每段的節號清單（1-based）。
-List<List<int>> groupIntoParagraphs(List<String> verses) {
+List<List<int>> groupIntoParagraphs(List<String> verses,
+    {Set<int> breakBefore = const {}}) {
   const enders = {'。', '！', '？', '」', '』', '.', '!', '?'};
   final paras = <List<int>>[];
   var current = <int>[];
   var len = 0;
   for (var i = 0; i < verses.length; i++) {
+    final verseNo = i + 1;
+    if (breakBefore.contains(verseNo) && current.isNotEmpty) {
+      paras.add(current);
+      current = <int>[];
+      len = 0;
+    }
     final text = verses[i];
-    current.add(i + 1);
+    current.add(verseNo);
     len += text.characters.length;
     final last = text.trim().characters.isEmpty
         ? ''
@@ -743,6 +797,7 @@ class _ParagraphChapter extends StatefulWidget {
   final double fontSize;
   final Map<int, HighlightColor> highlights;
   final Set<int> annotated;
+  final Map<int, String> headings; // 節→段落標題（後台「分段」欄）
   final void Function(int verseNo) onTapVerse;
 
   const _ParagraphChapter({
@@ -751,6 +806,7 @@ class _ParagraphChapter extends StatefulWidget {
     required this.fontSize,
     required this.highlights,
     required this.annotated,
+    required this.headings,
     required this.onTapVerse,
   });
 
@@ -779,18 +835,24 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
     _clearRecognizers();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final paragraphs = groupIntoParagraphs(widget.verses);
+    final paragraphs = groupIntoParagraphs(widget.verses,
+        breakBefore: widget.headings.keys.toSet());
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final para in paragraphs)
+        for (final para in paragraphs) ...[
+          if (widget.headings[para.first] != null)
+            _SectionHeading(
+                text: widget.headings[para.first]!,
+                fontSize: widget.fontSize),
           Padding(
             padding: const EdgeInsets.only(bottom: 18),
             child: Text.rich(
               TextSpan(children: _paragraphSpans(para, isDark, scheme)),
             ),
           ),
+        ],
       ],
     );
   }

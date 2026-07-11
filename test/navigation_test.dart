@@ -80,6 +80,9 @@ void main() {
     // 讀經畫面：創 1:1（章層級導讀/重點已移除，讀經頁只有經文）
     expect(find.textContaining('起初', findRichText: true), findsWidgets);
     expect(find.text('創世記 第 1 章'), findsOneWidget);
+
+    // 段落標題：來自章導讀「分段」欄（創1 範例第一行「1-2 起初：…」）
+    expect(find.textContaining('起初：神創造天地'), findsWidgets);
   });
 
   testWidgets('章節格最前導讀、最後統整方格 → 開啟卷導讀頁', (tester) async {
