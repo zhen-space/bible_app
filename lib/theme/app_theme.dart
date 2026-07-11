@@ -75,15 +75,15 @@ class AppTheme {
       ),
       margin: EdgeInsets.zero,
     ),
-    appBarTheme: const AppBarTheme(
+    appBarTheme: AppBarTheme(
       backgroundColor: Colors.white,
       foregroundColor: _ink, // 標題黑字
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: false,
-      titleTextStyle: _titleStyle,
-      iconTheme: IconThemeData(color: _gold), // leading 金
-      actionsIconTheme: IconThemeData(color: _gold), // actions 金
+      titleTextStyle: _titleStyle.copyWith(color: _ink),
+      iconTheme: const IconThemeData(color: _gold), // leading 金
+      actionsIconTheme: const IconThemeData(color: _gold), // actions 金
     ),
     listTileTheme: const ListTileThemeData(iconColor: _gold),
     dividerTheme: const DividerThemeData(color: _cardBorder, thickness: 1),
@@ -117,15 +117,15 @@ class AppTheme {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       margin: EdgeInsets.zero,
     ),
-    appBarTheme: const AppBarTheme(
+    appBarTheme: AppBarTheme(
       backgroundColor: _navy,
       foregroundColor: Colors.white,
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: false,
-      titleTextStyle: _titleStyle,
-      iconTheme: IconThemeData(color: _goldDark),
-      actionsIconTheme: IconThemeData(color: _goldDark),
+      titleTextStyle: _titleStyle.copyWith(color: Colors.white),
+      iconTheme: const IconThemeData(color: _goldDark),
+      actionsIconTheme: const IconThemeData(color: _goldDark),
     ),
     listTileTheme: const ListTileThemeData(iconColor: _goldDark),
   );
