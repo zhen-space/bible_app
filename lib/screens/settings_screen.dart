@@ -120,10 +120,18 @@ class _AccountSection extends ConsumerWidget {
             title: Text('登入以備份到雲端'),
             subtitle: Text('書籤、螢光筆、筆記、讀經紀錄會自動同步'),
           ),
-          if (gisSupported)
-            // 網頁版：Google 官方登入按鈕（GIS），iPhone/Safari 最可靠
-            googleLoginButton()
-          else
+          if (gisSupported) ...[
+            // 網頁版：Google 官方登入按鈕（GIS）
+            googleLoginButton(),
+            // 備用：同網域轉址登入（官方按鈕視窗打不開/空白時用這個）
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: TextButton(
+                onPressed: notifier.signIn,
+                child: const Text('上面的按鈕沒反應？改用備用方式登入'),
+              ),
+            ),
+          ] else
             ListTile(
               leading: const Icon(Icons.login),
               title: const Text('使用 Google 登入'),
