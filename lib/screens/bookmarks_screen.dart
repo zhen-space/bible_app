@@ -6,6 +6,7 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
+import 'faith_map_screen.dart';
 import 'sermon_notes_screen.dart';
 
 /// 書籤 / 螢光筆 / 筆記 總覽。[initialTab] 0=書籤 1=螢光筆 2=筆記。
@@ -23,6 +24,15 @@ class BookmarksScreen extends ConsumerWidget {
         appBar: AppBar(
           title: const Text('我的標記'),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.map_outlined),
+              tooltip: '我的信仰地圖',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const FaithMapScreen()),
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.church_outlined),
               tooltip: '主日・證道筆記',

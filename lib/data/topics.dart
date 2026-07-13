@@ -7,7 +7,11 @@ class Topic {
   final String emoji;
   final List<String> refs;
 
-  const Topic(this.name, this.emoji, this.refs);
+  /// 主題導讀（白板「四、主題導讀」）。⛔ 內容由使用者親撰，這裡預設空字串，
+  /// 有寫才在主題頁最上面顯示導讀卡；沒寫就只列經文，不擋畫面。
+  final String intro;
+
+  const Topic(this.name, this.emoji, this.refs, {this.intro = ''});
 }
 
 /// 主題分類頁。

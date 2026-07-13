@@ -6,6 +6,7 @@ import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
 import 'chapter_screen.dart';
+import 'reading_plans_screen.dart';
 
 /// 主題式閱讀 + 人生情境入口。
 class TopicsScreen extends ConsumerWidget {
@@ -18,6 +19,21 @@ class TopicsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Card(
+            child: ListTile(
+              leading: const Text('🗓️', style: TextStyle(fontSize: 26)),
+              title: const Text('讀經計畫',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: const Text('一年通讀、90 天速讀、新約計畫'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const ReadingPlansScreen()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
           Text('現在的心情…',
               style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -89,10 +105,38 @@ class TopicDetailScreen extends ConsumerWidget {
           }
           return ListView.separated(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: verses.length,
+            itemCount: verses.length + 1,
             separatorBuilder: (_, _) => const Divider(height: 1),
             itemBuilder: (context, i) {
-              final v = verses[i];
+              if (i == 0) {
+                // 主題導讀卡（有內容才顯示，內容由使用者撰寫）
+                if (topic.intro.trim().isEmpty) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('導讀',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary)),
+                          const SizedBox(height: 6),
+                          Text(topic.intro,
+                              style: const TextStyle(height: 1.7)),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }
+              final v = verses[i - 1];
               final book = books[v.bookId - 1];
               return ListTile(
                 title: Text(v.text, style: const TextStyle(height: 1.6)),

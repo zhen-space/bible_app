@@ -64,6 +64,13 @@ class SyncService {
           m['book_id'] as int, m['chapter'] as int, m['read_at'] as int);
       downloaded++;
     }
+    final cloudPlans = await _col(uid, 'plan_progress').get();
+    for (final d in cloudPlans.docs) {
+      final m = d.data();
+      await db.upsertPlanProgress(
+          m['plan_id'] as String, m['day'] as int, m['done_at'] as int);
+      downloaded++;
+    }
     // 證道筆記：以雲端 doc id 對應本地（較新的 updated_at 為準）
     final cloudSermons = await _col(uid, 'sermon_notes').get();
     final localSermons = await db.getSermonNotes();
@@ -132,6 +139,19 @@ class SyncService {
       final m = s.toMap()..remove('id');
       // 用 created_at 當雲端 doc id（穩定、跨裝置一致）
       batch.set(_col(uid, 'sermon_notes').doc('s${s.createdAt}'), m);
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
+    for (final m in await db.getAllPlanProgress()) {
+      batch.set(
+          _col(uid, 'plan_progress')
+              .doc('${m['plan_id']}_d${m['day']}'),
+          {
+            'plan_id': m['plan_id'],
+            'day': m['day'],
+            'done_at': m['done_at'],
+          });
       pending++;
       uploaded++;
       await commitIfFull();

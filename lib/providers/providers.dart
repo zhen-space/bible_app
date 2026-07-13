@@ -356,6 +356,26 @@ final allSermonNotesProvider = FutureProvider<List<SermonNote>>(
 final statsProvider = FutureProvider<Map<String, int>>(
     (ref) => ref.watch(databaseServiceProvider).getStats());
 
+/// 信仰地圖：每卷已讀章數 + 有標記節數。
+final faithMapProvider = FutureProvider<
+    ({Map<int, int> read, Map<int, int> marks})>((ref) async {
+  final db = ref.watch(databaseServiceProvider);
+  return (
+    read: await db.getReadCountsByBook(),
+    marks: await db.getMarkCountsByBook(),
+  );
+});
+
+/// 各讀經計畫已完成天數（planId → 已完成天數），計畫列表用。
+final planDoneCountsProvider = FutureProvider<Map<String, int>>(
+    (ref) => ref.watch(databaseServiceProvider).getPlanDoneCounts());
+
+/// 單一計畫已完成的天數集合。
+final planProgressProvider =
+    FutureProvider.family<Set<int>, String>((ref, planId) {
+  return ref.watch(databaseServiceProvider).getPlanProgress(planId);
+});
+
 // ---- 帳號與雲端同步（Firebase；未初始化時功能自動隱藏）----
 
 /// Firebase 是否可用（main 裡 init 成功才會有 app）。

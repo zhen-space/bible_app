@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:bible_app/data/reading_plans.dart';
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/utils/text_utils.dart';
 
@@ -71,6 +72,51 @@ void main() {
       expect(r.trinityWho, '聖靈');
       expect(r.reflection, '感想');
       expect(r.date, 111);
+    });
+  });
+
+  group('ReadingPlan schedule', () {
+    // 5 卷假書：章數 3,1,4,2,5 = 共 15 章
+    final books = [
+      for (var i = 1; i <= 5; i++)
+        Book(
+          id: i,
+          name: '書$i',
+          abbr: '書$i',
+          testament: i <= 3 ? 'ot' : 'nt',
+          chapters: List.generate([3, 1, 4, 2, 5][i - 1],
+              (c) => ['第 ${c + 1} 章']),
+        ),
+    ];
+
+    test('平均切成 N 天且不漏不重', () {
+      const plan = ReadingPlan(
+          id: 't', name: '測試', subtitle: '', emoji: '📖', days: 4);
+      final sched = plan.schedule(books);
+      expect(sched.length, 4);
+      // 展平後應剛好等於全部 15 章、順序不變
+      final flat = sched.expand((d) => d).toList();
+      expect(flat.length, 15);
+      expect(flat.first.bookId, 1);
+      expect(flat.first.chapter, 1);
+      expect(flat.last.bookId, 5);
+      expect(flat.last.chapter, 5);
+      // 15/4 → 前 3 天各 4 章、最後 1 天 3 章
+      expect(sched.map((d) => d.length).toList(), [4, 4, 4, 3]);
+    });
+
+    test('scope=nt 只含新約', () {
+      const plan = ReadingPlan(
+          id: 't',
+          name: '測試',
+          subtitle: '',
+          emoji: '✝️',
+          days: 2,
+          scope: 'nt');
+      final flat = plan.schedule(books).expand((d) => d).toList();
+      // 書4(2章)+書5(5章)=7 章
+      expect(flat.length, 7);
+      expect(flat.every((c) => c.bookId >= 4), true);
     });
   });
 

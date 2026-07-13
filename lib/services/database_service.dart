@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -71,6 +71,7 @@ class DatabaseService {
         'CREATE INDEX idx_notes_ref ON notes(book_id, chapter, verse)');
     await _createReadingLogTable(db); // v2
     await _createSermonNotesTable(db); // v4
+    await _createPlanProgressTable(db); // v5
   }
 
   Future<void> _createReadingLogTable(Database db) async {
@@ -102,6 +103,17 @@ class DatabaseService {
     ''');
   }
 
+  Future<void> _createPlanProgressTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE plan_progress (
+        plan_id TEXT NOT NULL,
+        day INTEGER NOT NULL,
+        done_at INTEGER NOT NULL,
+        PRIMARY KEY(plan_id, day)
+      )
+    ''');
+  }
+
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       await _createReadingLogTable(db);
@@ -113,6 +125,9 @@ class DatabaseService {
     }
     if (oldV < 4) {
       await _createSermonNotesTable(db);
+    }
+    if (oldV < 5) {
+      await _createPlanProgressTable(db);
     }
   }
 
@@ -283,6 +298,29 @@ class DatabaseService {
     return db.query('reading_log');
   }
 
+  /// 每卷已讀章數（bookId → 已讀章數），信仰地圖用。
+  Future<Map<int, int>> getReadCountsByBook() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+        'SELECT book_id, COUNT(*) AS c FROM reading_log GROUP BY book_id');
+    return {for (final r in rows) r['book_id'] as int: r['c'] as int};
+  }
+
+  /// 每卷有筆記/書籤/螢光筆的節數合計（信仰地圖「有標記」用）。
+  Future<Map<int, int>> getMarkCountsByBook() async {
+    final db = await database;
+    final out = <int, int>{};
+    for (final t in ['bookmarks', 'highlights', 'notes']) {
+      final rows = await db.rawQuery(
+          'SELECT book_id, COUNT(*) AS c FROM $t GROUP BY book_id');
+      for (final r in rows) {
+        final id = r['book_id'] as int;
+        out[id] = (out[id] ?? 0) + (r['c'] as int);
+      }
+    }
+    return out;
+  }
+
   // ---- 雲端同步用 upsert（last-write-wins 合併）----
 
   /// 書籤：已存在就略過（書籤沒有內容可比新舊）。
@@ -403,6 +441,76 @@ class DatabaseService {
       'notes': await count('notes'),
       'sermons': await count('sermon_notes'),
     };
+  }
+
+  // ---- 讀經計畫進度 ----
+
+  /// 該計畫已完成的天數集合（day 從 1 起算）。
+  Future<Set<int>> getPlanProgress(String planId) async {
+    final db = await database;
+    final rows = await db.query(
+      'plan_progress',
+      columns: ['day'],
+      where: 'plan_id = ?',
+      whereArgs: [planId],
+    );
+    return rows.map((r) => r['day'] as int).toSet();
+  }
+
+  /// 全部進度列（雲端同步用）。
+  Future<List<Map<String, dynamic>>> getAllPlanProgress() async {
+    final db = await database;
+    return db.query('plan_progress');
+  }
+
+  /// 進度合併（保留較新的 done_at）。
+  Future<void> upsertPlanProgress(
+      String planId, int day, int doneAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'plan_progress',
+      where: 'plan_id = ? AND day = ?',
+      whereArgs: [planId, day],
+    );
+    if (existing.isNotEmpty &&
+        (existing.first['done_at'] as int) >= doneAt) {
+      return;
+    }
+    await db.insert(
+      'plan_progress',
+      {'plan_id': planId, 'day': day, 'done_at': doneAt},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 各計畫已完成天數（planId → 已完成天數），計畫列表用。
+  Future<Map<String, int>> getPlanDoneCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+        'SELECT plan_id, COUNT(*) AS c FROM plan_progress GROUP BY plan_id');
+    return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
+  }
+
+  /// 勾選/取消某一天。
+  Future<void> setPlanDayDone(String planId, int day, bool done) async {
+    final db = await database;
+    if (done) {
+      await db.insert(
+        'plan_progress',
+        {
+          'plan_id': planId,
+          'day': day,
+          'done_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await db.delete(
+        'plan_progress',
+        where: 'plan_id = ? AND day = ?',
+        whereArgs: [planId, day],
+      );
+    }
   }
 
   /// 讀經紀錄：保留較新的 read_at。
