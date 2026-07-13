@@ -180,6 +180,63 @@ class VerseAnnotation {
   }
 }
 
+/// 主日／證道筆記（結構化表單，白板「五、個人信仰整理」）。
+class SermonNote {
+  final int? id;
+  final int date; // 講道日期（epoch millis）
+  final String title; // 主題
+  final String scripture; // 經文
+  final String content; // 筆記
+  final String trinityWho; // 神／聖子／聖靈／耶穌（選擇）
+  final String trinityWord; // 該位格的話
+  final String practice; // 實踐
+  final String reflection; // 感想
+  final int createdAt;
+  final int updatedAt;
+
+  const SermonNote({
+    this.id,
+    required this.date,
+    this.title = '',
+    this.scripture = '',
+    this.content = '',
+    this.trinityWho = '',
+    this.trinityWord = '',
+    this.practice = '',
+    this.reflection = '',
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  factory SermonNote.fromMap(Map<String, dynamic> m) => SermonNote(
+        id: m['id'] as int?,
+        date: m['date'] as int,
+        title: (m['title'] as String?) ?? '',
+        scripture: (m['scripture'] as String?) ?? '',
+        content: (m['content'] as String?) ?? '',
+        trinityWho: (m['trinity_who'] as String?) ?? '',
+        trinityWord: (m['trinity_word'] as String?) ?? '',
+        practice: (m['practice'] as String?) ?? '',
+        reflection: (m['reflection'] as String?) ?? '',
+        createdAt: m['created_at'] as int,
+        updatedAt: m['updated_at'] as int,
+      );
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'date': date,
+        'title': title,
+        'scripture': scripture,
+        'content': content,
+        'trinity_who': trinityWho,
+        'trinity_word': trinityWord,
+        'practice': practice,
+        'reflection': reflection,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
+}
+
 /// 螢光筆顏色（存 DB 用 index，勿改順序，只能往後加）。
 enum HighlightColor { yellow, green, blue, pink, orange }
 

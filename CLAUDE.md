@@ -68,7 +68,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 v3（v2 加 reading_log 表；v3 加 notes.tags 標籤欄）。升版時：
+`database_service.dart`，目前 v4（v2 加 reading_log；v3 加 notes.tags；v4 加 sermon_notes 證道筆記表）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）

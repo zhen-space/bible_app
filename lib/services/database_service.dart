@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -70,6 +70,7 @@ class DatabaseService {
     await db.execute(
         'CREATE INDEX idx_notes_ref ON notes(book_id, chapter, verse)');
     await _createReadingLogTable(db); // v2
+    await _createSermonNotesTable(db); // v4
   }
 
   Future<void> _createReadingLogTable(Database db) async {
@@ -83,6 +84,24 @@ class DatabaseService {
     ''');
   }
 
+  Future<void> _createSermonNotesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE sermon_notes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        scripture TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        trinity_who TEXT NOT NULL DEFAULT '',
+        trinity_word TEXT NOT NULL DEFAULT '',
+        practice TEXT NOT NULL DEFAULT '',
+        reflection TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       await _createReadingLogTable(db);
@@ -91,6 +110,9 @@ class DatabaseService {
       // v3：筆記加標籤欄
       await db.execute(
           "ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''");
+    }
+    if (oldV < 4) {
+      await _createSermonNotesTable(db);
     }
   }
 
@@ -333,6 +355,54 @@ class DatabaseService {
         whereArgs: [existing.first['id']],
       );
     }
+  }
+
+  // ---- 主日／證道筆記 ----
+
+  Future<List<SermonNote>> getSermonNotes() async {
+    final db = await database;
+    final rows = await db.query('sermon_notes', orderBy: 'date DESC');
+    return rows.map(SermonNote.fromMap).toList();
+  }
+
+  /// 新增或更新（id 為 null 則新增），回傳 id。
+  Future<int> saveSermonNote(SermonNote note) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (note.id == null) {
+      final m = note.toMap()
+        ..['created_at'] = now
+        ..['updated_at'] = now;
+      return db.insert('sermon_notes', m);
+    }
+    await db.update(
+      'sermon_notes',
+      note.toMap()..['updated_at'] = now,
+      where: 'id = ?',
+      whereArgs: [note.id],
+    );
+    return note.id!;
+  }
+
+  Future<void> deleteSermonNote(int id) async {
+    final db = await database;
+    await db.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 統計小卡用：各項數量。
+  Future<Map<String, int>> getStats() async {
+    final db = await database;
+    Future<int> count(String t) async {
+      final r = await db.rawQuery('SELECT COUNT(*) AS c FROM $t');
+      return r.first['c'] as int;
+    }
+    return {
+      'read': await count('reading_log'),
+      'bookmarks': await count('bookmarks'),
+      'highlights': await count('highlights'),
+      'notes': await count('notes'),
+      'sermons': await count('sermon_notes'),
+    };
   }
 
   /// 讀經紀錄：保留較新的 read_at。

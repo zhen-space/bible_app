@@ -351,6 +351,10 @@ final allHighlightsProvider = FutureProvider<List<Highlight>>(
     (ref) => ref.watch(databaseServiceProvider).getAllHighlights());
 final allNotesProvider = FutureProvider<List<Note>>(
     (ref) => ref.watch(databaseServiceProvider).getAllNotes());
+final allSermonNotesProvider = FutureProvider<List<SermonNote>>(
+    (ref) => ref.watch(databaseServiceProvider).getSermonNotes());
+final statsProvider = FutureProvider<Map<String, int>>(
+    (ref) => ref.watch(databaseServiceProvider).getStats());
 
 // ---- 帳號與雲端同步（Firebase；未初始化時功能自動隱藏）----
 

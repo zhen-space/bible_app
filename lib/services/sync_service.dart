@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/models.dart';
 import 'database_service.dart';
 
 /// 雲端同步：本地 SQLite 為主，Firestore 為備份。
@@ -63,6 +64,23 @@ class SyncService {
           m['book_id'] as int, m['chapter'] as int, m['read_at'] as int);
       downloaded++;
     }
+    // 證道筆記：以雲端 doc id 對應本地（較新的 updated_at 為準）
+    final cloudSermons = await _col(uid, 'sermon_notes').get();
+    final localSermons = await db.getSermonNotes();
+    for (final d in cloudSermons.docs) {
+      final m = d.data();
+      final localMatch = localSermons
+          .where((s) => s.createdAt == (m['created_at'] as int))
+          .firstOrNull;
+      if (localMatch == null ||
+          (m['updated_at'] as int) > localMatch.updatedAt) {
+        await db.saveSermonNote(SermonNote.fromMap({
+          ...m,
+          if (localMatch != null) 'id': localMatch.id,
+        }));
+        downloaded++;
+      }
+    }
 
     // ---- 上傳（本地 → 雲端，batch 寫入）----
     var batch = _fs.batch();
@@ -106,6 +124,14 @@ class SyncService {
             'chapter': m['chapter'],
             'read_at': m['read_at'],
           });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
+    for (final s in await db.getSermonNotes()) {
+      final m = s.toMap()..remove('id');
+      // 用 created_at 當雲端 doc id（穩定、跨裝置一致）
+      batch.set(_col(uid, 'sermon_notes').doc('s${s.createdAt}'), m);
       pending++;
       uploaded++;
       await commitIfFull();

@@ -51,6 +51,29 @@ void main() {
     });
   });
 
+  group('SermonNote round-trip', () {
+    test('toMap/fromMap 保留所有欄位', () {
+      const s = SermonNote(
+        id: 3,
+        date: 111,
+        title: '主題',
+        scripture: '約3:16',
+        content: '筆記',
+        trinityWho: '聖靈',
+        trinityWord: '祂的話',
+        practice: '實踐',
+        reflection: '感想',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      final r = SermonNote.fromMap(s.toMap());
+      expect(r.title, '主題');
+      expect(r.trinityWho, '聖靈');
+      expect(r.reflection, '感想');
+      expect(r.date, 111);
+    });
+  });
+
   group('sentenceWithMatch', () {
     test('取出含關鍵詞的那一句', () {
       const content = '今天讀經很有收穫。神的愛真奇妙。要記得禱告。';

@@ -6,6 +6,7 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
+import 'sermon_notes_screen.dart';
 
 /// 書籤 / 螢光筆 / 筆記 總覽。[initialTab] 0=書籤 1=螢光筆 2=筆記。
 class BookmarksScreen extends ConsumerWidget {
@@ -23,6 +24,15 @@ class BookmarksScreen extends ConsumerWidget {
           title: const Text('我的標記'),
           actions: [
             IconButton(
+              icon: const Icon(Icons.church_outlined),
+              tooltip: '主日・證道筆記',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const SermonNotesScreen()),
+              ),
+            ),
+            IconButton(
               icon: const Icon(Icons.ios_share),
               tooltip: '匯出筆記（Markdown）',
               onPressed: () => _exportNotes(context, ref),
@@ -32,8 +42,15 @@ class BookmarksScreen extends ConsumerWidget {
             tabs: [Tab(text: '書籤'), Tab(text: '螢光筆'), Tab(text: '筆記')],
           ),
         ),
-        body: const TabBarView(
-          children: [_BookmarkTab(), _HighlightTab(), _NoteTab()],
+        body: Column(
+          children: const [
+            _StatsCard(),
+            Expanded(
+              child: TabBarView(
+                children: [_BookmarkTab(), _HighlightTab(), _NoteTab()],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -67,6 +84,52 @@ Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
         SnackBar(content: Text('已複製 ${notes.length} 則筆記（Markdown）')));
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+  }
+}
+
+/// 統計小卡：讀經、書籤、螢光筆、筆記、證道筆記數量。
+class _StatsCard extends ConsumerWidget {
+  const _StatsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(statsProvider).value;
+    if (s == null) return const SizedBox.shrink();
+    final items = [
+      ('已讀', '${s['read']}', '章', Icons.menu_book),
+      ('書籤', '${s['bookmarks']}', '', Icons.bookmark),
+      ('螢光筆', '${s['highlights']}', '', Icons.brush),
+      ('筆記', '${s['notes']}', '', Icons.sticky_note_2_outlined),
+      ('證道', '${s['sermons']}', '', Icons.church_outlined),
+    ];
+    return Card(
+      margin: const EdgeInsets.all(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            for (final it in items)
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(it.$4,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.secondary),
+                  const SizedBox(height: 4),
+                  Text('${it.$2}${it.$3}',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(it.$1,
+                      style: Theme.of(context).textTheme.labelSmall),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
