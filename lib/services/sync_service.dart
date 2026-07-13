@@ -52,7 +52,8 @@ class SyncService {
           m['verse'] as int,
           m['content'] as String,
           m['created_at'] as int,
-          m['updated_at'] as int);
+          m['updated_at'] as int,
+          tags: (m['tags'] as String?) ?? '');
       downloaded++;
     }
     final cloudLog = await _col(uid, 'reading_log').get();

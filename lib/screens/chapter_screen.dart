@@ -531,6 +531,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   void _showNoteEditor(Book book, int verseNo, Note? existing) {
     final controller = TextEditingController(text: existing?.content ?? '');
+    final tagsController = TextEditingController(text: existing?.tags ?? '');
     final db = ref.read(databaseServiceProvider);
 
     showModalBottomSheet(
@@ -578,6 +579,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               ),
             ),
             const SizedBox(height: 8),
+            TextField(
+              controller: tagsController,
+              maxLines: 1,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.tag, size: 18),
+                hintText: '標籤（空格分隔，例：信心 禱告）',
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -597,10 +609,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 FilledButton(
                   onPressed: () async {
                     final content = controller.text.trim();
+                    final tags = tagsController.text.trim();
                     Navigator.pop(ctx);
                     if (content.isEmpty) return;
                     try {
-                      await db.saveNote(_bookId, _chapter, verseNo, content);
+                      await db.saveNote(_bookId, _chapter, verseNo, content,
+                          tags: tags);
                     } finally {
                       _refreshMarks();
                     }

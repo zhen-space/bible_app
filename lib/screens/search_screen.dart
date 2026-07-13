@@ -8,6 +8,7 @@ import '../data/topics.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
+import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
 import 'topics_screen.dart';
 
@@ -150,14 +151,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              // 經文
+              // 經文（高亮關鍵詞）
               if (_results.isNotEmpty) const _SectionLabel('經文'),
               for (final r in _results)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
-                      title: Text(r.text),
+                      title: Text.rich(TextSpan(
+                          children: highlightSpans(
+                              context, r.text, _controller.text.trim()))),
                       subtitle: Text(
                           '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
                       onTap: () => _openChapter(r.bookId, r.chapter),

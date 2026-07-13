@@ -220,13 +220,14 @@ class Highlight {
       };
 }
 
-/// 筆記。
+/// 筆記。[tags] 為空格分隔的標籤字串（例：「信心 禱告」），可空。
 class Note {
   final int? id;
   final int bookId;
   final int chapter;
   final int verse;
   final String content;
+  final String tags;
   final int createdAt;
   final int updatedAt;
 
@@ -236,9 +237,13 @@ class Note {
     required this.chapter,
     required this.verse,
     required this.content,
+    this.tags = '',
     required this.createdAt,
     required this.updatedAt,
   });
+
+  List<String> get tagList =>
+      tags.split(RegExp(r'[\s,，#]+')).where((t) => t.isNotEmpty).toList();
 
   factory Note.fromMap(Map<String, dynamic> m) => Note(
         id: m['id'] as int,
@@ -246,6 +251,7 @@ class Note {
         chapter: m['chapter'] as int,
         verse: m['verse'] as int,
         content: m['content'] as String,
+        tags: (m['tags'] as String?) ?? '',
         createdAt: m['created_at'] as int,
         updatedAt: m['updated_at'] as int,
       );
@@ -256,6 +262,7 @@ class Note {
         'chapter': chapter,
         'verse': verse,
         'content': content,
+        'tags': tags,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };

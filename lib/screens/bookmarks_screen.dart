@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
+import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
 
 /// 書籤 / 螢光筆 / 筆記 總覽。[initialTab] 0=書籤 1=螢光筆 2=筆記。
@@ -155,13 +156,15 @@ class _NoteTabState extends ConsumerState<_NoteTab> {
     return _asyncList2(booksAsync, notesAsync, (books, items) {
       if (items.isEmpty) return const Center(child: Text('還沒有筆記'));
       final q = _query.trim();
-      // 可搜筆記內容、書名、節位（例：約 3:16、觀察、標籤字）
+      // 可搜筆記內容、標籤、書名、節位（例：約 3:16、信心、觀察）
       final filtered = q.isEmpty
           ? items
           : items.where((n) {
               final book = books[n.bookId - 1];
               final ref = '${book.name} ${n.chapter}:${n.verse}';
-              return n.content.contains(q) || ref.contains(q);
+              return n.content.contains(q) ||
+                  n.tags.contains(q) ||
+                  ref.contains(q);
             }).toList();
 
       return Column(
@@ -187,12 +190,54 @@ class _NoteTabState extends ConsumerState<_NoteTab> {
                     itemBuilder: (context, i) {
                       final n = filtered[i];
                       final book = books[n.bookId - 1];
+                      // 搜尋中：顯示「含關鍵詞的那句話」並高亮該詞
+                      final display = q.isEmpty
+                          ? n.content
+                          : sentenceWithMatch(n.content, q);
                       return ListTile(
                         leading: const Icon(Icons.sticky_note_2_outlined),
-                        title: Text(n.content,
-                            maxLines: 3, overflow: TextOverflow.ellipsis),
-                        subtitle:
+                        title: q.isEmpty
+                            ? Text(display,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis)
+                            : Text.rich(
+                                TextSpan(
+                                    children: highlightSpans(
+                                        context, display, q)),
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
                             Text('${book.name} ${n.chapter}:${n.verse}'),
+                            if (n.tagList.isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Wrap(
+                                  spacing: 6,
+                                  children: [
+                                    for (final t in n.tagList)
+                                      Container(
+                                        padding: const EdgeInsets
+                                            .symmetric(
+                                            horizontal: 8, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: AppTheme.paleBlue
+                                              .withValues(alpha: 0.25),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: Text('#$t',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                          ],
+                        ),
                         onTap: () =>
                             _openChapter(context, n.bookId, n.chapter),
                       );

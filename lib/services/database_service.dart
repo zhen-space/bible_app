@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 2;
+  static const _dbVersion = 3;
 
   Database? _db;
 
@@ -62,6 +62,7 @@ class DatabaseService {
         chapter INTEGER NOT NULL,
         verse INTEGER NOT NULL,
         content TEXT NOT NULL,
+        tags TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -85,6 +86,11 @@ class DatabaseService {
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       await _createReadingLogTable(db);
+    }
+    if (oldV < 3) {
+      // v3：筆記加標籤欄
+      await db.execute(
+          "ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -173,8 +179,8 @@ class DatabaseService {
 
   // ---- Notes ----
 
-  Future<void> saveNote(
-      int bookId, int chapter, int verse, String content) async {
+  Future<void> saveNote(int bookId, int chapter, int verse, String content,
+      {String tags = ''}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await db.query(
@@ -188,13 +194,14 @@ class DatabaseService {
         'chapter': chapter,
         'verse': verse,
         'content': content,
+        'tags': tags,
         'created_at': now,
         'updated_at': now,
       });
     } else {
       await db.update(
         'notes',
-        {'content': content, 'updated_at': now},
+        {'content': content, 'tags': tags, 'updated_at': now},
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );
@@ -300,7 +307,8 @@ class DatabaseService {
 
   /// 筆記：以 updated_at 較新者為準。
   Future<void> upsertNote(int bookId, int chapter, int verse, String content,
-      int createdAt, int updatedAt) async {
+      int createdAt, int updatedAt,
+      {String tags = ''}) async {
     final db = await database;
     final existing = await db.query(
       'notes',
@@ -313,13 +321,14 @@ class DatabaseService {
         'chapter': chapter,
         'verse': verse,
         'content': content,
+        'tags': tags,
         'created_at': createdAt,
         'updated_at': updatedAt,
       });
     } else if ((existing.first['updated_at'] as int) < updatedAt) {
       await db.update(
         'notes',
-        {'content': content, 'updated_at': updatedAt},
+        {'content': content, 'tags': tags, 'updated_at': updatedAt},
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );

@@ -53,7 +53,8 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   - 書卷 id：創=1、詩=19、太=40、約=43。
 - **導讀／統整標籤方格**：書卷章節格最前面固定一個「導讀」方格、最後面一個「統整」方格（`_OverviewBox`），開 `BookOverviewScreen`。方格永遠在；沒內容時顯示待填空白頁（不代寫內容）。
 - 交叉引用（crossRefs）是節位字串，讀經頁點了會跳轉；可帶範圍（約1:1-3），跳轉時取破折號前。
-- 目前只有 3 章示範內容（創1、詩23、約3）。**補內容 = 編輯這個 JSON**，不用改程式。
+- 目前只留 1 章示範內容（創1，使用者要求刪掉詩23/約3）。創1 可在後台編輯。**補內容 = 後台撰寫或編輯這個 JSON**，不用改程式。
+- 章導讀「分段」欄（outline，如「1-8 各支派在營地的位置」）會解析成經文中的**段落標題**（`headingsFromOutline`）。
 - 有測試守著：所有 key 在範圍內、所有交叉引用能解析。
 - **管理後台（App 內）**：管理者（`kAdminEmail`＝使用者本人）登入後，設定頁出現「內容管理」。可在 App 內撰寫卷導讀/統整、章導讀/重點、節註解，存 Firestore `annotations` collection（doc id：`book_{id}` / `chapter_{id}_{章}` / `verse_{id}_{章}_{節}`，資料形狀同 asset JSON）。讀經端 `cloudAnnotationsProvider` 啟動抓一次，**雲端優先、asset 為底**合併。⛔ 內容仍由使用者親寫，Claude 只維護編輯器。
 - **公開註解投稿＋審核**（白板「每句可個人註解但公開須經審核」）：登入者可在讀經頁對經節「投稿公開註解」→ Firestore `submissions`（status pending）。管理者在後台「公開註解審核」佇列 approve/reject；通過會複製到 `public_notes`（所有人可讀），讀經頁經節選單顯示「社群註解」。用 `loc='書卷id_章'` 單欄位查詢，免複合索引。⛔ 這是使用者投稿內容，非 Claude 代寫。
@@ -67,7 +68,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 v2（v2 加了 reading_log 讀經紀錄表）。升版時：
+`database_service.dart`，目前 v3（v2 加 reading_log 表；v3 加 notes.tags 標籤欄）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）

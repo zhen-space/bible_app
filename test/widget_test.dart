@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:bible_app/models/models.dart';
+import 'package:bible_app/utils/text_utils.dart';
 
 void main() {
   group('Book.fromJson', () {
@@ -18,6 +19,46 @@ void main() {
       expect(book.id, 1);
       expect(book.chapterCount, 2);
       expect(book.chapters[0][0], contains('神創造天地'));
+    });
+  });
+
+  group('Note tags', () {
+    test('tagList 解析空格/逗號/井號分隔', () {
+      const n = Note(
+        bookId: 1,
+        chapter: 1,
+        verse: 1,
+        content: '內容',
+        tags: '信心 禱告，#感恩',
+        createdAt: 0,
+        updatedAt: 0,
+      );
+      expect(n.tagList, ['信心', '禱告', '感恩']);
+    });
+
+    test('toMap/fromMap 保留 tags', () {
+      const n = Note(
+        id: 1,
+        bookId: 1,
+        chapter: 1,
+        verse: 1,
+        content: 'c',
+        tags: '標籤',
+        createdAt: 1,
+        updatedAt: 2,
+      );
+      expect(Note.fromMap(n.toMap()).tags, '標籤');
+    });
+  });
+
+  group('sentenceWithMatch', () {
+    test('取出含關鍵詞的那一句', () {
+      const content = '今天讀經很有收穫。神的愛真奇妙。要記得禱告。';
+      expect(sentenceWithMatch(content, '愛'), '神的愛真奇妙。');
+    });
+
+    test('找不到詞回傳開頭', () {
+      expect(sentenceWithMatch('短內容', '不存在'), '短內容');
     });
   });
 
