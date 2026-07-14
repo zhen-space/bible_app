@@ -32,6 +32,24 @@ class ContentService {
           int bookId, int chapter, int verse, Map<String, dynamic> data) =>
       _col.doc('verse_${bookId}_${chapter}_$verse').set(data);
 
+  // ---- 知識架構（時間軸/人物/平行/預表）----
+  //
+  // 存成單一 doc `knowledge/data`（4 個陣列），後台編輯即讀改寫整份，
+  // 讀經端「雲端優先、asset 為底」。內容一律由管理者（使用者本人）撰寫。
+
+  DocumentReference<Map<String, dynamic>> get _knowledgeDoc =>
+      _fs.collection('knowledge').doc('data');
+
+  /// 讀雲端知識資料（不存在回 null，讀經端就退回 asset）。
+  Future<Map<String, dynamic>?> fetchKnowledge() async {
+    final d = await _knowledgeDoc.get();
+    return d.exists ? d.data() : null;
+  }
+
+  /// 後台：寫回整份知識資料。
+  Future<void> saveKnowledge(Map<String, dynamic> data) =>
+      _knowledgeDoc.set(data);
+
   // ---- 公開註解（使用者投稿 → 管理者審核）----
   //
   // `submissions`：待審／已審的投稿（只有作者本人與管理者可讀）。

@@ -13,6 +13,13 @@ service cloud.firestore {
         && request.auth.token.email == 'zhen20091212@gmail.com';
     }
 
+    // 知識架構（時間軸/人物/平行/預表）：所有人可讀，只有管理者能寫
+    match /knowledge/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == 'zhen20091212@gmail.com';
+    }
+
     // 公開註解投稿：登入者可投（進待審），本人與管理者可讀，管理者可審
     match /submissions/{id} {
       allow create: if request.auth != null

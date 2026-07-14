@@ -6,7 +6,6 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../widgets/google_login_button_stub.dart'
     if (dart.library.js_interop) '../widgets/google_login_button_web.dart';
-import 'admin_screen.dart';
 
 /// 設定：外觀主題、字級。
 class SettingsScreen extends ConsumerWidget {
@@ -161,14 +160,10 @@ class _AccountSection extends ConsumerWidget {
             onTap: notifier.syncNow,
           ),
           if (ref.watch(isAdminProvider))
-            ListTile(
-              leading: const Icon(Icons.admin_panel_settings),
-              title: const Text('內容管理（後台）'),
-              subtitle: const Text('撰寫導讀、統整、每節註解並發布'),
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AdminHomeScreen()),
-              ),
+            const ListTile(
+              leading: Icon(Icons.admin_panel_settings),
+              title: Text('內容管理已移到獨立後台'),
+              subtitle: Text('請用「內容後台」網站（main_admin）登入管理'),
             ),
           ListTile(
             leading: const Icon(Icons.logout),

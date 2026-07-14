@@ -18,6 +18,8 @@ class ParallelPassage {
             .map((e) => e.toString())
             .toList(),
       );
+
+  Map<String, dynamic> toJson() => {'title': title, 'refs': refs};
 }
 
 /// 舊約預表 → 新約應驗。
@@ -40,6 +42,9 @@ class TypeFulfillment {
         ntRef: j['ntRef'] as String? ?? '',
         note: j['note'] as String? ?? '',
       );
+
+  Map<String, dynamic> toJson() =>
+      {'title': title, 'otRef': otRef, 'ntRef': ntRef, 'note': note};
 }
 
 /// 時間軸／事件線上的一個事件。
@@ -65,6 +70,9 @@ class TimelineEvent {
         when: j['when'] as String? ?? '',
         ref: j['ref'] as String? ?? '',
       );
+
+  Map<String, dynamic> toJson() =>
+      {'order': order, 'era': era, 'title': title, 'when': when, 'ref': ref};
 }
 
 /// 人物生平中的一個重大事件。
@@ -78,6 +86,8 @@ class PersonEvent {
         title: j['title'] as String? ?? '',
         ref: j['ref'] as String? ?? '',
       );
+
+  Map<String, dynamic> toJson() => {'title': title, 'ref': ref};
 }
 
 /// 人物之間的一段關係（做成可點跳轉的關係鏈）。
@@ -97,6 +107,9 @@ class PersonRelation {
         personId: j['personId'] as String? ?? '',
         name: j['name'] as String? ?? '',
       );
+
+  Map<String, dynamic> toJson() =>
+      {'type': type, 'personId': personId, 'name': name};
 }
 
 /// 一位聖經人物：生平簡介＋重大事件＋關係。
@@ -132,6 +145,15 @@ class Person {
                 PersonRelation.fromJson((e as Map).cast<String, dynamic>()))
             .toList(),
       );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'aka': aka,
+        'bio': bio,
+        'events': [for (final e in events) e.toJson()],
+        'relations': [for (final r in relations) r.toJson()],
+      };
 }
 
 /// 整份知識庫。
@@ -165,6 +187,26 @@ class KnowledgeBase {
       people: list('people', Person.fromJson),
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'parallels': [for (final p in parallels) p.toJson()],
+        'types': [for (final t in types) t.toJson()],
+        'timeline': [for (final e in timeline) e.toJson()],
+        'people': [for (final p in people) p.toJson()],
+      };
+
+  KnowledgeBase copyWith({
+    List<ParallelPassage>? parallels,
+    List<TypeFulfillment>? types,
+    List<TimelineEvent>? timeline,
+    List<Person>? people,
+  }) =>
+      KnowledgeBase(
+        parallels: parallels ?? this.parallels,
+        types: types ?? this.types,
+        timeline: timeline ?? this.timeline,
+        people: people ?? this.people,
+      );
 
   Person? personById(String id) {
     for (final p in people) {

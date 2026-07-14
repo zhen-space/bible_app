@@ -27,9 +27,16 @@ Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引�
 
 ## 目錄結構
 
+**雙 app 架構**：同一 repo、共用 models/services/providers，兩個進入點：
+- `lib/main.dart`：讀經 app（一般使用者）。**不含**任何管理 UI，只讀雲端內容。
+- `lib/main_admin.dart`：內容後台 app（管理者），`AdminGate` 登入後只有 kAdminEmail 進得去，
+  含導讀/註解編輯、公開註解審核、Q&A 審核回答、知識架構編輯。獨立 build／部署
+  （`render-build-admin.sh` → `build/web-admin`，render.yaml 第二個服務 `bible-app-admin`）。
+
 ```
 lib/
-  main.dart                 App 入口，ProviderScope + MaterialApp
+  main.dart                 讀經 app 入口，ProviderScope + MaterialApp
+  main_admin.dart           內容後台 app 入口（獨立部署）
   models/models.dart        Book/VerseRef/Bookmark/Highlight/Note
   data/topics.dart          主題/情境精選經文（節位字串，有測試守著有效性）
   services/
@@ -82,7 +89,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   - `people`：人物 `{ id, name, aka:[], bio, events:[{title,ref}],
     relations:[{type, personId, name}] }`；relations 的 personId 指到別人 → 詳情頁可跳過去
 - ⛔ 內容（哪些經文平行、預表對應、年代、生平、關係）一律使用者親寫；Claude 只維護格式與 UI。
-  之後要雲端後台編輯可仿 annotations 加 cloud 覆蓋層。
+- **雲端編輯**：後台 app 的「知識架構編輯」（`screens/admin_knowledge_screen.dart`）寫入
+  Firestore 單一 doc `knowledge/data`（4 個陣列，即讀改寫整份）。讀經端
+  `knowledgeProvider` **雲端優先、asset 為底**合併（`cloudKnowledgeProvider`）。
 - 有測試守著格式解析（合成資料，非聖經內容）。
 
 ## 疑問 Q&A 模組（白板六，**全人工、無 AI**）

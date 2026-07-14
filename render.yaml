@@ -1,6 +1,7 @@
 # Render Blueprint：靜態網站部署 Flutter Web 版
 # 在 render.com 用「New +」→「Blueprint」連這個 repo 即可。
 services:
+  # 讀經 app（一般使用者）
   - type: web
     name: bible-app
     runtime: static
@@ -10,3 +11,13 @@ services:
     # 注意：不要加 COOP/COEP headers——same-origin 會擋 Firebase 登入；
     # sqflite 的 WASM 實測不需要這些 header（走 IndexedDB）。
     # 登入採 GIS token 流程，不需要 __/auth 代理路由。
+
+  # 內容後台 app（管理者專用，獨立進入點 lib/main_admin.dart）
+  # 部署後記得把這個網站的網域也加進 Firebase 的「授權網域」與
+  # Google Cloud OAuth 的來源／重新導向，否則後台登入會失敗。
+  - type: web
+    name: bible-app-admin
+    runtime: static
+    branch: claude/bible-app-setup-xi8bvd
+    buildCommand: ./render-build-admin.sh
+    staticPublishPath: build/web-admin

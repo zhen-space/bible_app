@@ -402,8 +402,23 @@ final pendingSubmissionsProvider =
 final knowledgeRepositoryProvider =
     Provider((ref) => KnowledgeRepository());
 
-final knowledgeProvider = FutureProvider<KnowledgeBase>(
-    (ref) => ref.watch(knowledgeRepositoryProvider).load());
+/// 雲端知識資料（後台編輯的成果）；Firebase 不可用或無資料時為 null。
+final cloudKnowledgeProvider =
+    FutureProvider<Map<String, dynamic>?>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return null;
+  try {
+    return await ref.watch(contentServiceProvider).fetchKnowledge();
+  } catch (_) {
+    return null;
+  }
+});
+
+/// 知識架構：**雲端優先、asset 為底**。後台存檔後 invalidate 即刷新。
+final knowledgeProvider = FutureProvider<KnowledgeBase>((ref) async {
+  final cloud = await ref.watch(cloudKnowledgeProvider.future);
+  if (cloud != null) return KnowledgeBase.fromJson(cloud);
+  return ref.watch(knowledgeRepositoryProvider).load();
+});
 
 // ---- 疑問 Q&A（全人工，無 AI）----
 
