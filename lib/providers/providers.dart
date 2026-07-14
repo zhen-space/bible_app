@@ -10,7 +10,9 @@ import '../models/models.dart';
 import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
+import '../models/knowledge.dart';
 import '../services/database_service.dart';
+import '../services/knowledge_repository.dart';
 import '../services/qa_service.dart';
 import '../services/sync_service.dart';
 import '../services/verse_locator.dart';
@@ -394,6 +396,14 @@ final pendingSubmissionsProvider =
   if (!ref.watch(firebaseReadyProvider)) return const [];
   return ref.watch(contentServiceProvider).pendingSubmissions();
 });
+
+// ---- 聖經知識架構（時間軸/人物/平行對照/預表應驗；內容使用者親寫）----
+
+final knowledgeRepositoryProvider =
+    Provider((ref) => KnowledgeRepository());
+
+final knowledgeProvider = FutureProvider<KnowledgeBase>(
+    (ref) => ref.watch(knowledgeRepositoryProvider).load());
 
 // ---- 疑問 Q&A（全人工，無 AI）----
 

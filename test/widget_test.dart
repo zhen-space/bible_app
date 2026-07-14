@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bible_app/data/reading_plans.dart';
+import 'package:bible_app/models/knowledge.dart';
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/providers/providers.dart';
 import 'package:bible_app/utils/text_utils.dart';
@@ -158,6 +159,53 @@ void main() {
       expect(c.read(highlightLabelsProvider).containsKey(HighlightColor.blue),
           false);
       c.dispose();
+    });
+  });
+
+  group('KnowledgeBase 解析', () {
+    test('空 JSON → 全空、不炸', () {
+      final kb = KnowledgeBase.fromJson({});
+      expect(kb.parallels, isEmpty);
+      expect(kb.people, isEmpty);
+      expect(kb.timeline, isEmpty);
+      expect(kb.types, isEmpty);
+    });
+
+    test('timeline 依 order 排序、people 可依 id 查、關係可解析', () {
+      // 合成資料（非聖經內容），只驗證格式解析
+      final kb = KnowledgeBase.fromJson({
+        'timeline': [
+          {'order': 2, 'era': 'B', 'title': 'e2', 'when': 'w2', 'ref': 'x'},
+          {'order': 1, 'era': 'A', 'title': 'e1', 'when': 'w1', 'ref': 'y'},
+        ],
+        'people': [
+          {
+            'id': 'p1',
+            'name': '甲',
+            'aka': ['A1'],
+            'bio': '簡介',
+            'events': [
+              {'title': 'ev', 'ref': 'z'}
+            ],
+            'relations': [
+              {'type': '子', 'personId': 'p2', 'name': '乙'}
+            ],
+          },
+          {'id': 'p2', 'name': '乙'},
+        ],
+        'parallels': [
+          {'title': 't', 'refs': ['a', 'b']}
+        ],
+        'types': [
+          {'title': 't', 'otRef': 'o', 'ntRef': 'n', 'note': 'x'}
+        ],
+      });
+      expect(kb.timeline.first.title, 'e1'); // order 1 在前
+      expect(kb.personById('p1')?.aka, ['A1']);
+      expect(kb.personById('p1')?.relations.first.personId, 'p2');
+      expect(kb.personById('nope'), isNull);
+      expect(kb.parallels.first.refs, ['a', 'b']);
+      expect(kb.types.first.ntRef, 'n');
     });
   });
 
