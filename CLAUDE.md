@@ -38,6 +38,7 @@ lib/
     verse_locator.dart      節位解析（「約3:16」→ bookId/章/節）
     annotation_repository.dart  註解內容載入（章導讀/節註解，可插拔）
     tts_service.dart        聽聖經（flutter_tts 逐節朗讀）
+    qa_service.dart         疑問 Q&A（全人工，Firestore questions）
     download_web.dart / download_stub.dart  瀏覽器檔案下載（條件式 import）
   data/topics.dart          主題＋主題導讀（Topic.intro）
   data/reading_plans.dart   讀經計畫（機械排程，非撰寫內容）
@@ -45,7 +46,7 @@ lib/
   theme/app_theme.dart      深淺色主題 + 螢光筆顏色
   screens/                  home / chapter / search / bookmarks / settings / topics /
                             book_overview / faith_map（信仰地圖）/ reading_plans（讀經計畫）/
-                            sermon_notes（證道筆記）
+                            sermon_notes（證道筆記）/ qa（疑問 Q&A）
 assets/bible/cuv.json       和合本經文（見「經文資料」）
 assets/annotations/annotations.json  註解內容（見「註解內容模組」）
 ```
@@ -65,6 +66,19 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - 有測試守著：所有 key 在範圍內、所有交叉引用能解析。
 - **管理後台（App 內）**：管理者（`kAdminEmail`＝使用者本人）登入後，設定頁出現「內容管理」。可在 App 內撰寫卷導讀/統整、章導讀/重點、節註解，存 Firestore `annotations` collection（doc id：`book_{id}` / `chapter_{id}_{章}` / `verse_{id}_{章}_{節}`，資料形狀同 asset JSON）。讀經端 `cloudAnnotationsProvider` 啟動抓一次，**雲端優先、asset 為底**合併。⛔ 內容仍由使用者親寫，Claude 只維護編輯器。
 - **公開註解投稿＋審核**（白板「每句可個人註解但公開須經審核」）：登入者可在讀經頁對經節「投稿公開註解」→ Firestore `submissions`（status pending）。管理者在後台「公開註解審核」佇列 approve/reject；通過會複製到 `public_notes`（所有人可讀），讀經頁經節選單顯示「社群註解」。用 `loc='書卷id_章'` 單欄位查詢，免複合索引。⛔ 這是使用者投稿內容，非 Claude 代寫。
+
+## 疑問 Q&A 模組（白板六，**全人工、無 AI**）
+
+- `services/qa_service.dart` + `screens/qa_screen.dart` + `providers` 一組。Firestore：
+  - `questions/{qid}`：問題本體（uid/author/title/body/category/status/featured/時間）＋
+    `answer`（content/scriptures/tags/時間）＋ `answer_versions`（回答更新紀錄，arrayUnion 舊版）
+  - `users/{uid}/following/{qid}`：追蹤（存 seen_at，做「有新回答」未讀提示）
+  - `users/{uid}/saved_questions/{qid}`：收藏
+- 分類：`kQaCategories = [神學, 生活, 爭議, 其他]`。列表查詢都用**單一欄位**（status 或 uid），排序/搜尋在用戶端做（免複合索引）。
+- 流程：使用者提問→`pending`→管理者（kAdminEmail）在 Q&A 頁審核/親自回答（回答即 `approved` 公開）。回答可引用經文（節位字串，點了跳讀經頁）、加標籤、精選置頂、編輯（保留更新紀錄）。
+- ⛔ **問題與回答都是人寫的內容**（提問者/管理者本人），Claude 只維護程式與編輯器，不代寫問答文字。
+- 未做：真推播（需 FCM）——目前「通知」是 App 內未讀紅點（`followingQuestionsProvider` 比對 answer.updatedAt vs seen_at）。
+- Firestore 規則見 `firestore.rules` 的 `questions` 區塊；following/saved 走 `users/{uid}` 萬用規則。
 
 ## 經文資料
 
@@ -133,7 +147,7 @@ flutter test
 **三、搜尋與索引**：✅ 全文搜尋、模糊/子序列搜尋、節位快速鍵、搜尋歷史、筆記搜尋、人物/地點/事件搜尋
 **四、主題式閱讀**：✅ 主題分類頁、**主題導讀欄位**、**讀經計畫（進度追蹤）**、人生情境入口、每日經文、**聽聖經（TTS）**　⬜ 主題導讀「文字」（容，使用者撰寫）、主題式選經計畫內容（容）
 **五、個人信仰整理**：✅ 經文筆記、三欄模板、標籤、收藏、螢光多色**可命名**、筆記匯出（Markdown＋HTML 可存 PDF/用 Word 開）、讀經紀錄/進度、首頁筆記預覽、**主日證道筆記**、統計小卡、**我的信仰地圖**　⬜ 私密/公開（部分＝公開投稿已做，私密即本地筆記）
-**六、疑問 Q&A**（雲）：⬜ 全部——提問/分類/審核/通知，需要後端與管理者、登入實測
+**六、疑問 Q&A**（雲，**全人工無 AI**）：✅ 提問、分類（神學/生活/爭議/其他）、問題搜尋、管理者親自回答、回答引用經文（可跳轉）＋標籤、精選置頂、回答編輯、回答更新紀錄、問題審核、問題收藏、追蹤（有新回答的未讀提示）　⬜ 真推播通知（需 FCM，目前是 App 內未讀提示）、登入實測
 **七、交叉與知識架構**（容/資料）：⬜ 相關經文推薦、平行對照、時間軸、人物關係圖——需要 cross-reference 資料集（OpenBible.info cross-refs，公有領域）。**注意：crossRefs 目前混在節註解內容區，屬使用者內容邊界，動之前先問使用者**
 **八、帳號與技術**（雲）：✅ 自動儲存、雲端同步、**同步刪除（tombstone）**　⬜ 登入實測（onrender.com 本環境連不到，需使用者週四手機/桌機測）、Apple 登入實測
 **九、120堂課程學習區**（容）：⬜ 白板上還是空的（無內容）
@@ -146,9 +160,11 @@ flutter test
 - [ ] **補齊註解內容**（目前只有創1 範例，格式已定，後台或編輯 annotations.json；⛔ 使用者親寫）
 - [ ] 主題導讀文字、主題式讀經計畫選經（⛔ 使用者親寫；欄位/UI/排程框架已就緒）
 - [ ] 交叉引用資料集（OpenBible cross-refs）→ 動前先確認內容邊界
-- [ ] 疑問 Q&A / 共讀小組 / 代禱連結 / AI 問答（皆需後端＋登入實測）
+- [ ] 疑問 Q&A **已做**（全人工）；剩真推播（FCM）與登入實測
+- [ ] 共讀小組 / 代禱連結 / AI 問答（皆需後端＋登入實測）
 - [ ] iOS 真機測試（icon、launch screen 還是預設的）
 
 ### 已完成（本輪）
 信仰地圖、讀經計畫（進度追蹤 DB v5）、主題導讀欄位、聽聖經 TTS、同步刪除 tombstone（DB v6）、
-筆記 HTML 匯出（可存 PDF/Word）、螢光筆可命名。
+筆記 HTML 匯出（可存 PDF/Word）、螢光筆可命名、**疑問 Q&A 全人工系統**（提問/分類/搜尋/
+人工回答含引用經文＋標籤/精選/回答更新紀錄/審核/收藏/追蹤未讀提示）。

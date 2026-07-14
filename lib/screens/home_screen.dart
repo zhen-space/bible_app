@@ -7,6 +7,7 @@ import '../theme/app_theme.dart';
 import 'bookmarks_screen.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
+import 'qa_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'topics_screen.dart';
@@ -85,6 +86,19 @@ class HomeScreen extends ConsumerWidget {
                 onTap: () => _push(context, const BookmarksScreen()),
               ),
             ],
+          ),
+          const SizedBox(height: 12),
+          Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: Icon(Icons.forum_outlined,
+                  color: Theme.of(context).colorScheme.secondary),
+              title: const Text('疑問 Q&A',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('提問、看解答（全人工回答）'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => _push(context, const QaScreen()),
+            ),
           ),
           const SizedBox(height: 16),
           const _ReadingProgressBar(),

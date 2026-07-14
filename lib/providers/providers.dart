@@ -11,6 +11,7 @@ import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
 import '../services/database_service.dart';
+import '../services/qa_service.dart';
 import '../services/sync_service.dart';
 import '../services/verse_locator.dart';
 
@@ -392,6 +393,52 @@ final pendingSubmissionsProvider =
     FutureProvider<List<PublicSubmission>>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
   return ref.watch(contentServiceProvider).pendingSubmissions();
+});
+
+// ---- 疑問 Q&A（全人工，無 AI）----
+
+final qaServiceProvider = Provider((ref) => QaService());
+
+/// 已審核公開問題（依分類過濾；分類為空＝全部）。
+final approvedQuestionsProvider =
+    FutureProvider.family<List<Question>, String>((ref, category) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(qaServiceProvider).approvedQuestions(category: category);
+});
+
+/// 我提出的問題（含待審／退回狀態）。
+final myQuestionsProvider = FutureProvider<List<Question>>((ref) async {
+  final user = ref.watch(authUserProvider).value;
+  if (user == null) return const [];
+  return ref.watch(qaServiceProvider).myQuestions(user.uid);
+});
+
+/// 待審問題佇列（管理者）。
+final pendingQuestionsProvider = FutureProvider<List<Question>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(qaServiceProvider).pendingQuestions();
+});
+
+/// 單一問題（詳情頁；invalidate 可刷新）。
+final questionProvider =
+    FutureProvider.family<Question?, String>((ref, id) async {
+  if (!ref.watch(firebaseReadyProvider)) return null;
+  return ref.watch(qaServiceProvider).getQuestion(id);
+});
+
+/// 我收藏的問題 id。
+final savedQuestionIdsProvider = FutureProvider<Set<String>>((ref) async {
+  final user = ref.watch(authUserProvider).value;
+  if (user == null) return const {};
+  return ref.watch(qaServiceProvider).savedIds(user.uid);
+});
+
+/// 我追蹤的問題（qid → 已讀時間）。
+final followingQuestionsProvider =
+    FutureProvider<Map<String, int>>((ref) async {
+  final user = ref.watch(authUserProvider).value;
+  if (user == null) return const {};
+  return ref.watch(qaServiceProvider).followingMap(user.uid);
 });
 
 final allBookmarksProvider = FutureProvider<List<Bookmark>>(
