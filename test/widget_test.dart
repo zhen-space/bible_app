@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:bible_app/data/reading_plans.dart';
 import 'package:bible_app/models/models.dart';
+import 'package:bible_app/providers/providers.dart';
 import 'package:bible_app/utils/text_utils.dart';
 
 void main() {
@@ -117,6 +120,44 @@ void main() {
       // 書4(2章)+書5(5章)=7 章
       expect(flat.length, 7);
       expect(flat.every((c) => c.bookId >= 4), true);
+    });
+  });
+
+  group('HighlightLabels 持久化', () {
+    test('設定→存→重載回得到相同標籤', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+
+      final c1 = ProviderContainer();
+      await c1
+          .read(highlightLabelsProvider.notifier)
+          .setLabel(HighlightColor.yellow, '應許');
+      await c1
+          .read(highlightLabelsProvider.notifier)
+          .setLabel(HighlightColor.green, '命令');
+      expect(c1.read(highlightLabelsProvider)[HighlightColor.yellow], '應許');
+      c1.dispose();
+
+      // 新容器重新從 prefs 載入
+      final c2 = ProviderContainer();
+      c2.read(highlightLabelsProvider); // 觸發 build/_load
+      await Future<void>.delayed(Duration.zero);
+      final labels = c2.read(highlightLabelsProvider);
+      expect(labels[HighlightColor.yellow], '應許');
+      expect(labels[HighlightColor.green], '命令');
+      c2.dispose();
+    });
+
+    test('清空字串會移除標籤', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      final n = c.read(highlightLabelsProvider.notifier);
+      await n.setLabel(HighlightColor.blue, '智慧');
+      await n.setLabel(HighlightColor.blue, '  ');
+      expect(c.read(highlightLabelsProvider).containsKey(HighlightColor.blue),
+          false);
+      c.dispose();
     });
   });
 

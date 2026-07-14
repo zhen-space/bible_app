@@ -304,6 +304,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   void _showVerseActions(List<Book> books, Book book, int verseNo, String text,
       ChapterMarks marks, VerseAnnotation? annotation) {
     final db = ref.read(databaseServiceProvider);
+    final highlightLabels = ref.read(highlightLabelsProvider);
     final isBookmarked = marks.bookmarks.contains(verseNo);
     final note = marks.notes[verseNo];
     // 點開一律附英文（不受對照開關影響，需要英文已載入）——先確保載入
@@ -348,30 +349,42 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       height: 1.5),
                 ),
             ),
-            // 螢光筆選色
+            // 螢光筆選色（可命名：顯示各色的意義標籤）
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
                   for (final c in HighlightColor.values)
-                    InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: () async {
-                        Navigator.pop(ctx);
-                        try {
-                          await db.setHighlight(_bookId, _chapter, verseNo, c);
-                        } finally {
-                          _refreshMarks();
-                        }
-                      },
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: AppTheme.highlightSwatch(c),
-                        child: marks.highlights[verseNo] == c
-                            ? const Icon(Icons.check, size: 18)
-                            : null,
-                      ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            try {
+                              await db.setHighlight(
+                                  _bookId, _chapter, verseNo, c);
+                            } finally {
+                              _refreshMarks();
+                            }
+                          },
+                          child: CircleAvatar(
+                            radius: 18,
+                            backgroundColor: AppTheme.highlightSwatch(c),
+                            child: marks.highlights[verseNo] == c
+                                ? const Icon(Icons.check, size: 18)
+                                : null,
+                          ),
+                        ),
+                        if (highlightLabels[c] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(highlightLabels[c]!,
+                                style: Theme.of(ctx).textTheme.labelSmall),
+                          ),
+                      ],
                     ),
                   if (marks.highlights.containsKey(verseNo))
                     IconButton(

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/models.dart';
 import '../providers/providers.dart';
+import '../theme/app_theme.dart';
 import '../widgets/google_login_button_stub.dart'
     if (dart.library.js_interop) '../widgets/google_login_button_web.dart';
 import 'admin_screen.dart';
@@ -79,6 +81,15 @@ class SettingsScreen extends ConsumerWidget {
             onChanged: (_) =>
                 ref.read(bilingualProvider.notifier).toggle(),
           ),
+          const Divider(),
+          const _SectionHeader('螢光筆命名'),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Text('給每個顏色一個意義（例：黃＝應許、綠＝命令），'
+                '劃記時就會顯示這個標籤。',
+                style: TextStyle(fontSize: 13)),
+          ),
+          const _HighlightLabelsSection(),
           const Divider(),
           const AboutListTile(
             icon: Icon(Icons.info_outline),
@@ -175,6 +186,44 @@ class _AccountSection extends ConsumerWidget {
                     ?.copyWith(color: Theme.of(context).colorScheme.primary)),
           ),
         const Divider(),
+      ],
+    );
+  }
+}
+
+/// 螢光筆命名區：每個顏色一格圓點 + 輸入框，邊打邊存。
+class _HighlightLabelsSection extends ConsumerWidget {
+  const _HighlightLabelsSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final labels = ref.watch(highlightLabelsProvider);
+    return Column(
+      children: [
+        for (final c in HighlightColor.values)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                CircleAvatar(
+                    radius: 12, backgroundColor: AppTheme.highlightSwatch(c)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    initialValue: labels[c] ?? '',
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                      hintText: '未命名',
+                    ),
+                    onChanged: (v) => ref
+                        .read(highlightLabelsProvider.notifier)
+                        .setLabel(c, v),
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }

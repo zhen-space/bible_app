@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
+import '../services/download_stub.dart'
+    if (dart.library.js_interop) '../services/download_web.dart';
 import '../theme/app_theme.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
@@ -42,10 +44,20 @@ class BookmarksScreen extends ConsumerWidget {
                     builder: (_) => const SermonNotesScreen()),
               ),
             ),
-            IconButton(
+            PopupMenuButton<String>(
               icon: const Icon(Icons.ios_share),
-              tooltip: '匯出筆記（Markdown）',
-              onPressed: () => _exportNotes(context, ref),
+              tooltip: '匯出筆記',
+              onSelected: (v) {
+                if (v == 'md') _exportNotes(context, ref);
+                if (v == 'html') _exportNotesHtml(context, ref);
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                    value: 'md', child: Text('複製 Markdown')),
+                PopupMenuItem(
+                    value: 'html',
+                    child: Text('下載檔案（可存 PDF／用 Word 開）')),
+              ],
             ),
           ],
           bottom: const TabBar(
@@ -92,6 +104,66 @@ Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
     await Clipboard.setData(ClipboardData(text: buf.toString()));
     messenger.showSnackBar(
         SnackBar(content: Text('已複製 ${notes.length} 則筆記（Markdown）')));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+  }
+}
+
+/// 把筆記做成一份排版好的 HTML 檔下載（白板「PDF/Word 匯出」）。
+/// HTML 用系統字型（全中文都在），瀏覽器可「列印→存成 PDF」，Word 也能直接開。
+Future<void> _exportNotesHtml(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final books = await ref.read(booksProvider.future);
+    final notes = await ref.read(allNotesProvider.future);
+    if (notes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('還沒有筆記可匯出')));
+      return;
+    }
+    String esc(String s) => s
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('\n', '<br>');
+    final buf = StringBuffer()
+      ..writeln('<!doctype html><html lang="zh-Hant"><head>')
+      ..writeln('<meta charset="utf-8">')
+      ..writeln('<title>我的經文筆記</title>')
+      ..writeln('<style>'
+          'body{font-family:"PingFang TC","Microsoft JhengHei",'
+          '"Noto Sans TC",sans-serif;line-height:1.8;max-width:720px;'
+          'margin:40px auto;padding:0 16px;color:#1a1a1a;}'
+          'h1{font-size:24px;border-bottom:2px solid #0071BC;padding-bottom:8px;}'
+          '.item{margin:22px 0;padding-bottom:16px;border-bottom:1px solid #eee;}'
+          '.ref{color:#0071BC;font-weight:700;font-size:15px;}'
+          '.verse{color:#555;font-style:normal;background:#f5f8fb;'
+          'padding:8px 12px;border-radius:6px;margin:6px 0;}'
+          '.tags{color:#8a6d00;font-size:13px;margin-top:6px;}'
+          '.content{white-space:normal;margin-top:6px;}'
+          '</style></head><body>')
+      ..writeln('<h1>我的經文筆記</h1>');
+    for (final n in notes) {
+      final book = books[n.bookId - 1];
+      final text = book.chapters[n.chapter - 1][n.verse - 1];
+      buf
+        ..writeln('<div class="item">')
+        ..writeln('<div class="ref">${esc(book.name)} '
+            '${n.chapter}:${n.verse}</div>')
+        ..writeln('<div class="verse">${esc(text)}</div>')
+        ..writeln('<div class="content">${esc(n.content)}</div>');
+      if (n.tagList.isNotEmpty) {
+        buf.writeln('<div class="tags">＃${n.tagList.map(esc).join('　＃')}</div>');
+      }
+      buf.writeln('</div>');
+    }
+    buf.writeln('</body></html>');
+
+    final ok = downloadTextFile(
+        '我的經文筆記.html', 'text/html', buf.toString());
+    messenger.showSnackBar(SnackBar(
+        content: Text(ok
+            ? '已下載 ${notes.length} 則筆記；用瀏覽器「列印→存成 PDF」或 Word 開啟'
+            : '此平台不支援下載，請改用「複製 Markdown」')));
   } catch (e) {
     messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
   }
@@ -178,6 +250,7 @@ class _HighlightTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final booksAsync = ref.watch(booksProvider);
     final highlightsAsync = ref.watch(allHighlightsProvider);
+    final labels = ref.watch(highlightLabelsProvider);
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return _asyncList2(booksAsync, highlightsAsync, (books, items) {
@@ -188,6 +261,7 @@ class _HighlightTab extends ConsumerWidget {
           final h = items[i];
           final book = books[h.bookId - 1];
           final text = book.chapters[h.chapter - 1][h.verse - 1];
+          final label = labels[h.color];
           return ListTile(
             leading: CircleAvatar(
               radius: 10,
@@ -202,7 +276,9 @@ class _HighlightTab extends ConsumerWidget {
               child:
                   Text(text, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
-            subtitle: Text('${book.name} ${h.chapter}:${h.verse}'),
+            subtitle: Text(label == null
+                ? '${book.name} ${h.chapter}:${h.verse}'
+                : '${book.name} ${h.chapter}:${h.verse}　·　$label'),
             onTap: () => _openChapter(context, h.bookId, h.chapter),
           );
         },

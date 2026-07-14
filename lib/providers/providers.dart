@@ -92,6 +92,55 @@ class FontSizeNotifier extends Notifier<double> {
 final fontSizeProvider =
     NotifierProvider<FontSizeNotifier, double>(FontSizeNotifier.new);
 
+/// 螢光筆命名（白板「高亮多色可命名」）：每個顏色可設一個意義標籤
+/// （例：黃＝應許、綠＝命令）。存 SharedPreferences（顏色 index → 名稱）。
+class HighlightLabelsNotifier extends Notifier<Map<HighlightColor, String>> {
+  static const _key = 'highlight_labels';
+
+  @override
+  Map<HighlightColor, String> build() {
+    _load();
+    return const {};
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list = prefs.getStringList(_key);
+      if (list == null) return;
+      final map = <HighlightColor, String>{};
+      for (final entry in list) {
+        final i = entry.indexOf('=');
+        if (i <= 0) continue;
+        final idx = int.tryParse(entry.substring(0, i));
+        if (idx == null || idx < 0 || idx >= HighlightColor.values.length) {
+          continue;
+        }
+        map[HighlightColor.values[idx]] = entry.substring(i + 1);
+      }
+      state = map;
+    } catch (_) {}
+  }
+
+  Future<void> setLabel(HighlightColor color, String label) async {
+    final next = Map<HighlightColor, String>.from(state);
+    final trimmed = label.trim();
+    if (trimmed.isEmpty) {
+      next.remove(color);
+    } else {
+      next[color] = trimmed;
+    }
+    state = next;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+        _key, [for (final e in next.entries) '${e.key.index}=${e.value}']);
+  }
+}
+
+final highlightLabelsProvider =
+    NotifierProvider<HighlightLabelsNotifier, Map<HighlightColor, String>>(
+        HighlightLabelsNotifier.new);
+
 /// 閱讀模式：逐節（一句一行）或段落（自然分段連續）。持久化。
 enum ReadingMode { verse, paragraph }
 
