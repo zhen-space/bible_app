@@ -29,10 +29,27 @@ class SyncService {
     var uploaded = 0;
     var downloaded = 0;
 
-    // ---- 下載（雲端 → 本地，LWW 合併）----
+    // ---- 墓碑先合併（決定哪些雲端資料已被刪、不該下載回來）----
+    final cloudTombs = await _col(uid, 'tombstones').get();
+    for (final d in cloudTombs.docs) {
+      final m = d.data();
+      await db.upsertTombstone(
+          m['kind'] as String, m['ref'] as String, m['deleted_at'] as int);
+    }
+    // 各類刪除對照：ref → deleted_at
+    final tombB = await db.getTombstoneMap('bookmark');
+    final tombH = await db.getTombstoneMap('highlight');
+    final tombN = await db.getTombstoneMap('note');
+    final tombS = await db.getTombstoneMap('sermon');
+    String rref(Map<String, dynamic> m) =>
+        'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
+
+    // ---- 下載（雲端 → 本地，LWW 合併，被刪的（墓碑較新）跳過）----
     final cloudBookmarks = await _col(uid, 'bookmarks').get();
     for (final d in cloudBookmarks.docs) {
       final m = d.data();
+      final t = tombB[rref(m)];
+      if (t != null && t >= (m['created_at'] as int)) continue;
       await db.upsertBookmark(m['book_id'] as int, m['chapter'] as int,
           m['verse'] as int, m['created_at'] as int);
       downloaded++;
@@ -40,6 +57,8 @@ class SyncService {
     final cloudHighlights = await _col(uid, 'highlights').get();
     for (final d in cloudHighlights.docs) {
       final m = d.data();
+      final t = tombH[rref(m)];
+      if (t != null && t >= (m['created_at'] as int)) continue;
       await db.upsertHighlight(m['book_id'] as int, m['chapter'] as int,
           m['verse'] as int, m['color'] as int, m['created_at'] as int);
       downloaded++;
@@ -47,6 +66,8 @@ class SyncService {
     final cloudNotes = await _col(uid, 'notes').get();
     for (final d in cloudNotes.docs) {
       final m = d.data();
+      final t = tombN[rref(m)];
+      if (t != null && t >= (m['updated_at'] as int)) continue;
       await db.upsertNote(
           m['book_id'] as int,
           m['chapter'] as int,
@@ -76,9 +97,11 @@ class SyncService {
     final localSermons = await db.getSermonNotes();
     for (final d in cloudSermons.docs) {
       final m = d.data();
-      final localMatch = localSermons
-          .where((s) => s.createdAt == (m['created_at'] as int))
-          .firstOrNull;
+      final createdAt = m['created_at'] as int;
+      final t = tombS['s$createdAt'];
+      if (t != null && t >= (m['updated_at'] as int)) continue;
+      final localMatch =
+          localSermons.where((s) => s.createdAt == createdAt).firstOrNull;
       if (localMatch == null ||
           (m['updated_at'] as int) > localMatch.updatedAt) {
         await db.saveSermonNote(SermonNote.fromMap({
@@ -87,6 +110,13 @@ class SyncService {
         }));
         downloaded++;
       }
+    }
+
+    // 套用所有（合併後）墓碑到本地：刪掉時間不比刪除時間新的本地資料。
+    // （擋掉「另一台裝置刪除、但本機還留著」的情形。）
+    for (final tomb in await db.getAllTombstones()) {
+      await db.applyTombstone(tomb['kind'] as String, tomb['ref'] as String,
+          tomb['deleted_at'] as int);
     }
 
     // ---- 上傳（本地 → 雲端，batch 寫入）----
@@ -152,6 +182,31 @@ class SyncService {
             'day': m['day'],
             'done_at': m['done_at'],
           });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
+    // 墓碑：上傳墓碑本身，並刪掉雲端對應的資料 doc（本機已無此筆活資料，
+    // 因為新增/更新時會清墓碑，不變量保證兩者互斥，不會誤刪活資料）。
+    const kindCol = {
+      'bookmark': 'bookmarks',
+      'highlight': 'highlights',
+      'note': 'notes',
+      'sermon': 'sermon_notes',
+    };
+    for (final t in await db.getAllTombstones()) {
+      final kind = t['kind'] as String;
+      final ref = t['ref'] as String;
+      batch.set(_col(uid, 'tombstones').doc('${kind}_$ref'), {
+        'kind': kind,
+        'ref': ref,
+        'deleted_at': t['deleted_at'],
+      });
+      final col = kindCol[kind];
+      if (col != null) {
+        // 雲端 doc id：sermon = s{createdAt}（ref 本身就是），其餘 = b.._c.._v..
+        batch.delete(_col(uid, col).doc(ref));
+      }
       pending++;
       uploaded++;
       await commitIfFull();

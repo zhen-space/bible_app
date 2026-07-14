@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   Database? _db;
 
@@ -72,6 +72,7 @@ class DatabaseService {
     await _createReadingLogTable(db); // v2
     await _createSermonNotesTable(db); // v4
     await _createPlanProgressTable(db); // v5
+    await _createTombstonesTable(db); // v6
   }
 
   Future<void> _createReadingLogTable(Database db) async {
@@ -114,6 +115,41 @@ class DatabaseService {
     ''');
   }
 
+  /// 刪除墓碑（同步刪除用）：記錄「某筆資料已於某時刪除」。
+  /// 不變量：同一個 (kind, ref) 不會同時是活資料又有墓碑——
+  /// 刪除時寫墓碑、新增/更新時清墓碑（見各 CRUD 方法）。
+  Future<void> _createTombstonesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE tombstones (
+        kind TEXT NOT NULL,
+        ref TEXT NOT NULL,
+        deleted_at INTEGER NOT NULL,
+        PRIMARY KEY(kind, ref)
+      )
+    ''');
+  }
+
+  /// 節位資料的雲端 doc id（與 sync_service 一致）。
+  String _rowRef(int bookId, int chapter, int verse) =>
+      'b${bookId}_c${chapter}_v$verse';
+
+  Future<void> _tombstone(Database db, String kind, String ref) async {
+    await db.insert(
+      'tombstones',
+      {
+        'kind': kind,
+        'ref': ref,
+        'deleted_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> _untomb(Database db, String kind, String ref) async {
+    await db.delete('tombstones',
+        where: 'kind = ? AND ref = ?', whereArgs: [kind, ref]);
+  }
+
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       await _createReadingLogTable(db);
@@ -129,12 +165,16 @@ class DatabaseService {
     if (oldV < 5) {
       await _createPlanProgressTable(db);
     }
+    if (oldV < 6) {
+      await _createTombstonesTable(db);
+    }
   }
 
   // ---- Bookmarks ----
 
   Future<void> toggleBookmark(int bookId, int chapter, int verse) async {
     final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
     final deleted = await db.delete(
       'bookmarks',
       where: 'book_id = ? AND chapter = ? AND verse = ?',
@@ -147,6 +187,9 @@ class DatabaseService {
         'verse': verse,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
+      await _untomb(db, 'bookmark', ref); // 重新加入：清掉舊墓碑
+    } else {
+      await _tombstone(db, 'bookmark', ref); // 刪除：記墓碑
     }
   }
 
@@ -173,12 +216,14 @@ class DatabaseService {
   Future<void> setHighlight(
       int bookId, int chapter, int verse, HighlightColor? color) async {
     final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
     if (color == null) {
       await db.delete(
         'highlights',
         where: 'book_id = ? AND chapter = ? AND verse = ?',
         whereArgs: [bookId, chapter, verse],
       );
+      await _tombstone(db, 'highlight', ref);
     } else {
       await db.insert(
         'highlights',
@@ -191,6 +236,7 @@ class DatabaseService {
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await _untomb(db, 'highlight', ref);
     }
   }
 
@@ -243,6 +289,7 @@ class DatabaseService {
         whereArgs: [existing.first['id']],
       );
     }
+    await _untomb(db, 'note', _rowRef(bookId, chapter, verse));
   }
 
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
@@ -252,6 +299,7 @@ class DatabaseService {
       where: 'book_id = ? AND chapter = ? AND verse = ?',
       whereArgs: [bookId, chapter, verse],
     );
+    await _tombstone(db, 'note', _rowRef(bookId, chapter, verse));
   }
 
   Future<List<Note>> getAllNotes() async {
@@ -411,7 +459,9 @@ class DatabaseService {
       final m = note.toMap()
         ..['created_at'] = now
         ..['updated_at'] = now;
-      return db.insert('sermon_notes', m);
+      final id = await db.insert('sermon_notes', m);
+      await _untomb(db, 'sermon', 's$now');
+      return id;
     }
     await db.update(
       'sermon_notes',
@@ -419,12 +469,19 @@ class DatabaseService {
       where: 'id = ?',
       whereArgs: [note.id],
     );
+    await _untomb(db, 'sermon', 's${note.createdAt}');
     return note.id!;
   }
 
   Future<void> deleteSermonNote(int id) async {
     final db = await database;
+    // 先取 created_at（雲端 doc id = s{createdAt}）再刪，才能記正確墓碑
+    final rows = await db.query('sermon_notes',
+        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
     await db.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      await _tombstone(db, 'sermon', 's${rows.first['created_at']}');
+    }
   }
 
   /// 統計小卡用：各項數量。
@@ -511,6 +568,76 @@ class DatabaseService {
         whereArgs: [planId, day],
       );
     }
+  }
+
+  // ---- 刪除墓碑（同步刪除）----
+
+  Future<List<Map<String, dynamic>>> getAllTombstones() async {
+    final db = await database;
+    return db.query('tombstones');
+  }
+
+  /// 某 kind 的 ref → deleted_at 對照（sync 下載時用來擋掉被刪的資料）。
+  Future<Map<String, int>> getTombstoneMap(String kind) async {
+    final db = await database;
+    final rows = await db.query('tombstones',
+        columns: ['ref', 'deleted_at'],
+        where: 'kind = ?',
+        whereArgs: [kind]);
+    return {for (final r in rows) r['ref'] as String: r['deleted_at'] as int};
+  }
+
+  /// 合併雲端墓碑（保留較新的 deleted_at）。
+  Future<void> upsertTombstone(String kind, String ref, int deletedAt) async {
+    final db = await database;
+    final existing = await db.query('tombstones',
+        where: 'kind = ? AND ref = ?', whereArgs: [kind, ref]);
+    if (existing.isNotEmpty &&
+        (existing.first['deleted_at'] as int) >= deletedAt) {
+      return;
+    }
+    await db.insert(
+      'tombstones',
+      {'kind': kind, 'ref': ref, 'deleted_at': deletedAt},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 套用墓碑：刪掉本地「時間 <= 刪除時間」的對應資料（同步下載後呼叫）。
+  /// 回傳刪除筆數。
+  Future<int> applyTombstone(String kind, String ref, int deletedAt) async {
+    final db = await database;
+    final parts = RegExp(r'^b(\d+)_c(\d+)_v(\d+)$').firstMatch(ref);
+    var removed = 0;
+    switch (kind) {
+      case 'bookmark':
+      case 'highlight':
+      case 'note':
+        if (parts == null) return 0;
+        final table = kind == 'bookmark'
+            ? 'bookmarks'
+            : (kind == 'highlight' ? 'highlights' : 'notes');
+        final tsCol = kind == 'note' ? 'updated_at' : 'created_at';
+        removed = await db.delete(
+          table,
+          where: 'book_id = ? AND chapter = ? AND verse = ? AND $tsCol <= ?',
+          whereArgs: [
+            int.parse(parts.group(1)!),
+            int.parse(parts.group(2)!),
+            int.parse(parts.group(3)!),
+            deletedAt,
+          ],
+        );
+      case 'sermon':
+        final createdAt = int.tryParse(ref.replaceFirst('s', ''));
+        if (createdAt == null) return 0;
+        removed = await db.delete(
+          'sermon_notes',
+          where: 'created_at = ? AND updated_at <= ?',
+          whereArgs: [createdAt, deletedAt],
+        );
+    }
+    return removed;
   }
 
   /// 讀經紀錄：保留較新的 read_at。

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/content_service.dart';
+import '../services/tts_service.dart';
 import '../services/verse_locator.dart';
 import '../theme/app_theme.dart';
 import 'search_screen.dart';
@@ -26,6 +27,7 @@ class ChapterScreen extends ConsumerStatefulWidget {
 class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   late int _bookId;
   late int _chapter;
+  TtsController? _ttsCtrl;
 
   @override
   void initState() {
@@ -33,11 +35,19 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _bookId = widget.bookId;
     _chapter = widget.chapter;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ttsCtrl = ref.read(ttsProvider.notifier);
       ref.read(lastReadProvider.notifier).set(_bookId, _chapter);
       _logRead();
       // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
       ref.read(bibleRepositoryProvider).loadEnglish();
     });
+  }
+
+  @override
+  void dispose() {
+    // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref）
+    _ttsCtrl?.stop();
+    super.dispose();
   }
 
   Future<void> _logRead() async {
@@ -51,6 +61,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   }
 
   void _goTo(int bookId, int chapter) {
+    ref.read(ttsProvider.notifier).stop(); // 換章先停止朗讀
     setState(() {
       _bookId = bookId;
       _chapter = chapter;
@@ -94,6 +105,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final fontSize = ref.watch(fontSizeProvider);
     final mode = ref.watch(readingModeProvider);
     final bilingual = ref.watch(bilingualProvider);
+    final tts = ref.watch(ttsProvider);
+    // 只有正在讀本章時才拿高亮節（換章時 state 已被 stop 清掉）
+    final speakingVerse = tts.playing ? tts.verse : null;
     // 觸發英文載入；載入完成後 rebuild 才會有英文
     final englishReady =
         bilingual && (ref.watch(englishReadyProvider).value ?? false);
@@ -139,6 +153,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   context,
                   MaterialPageRoute(builder: (_) => const SearchScreen()),
                 ),
+              ),
+              IconButton(
+                icon: Icon(tts.playing
+                    ? Icons.stop_circle
+                    : Icons.play_circle_outline),
+                color: tts.playing
+                    ? Theme.of(context).colorScheme.secondary
+                    : null,
+                tooltip: tts.playing ? '停止朗讀' : '聽這一章',
+                onPressed: () =>
+                    ref.read(ttsProvider.notifier).toggle(verses),
               ),
               IconButton(
                 icon: Icon(bilingual ? Icons.translate : Icons.translate_outlined),
@@ -190,6 +215,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         bookmarked: marks.bookmarks.contains(i + 1),
                         hasNote: marks.notes.containsKey(i + 1),
                         hasAnnotation: verseAnns.containsKey(i + 1),
+                        speaking: speakingVerse == i + 1,
                         onTap: () => _showVerseActions(books, book, i + 1,
                             verses[i], marks, verseAnns[i + 1]),
                       ),
@@ -205,6 +231,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     highlights: marks.highlights,
                     annotated: verseAnns.keys.toSet(),
                     headings: headings,
+                    speakingVerse: speakingVerse,
                     onTapVerse: (verseNo) => _showVerseActions(books, book,
                         verseNo, verses[verseNo - 1], marks,
                         verseAnns[verseNo]),
@@ -641,6 +668,7 @@ class _VerseTile extends StatelessWidget {
   final bool bookmarked;
   final bool hasNote;
   final bool hasAnnotation;
+  final bool speaking; // 目前 TTS 正朗讀到這一節
   final VoidCallback onTap;
 
   const _VerseTile({
@@ -652,6 +680,7 @@ class _VerseTile extends StatelessWidget {
     required this.bookmarked,
     required this.hasNote,
     required this.hasAnnotation,
+    required this.speaking,
     required this.onTap,
   });
 
@@ -659,14 +688,21 @@ class _VerseTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
+    // 朗讀中的節：用主色淡底框起來（優先於螢光筆底色的視覺提示）
+    final bg = highlight != null
+        ? AppTheme.highlightColor(highlight!, isDark)
+        : (speaking ? scheme.primary.withValues(alpha: 0.12) : null);
     return InkWell(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: highlight != null
+        decoration: (bg != null || speaking)
             ? BoxDecoration(
-                color: AppTheme.highlightColor(highlight!, isDark),
+                color: bg,
                 borderRadius: BorderRadius.circular(4),
+                border: speaking
+                    ? Border.all(color: scheme.primary, width: 1.5)
+                    : null,
               )
             : null,
         child: Column(
@@ -812,6 +848,7 @@ class _ParagraphChapter extends StatefulWidget {
   final Map<int, HighlightColor> highlights;
   final Set<int> annotated;
   final Map<int, String> headings; // 節→段落標題（後台「分段」欄）
+  final int? speakingVerse; // 目前 TTS 朗讀到的節
   final void Function(int verseNo) onTapVerse;
 
   const _ParagraphChapter({
@@ -821,6 +858,7 @@ class _ParagraphChapter extends StatefulWidget {
     required this.highlights,
     required this.annotated,
     required this.headings,
+    required this.speakingVerse,
     required this.onTapVerse,
   });
 
@@ -901,13 +939,18 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
               size: 13, color: scheme.tertiary),
         ));
       }
+      final speaking = widget.speakingVerse == verseNo;
       spans.add(TextSpan(
         text: widget.verses[i],
         style: TextStyle(
           fontSize: widget.fontSize,
           height: 1.9,
-          backgroundColor:
-              hl != null ? AppTheme.highlightColor(hl, isDark) : null,
+          fontWeight: speaking ? FontWeight.w700 : null,
+          backgroundColor: hl != null
+              ? AppTheme.highlightColor(hl, isDark)
+              : (speaking
+                  ? scheme.primary.withValues(alpha: 0.12)
+                  : null),
         ),
         recognizer: recognizer,
       ));
