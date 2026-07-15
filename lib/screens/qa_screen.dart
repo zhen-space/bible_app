@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../providers/providers.dart';
+import '../services/app_links.dart';
 import '../services/qa_service.dart';
-import '../services/verse_locator.dart';
-import 'chapter_screen.dart';
+import 'qa_voice_screen.dart';
 
 /// 疑問 Q&A 首頁：已審核問題列表（精選置頂）＋分類過濾＋搜尋。
 class QaScreen extends ConsumerStatefulWidget {
@@ -29,6 +29,12 @@ class _QaScreenState extends ConsumerState<QaScreen> {
       appBar: AppBar(
         title: const Text('疑問 Q&A'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.mic_none),
+            tooltip: '語音提問',
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const QaVoiceScreen())),
+          ),
           if (isAdmin)
             IconButton(
               icon: const Icon(Icons.fact_check_outlined),
@@ -445,19 +451,8 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
     ref.invalidate(followingQuestionsProvider);
   }
 
-  void _jump(BuildContext context, String ref_) {
-    final books = ref.read(booksProvider).value;
-    if (books == null) return;
-    final loc = VerseLocator.parse(ref_, books);
-    if (loc == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) =>
-            ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
-      ),
-    );
-  }
+  void _jump(BuildContext context, String ref_) =>
+      AppLinks.openVerseRef(context, ref, ref_);
 }
 
 /// 提問表單。

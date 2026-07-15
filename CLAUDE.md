@@ -65,7 +65,10 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - key 格式：
   - `books['書卷id']`：**整卷導讀＋統整**（獨立標籤方格，見下），格式 `{ intro:{summary,purpose,author,background}, outline:[...], summary:'統整文字' }`
   - `書卷id:章`：章導讀（大意/目的/作者/背景/分段/重點）
-  - `書卷id:章:節`：節註解（注釋/關鍵字/生活應用/交叉引用）
+  - `書卷id:章:節`：節註解（注釋/關鍵字/**background 背景**/生活應用/交叉引用）
+- **讀經頁節面板＝抽屜＋Tabs**（字義/背景/應用/相關）：快速動作（螢光筆/書籤/筆記/複製/投稿）在上，深度註釋收 Tabs，保持閱讀主體乾淨。
+- **雲端註解版本化**：`content_service._setVersioned` 存檔時把舊內容快照進 doc 的 `versions` 陣列並蓋 `updated_at`；讀者端節面板顯示「註解更新於…」。
+- **混合快取**：雲端 annotations/knowledge 抓到就存 SharedPreferences（`cache_annotations`/`cache_knowledge`），離線退回上次快取，再退 asset。
   - 書卷 id：創=1、詩=19、太=40、約=43。
 - **導讀／統整標籤方格**：書卷章節格最前面固定一個「導讀」方格、最後面一個「統整」方格（`_OverviewBox`），開 `BookOverviewScreen`。方格永遠在；沒內容時顯示待填空白頁（不代寫內容）。
 - 交叉引用（crossRefs）是節位字串，讀經頁點了會跳轉；可帶範圍（約1:1-3），跳轉時取破折號前。
@@ -102,6 +105,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   - `users/{uid}/following/{qid}`：追蹤（存 seen_at，做「有新回答」未讀提示）
   - `users/{uid}/saved_questions/{qid}`：收藏
 - 分類：`kQaCategories = [神學, 生活, 爭議, 其他]`。列表查詢都用**單一欄位**（status 或 uid），排序/搜尋在用戶端做（免複合索引）。
+- **語音提問**（`qa_screen` 右上麥克風 → `qa_voice_screen.dart`）：`speech_to_text`（zh_TW）
+  轉文字 → 先列「現有解答」（**純關鍵字比對**已公開 Q&A，無 AI）→
+  「不滿意？送出等教會回答」→ 進 pending 佇列。
 - 流程：使用者提問→`pending`→管理者（kAdminEmail）在 Q&A 頁審核/親自回答（回答即 `approved` 公開）。回答可引用經文（節位字串，點了跳讀經頁）、加標籤、精選置頂、編輯（保留更新紀錄）。
 - ⛔ **問題與回答都是人寫的內容**（提問者/管理者本人），Claude 只維護程式與編輯器，不代寫問答文字。
 - 未做：真推播（需 FCM）——目前「通知」是 App 內未讀紅點（`followingQuestionsProvider` 比對 answer.updatedAt vs seen_at）。
@@ -122,6 +128,17 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）
 
 另外：`HighlightColor` enum 以 index 存 DB，**順序不能改**，只能往後加（有測試守著）。
+
+## 架構備忘（新增）
+
+- **自動備份（Auto-Sync）**：`DatabaseService.onMutate` 在每個寫入方法尾端觸發；
+  `SyncStatusNotifier.build()` 掛上 debounce 10 秒的 `syncNow()`（登入時才動）。
+  **新增寫入方法記得呼叫 `_mutated()`**。
+- **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
+  各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
+- **長章渲染**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）；
+  段落模式是單一 Text.rich 維持原樣。
+- **語音**：輸入用 `speech_to_text`、輸出用 `flutter_tts`，皆 zh-TW。
 
 ## 開發守則（歷史教訓）
 

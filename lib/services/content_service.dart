@@ -21,16 +21,36 @@ class ContentService {
     return {for (final d in snap.docs) d.id: d.data()};
   }
 
+  /// 版本化存檔：更新前把「舊內容」快照推進 `versions`（含編輯時間），
+  /// 並蓋上 `updated_at`。讀者端顯示更新時間；歷史版本留在雲端可回溯。
+  Future<void> _setVersioned(
+      DocumentReference<Map<String, dynamic>> doc,
+      Map<String, dynamic> data) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existing = await doc.get();
+    final payload = {...data, 'updated_at': now};
+    if (existing.exists) {
+      final old = Map<String, dynamic>.from(existing.data()!)
+        ..remove('versions'); // 快照不含歷史，避免巢狀膨脹
+      payload['versions'] = FieldValue.arrayUnion([
+        {...old, 'edited_at': now}
+      ]);
+      await doc.update(payload);
+    } else {
+      await doc.set(payload);
+    }
+  }
+
   Future<void> saveBook(int bookId, Map<String, dynamic> data) =>
-      _col.doc('book_$bookId').set(data);
+      _setVersioned(_col.doc('book_$bookId'), data);
 
   Future<void> saveChapter(
           int bookId, int chapter, Map<String, dynamic> data) =>
-      _col.doc('chapter_${bookId}_$chapter').set(data);
+      _setVersioned(_col.doc('chapter_${bookId}_$chapter'), data);
 
   Future<void> saveVerse(
           int bookId, int chapter, int verse, Map<String, dynamic> data) =>
-      _col.doc('verse_${bookId}_${chapter}_$verse').set(data);
+      _setVersioned(_col.doc('verse_${bookId}_${chapter}_$verse'), data);
 
   // ---- 知識架構（時間軸/人物/平行/預表）----
   //

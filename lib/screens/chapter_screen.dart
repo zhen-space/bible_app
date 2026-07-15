@@ -195,18 +195,21 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               if (v < -200) _turn(books, 1);
               if (v > 200) _turn(books, -1);
             },
-            child: ListView(
-              key: PageStorageKey('$_bookId-$_chapter'),
-              // 左右留白、上下寬鬆，讀起來不擁擠
-              padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
-              children: [
-                if (mode == ReadingMode.verse)
-                  ...[
-                    for (var i = 0; i < verses.length; i++) ...[
-                      if (headings[i + 1] != null)
-                        _SectionHeading(
-                            text: headings[i + 1]!, fontSize: fontSize),
-                      _VerseTile(
+            // 逐節模式用 builder 懶載入：超長章（詩119 有 176 節）只建
+            // 進到畫面的節，捲動不卡頓（白板「多線程渲染優化」的 Flutter 正解——
+            // UI 單執行緒下靠 lazy build 而非開執行緒）。
+            child: mode == ReadingMode.verse
+                ? ListView.builder(
+                    key: PageStorageKey('$_bookId-$_chapter'),
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
+                    itemCount:
+                        verses.length + (bookSummary != null ? 1 : 0),
+                    itemBuilder: (context, i) {
+                      if (i == verses.length) {
+                        return _BookSummaryCard(
+                            bookName: book.name, text: bookSummary!);
+                      }
+                      final tile = _VerseTile(
                         verseNo: i + 1,
                         text: verses[i],
                         english: en(i + 1),
@@ -218,28 +221,49 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         speaking: speakingVerse == i + 1,
                         onTap: () => _showVerseActions(books, book, i + 1,
                             verses[i], marks, verseAnns[i + 1]),
+                      );
+                      if (headings[i + 1] == null) return tile;
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _SectionHeading(
+                              text: headings[i + 1]!, fontSize: fontSize),
+                          tile,
+                        ],
+                      );
+                    },
+                  )
+                : ListView(
+                    key: PageStorageKey('$_bookId-$_chapter'),
+                    // 左右留白、上下寬鬆，讀起來不擁擠
+                    padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
+                    children: [
+                      _ParagraphChapter(
+                        verses: verses,
+                        english: englishReady
+                            ? [
+                                for (var v = 1; v <= verses.length; v++)
+                                  en(v)
+                              ]
+                            : null,
+                        fontSize: fontSize,
+                        highlights: marks.highlights,
+                        annotated: verseAnns.keys.toSet(),
+                        headings: headings,
+                        speakingVerse: speakingVerse,
+                        onTapVerse: (verseNo) => _showVerseActions(
+                            books,
+                            book,
+                            verseNo,
+                            verses[verseNo - 1],
+                            marks,
+                            verseAnns[verseNo]),
                       ),
+                      if (bookSummary != null)
+                        _BookSummaryCard(
+                            bookName: book.name, text: bookSummary),
                     ],
-                  ]
-                else
-                  _ParagraphChapter(
-                    verses: verses,
-                    english: englishReady
-                        ? [for (var v = 1; v <= verses.length; v++) en(v)]
-                        : null,
-                    fontSize: fontSize,
-                    highlights: marks.highlights,
-                    annotated: verseAnns.keys.toSet(),
-                    headings: headings,
-                    speakingVerse: speakingVerse,
-                    onTapVerse: (verseNo) => _showVerseActions(books, book,
-                        verseNo, verses[verseNo - 1], marks,
-                        verseAnns[verseNo]),
                   ),
-                if (bookSummary != null)
-                  _BookSummaryCard(bookName: book.name, text: bookSummary),
-              ],
-            ),
           ),
           bottomNavigationBar: BottomAppBar(
             child: Row(
@@ -318,182 +342,335 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             .value?[verseNo] ??
         const <PublicNote>[];
 
+    // 抽屜面板：閱讀主體保持乾淨，深度註釋收進底部面板，
+    // 用 Tabs 切「字義／背景／應用／相關」（白板：抽屜面板構想）。
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: annotation != null ? 0.6 : 0.42,
-        minChildSize: 0.3,
-        maxChildSize: 0.92,
-        builder: (ctx, scrollController) => ListView(
-          controller: scrollController,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-              child: Text(
-                '${book.name} $_chapter:$verseNo　$text',
-                style: Theme.of(ctx).textTheme.bodyLarge,
+      useSafeArea: true,
+      builder: (ctx) {
+        final scheme = Theme.of(ctx).colorScheme;
+        Widget quickAction(IconData icon, String label, VoidCallback onTap) =>
+            InkWell(
+              borderRadius: BorderRadius.circular(10),
+              onTap: onTap,
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(icon, size: 22, color: scheme.secondary),
+                  const SizedBox(height: 2),
+                  Text(label, style: Theme.of(ctx).textTheme.labelSmall),
+                ]),
               ),
-            ),
-            if (english != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  english,
-                  style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(ctx)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.6),
-                      height: 1.5),
+            );
+        Widget empty(String hint) => Center(
+              child: Text(hint,
+                  style: Theme.of(ctx)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(color: scheme.outline)),
+            );
+
+        return FractionallySizedBox(
+          heightFactor: annotation != null || publicNotes.isNotEmpty
+              ? 0.82
+              : 0.6,
+          child: DefaultTabController(
+            length: 4,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(top: 10),
+                    decoration: BoxDecoration(
+                      color: scheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
                 ),
-            ),
-            // 螢光筆選色（可命名：顯示各色的意義標籤）
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  for (final c in HighlightColor.values)
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        InkWell(
-                          customBorder: const CircleBorder(),
-                          onTap: () async {
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    '${book.name} $_chapter:$verseNo　$text',
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(ctx).textTheme.bodyLarge,
+                  ),
+                ),
+                if (english != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    child: Text(
+                      english,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.6),
+                          height: 1.4),
+                    ),
+                  ),
+                // 螢光筆選色（可命名）
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      for (final c in HighlightColor.values)
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: () async {
+                                Navigator.pop(ctx);
+                                try {
+                                  await db.setHighlight(
+                                      _bookId, _chapter, verseNo, c);
+                                } finally {
+                                  _refreshMarks();
+                                }
+                              },
+                              child: CircleAvatar(
+                                radius: 16,
+                                backgroundColor: AppTheme.highlightSwatch(c),
+                                child: marks.highlights[verseNo] == c
+                                    ? const Icon(Icons.check, size: 16)
+                                    : null,
+                              ),
+                            ),
+                            if (highlightLabels[c] != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(highlightLabels[c]!,
+                                    style:
+                                        Theme.of(ctx).textTheme.labelSmall),
+                              ),
+                          ],
+                        ),
+                      if (marks.highlights.containsKey(verseNo))
+                        IconButton(
+                          icon: const Icon(Icons.format_color_reset),
+                          tooltip: '移除螢光筆',
+                          onPressed: () async {
                             Navigator.pop(ctx);
                             try {
                               await db.setHighlight(
-                                  _bookId, _chapter, verseNo, c);
+                                  _bookId, _chapter, verseNo, null);
                             } finally {
                               _refreshMarks();
                             }
                           },
-                          child: CircleAvatar(
-                            radius: 18,
-                            backgroundColor: AppTheme.highlightSwatch(c),
-                            child: marks.highlights[verseNo] == c
-                                ? const Icon(Icons.check, size: 18)
-                                : null,
-                          ),
                         ),
-                        if (highlightLabels[c] != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 3),
-                            child: Text(highlightLabels[c]!,
-                                style: Theme.of(ctx).textTheme.labelSmall),
-                          ),
-                      ],
-                    ),
-                  if (marks.highlights.containsKey(verseNo))
-                    IconButton(
-                      icon: const Icon(Icons.format_color_reset),
-                      tooltip: '移除螢光筆',
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        try {
-                          await db.setHighlight(
-                              _bookId, _chapter, verseNo, null);
-                        } finally {
-                          _refreshMarks();
-                        }
-                      },
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              leading: Icon(isBookmarked
-                  ? Icons.bookmark_remove
-                  : Icons.bookmark_add_outlined),
-              title: Text(isBookmarked ? '移除書籤' : '加入書籤'),
-              onTap: () async {
-                Navigator.pop(ctx);
-                try {
-                  await db.toggleBookmark(_bookId, _chapter, verseNo);
-                } finally {
-                  _refreshMarks();
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_note),
-              title: Text(note == null ? '寫筆記' : '編輯筆記'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _showNoteEditor(book, verseNo, note);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: const Text('複製經文'),
-              onTap: () async {
-                await Clipboard.setData(ClipboardData(
-                    text: '「$text」（${book.name} $_chapter:$verseNo）'));
-                if (ctx.mounted) Navigator.pop(ctx);
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('已複製')));
-                }
-              },
-            ),
-            if (annotation != null)
-              _VerseAnnotationView(
-                annotation: annotation,
-                onTapRef: (ref) {
-                  Navigator.pop(ctx);
-                  _jumpToRef(books, ref);
-                },
-              ),
-            // 社群註解（已審核通過的公開投稿）
-            if (publicNotes.isNotEmpty) ...[
-              const Divider(height: 24),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                child: Row(children: [
-                  Icon(Icons.groups_outlined,
-                      size: 18, color: Theme.of(ctx).colorScheme.primary),
-                  const SizedBox(width: 6),
-                  Text('社群註解',
-                      style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
-                          color: Theme.of(ctx).colorScheme.primary)),
-                ]),
-              ),
-              for (final n in publicNotes)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(n.content,
-                          style: Theme.of(ctx)
-                              .textTheme
-                              .bodyMedium
-                              ?.copyWith(height: 1.5)),
-                      if (n.author.isNotEmpty)
-                        Text('— ${n.author}',
-                            style: Theme.of(ctx).textTheme.bodySmall),
                     ],
                   ),
                 ),
-            ],
-            const Divider(height: 24),
-            ListTile(
-              leading: const Icon(Icons.rate_review_outlined),
-              title: const Text('投稿公開註解'),
-              subtitle: const Text('提交後經審核才會公開顯示'),
-              onTap: () {
-                Navigator.pop(ctx);
-                _submitPublicNote(book, verseNo, text);
-              },
+                // 快速動作列
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    quickAction(
+                        isBookmarked
+                            ? Icons.bookmark_remove
+                            : Icons.bookmark_add_outlined,
+                        isBookmarked ? '移除書籤' : '書籤', () async {
+                      Navigator.pop(ctx);
+                      try {
+                        await db.toggleBookmark(_bookId, _chapter, verseNo);
+                      } finally {
+                        _refreshMarks();
+                      }
+                    }),
+                    quickAction(
+                        Icons.edit_note, note == null ? '筆記' : '編輯筆記', () {
+                      Navigator.pop(ctx);
+                      _showNoteEditor(book, verseNo, note);
+                    }),
+                    quickAction(Icons.copy, '複製', () async {
+                      await Clipboard.setData(ClipboardData(
+                          text:
+                              '「$text」（${book.name} $_chapter:$verseNo）'));
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('已複製')));
+                      }
+                    }),
+                    quickAction(Icons.rate_review_outlined, '投稿註解', () {
+                      Navigator.pop(ctx);
+                      _submitPublicNote(book, verseNo, text);
+                    }),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                TabBar(
+                  labelStyle: Theme.of(ctx).textTheme.titleSmall,
+                  tabs: const [
+                    Tab(text: '字義'),
+                    Tab(text: '背景'),
+                    Tab(text: '應用'),
+                    Tab(text: '相關'),
+                  ],
+                ),
+                Expanded(
+                  child: TabBarView(
+                    children: [
+                      // 字義：注釋 + 關鍵字
+                      if (annotation?.commentary == null &&
+                          (annotation?.keywords.isEmpty ?? true))
+                        empty('此節尚無字義註釋（內容待補）')
+                      else
+                        ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            if (annotation!.commentary != null)
+                              Text(annotation.commentary!,
+                                  style: const TextStyle(height: 1.8)),
+                            if (annotation.keywords.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              for (final k in annotation.keywords)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.only(bottom: 6),
+                                  child: Text.rich(TextSpan(children: [
+                                    TextSpan(
+                                        text: '${k.word}　',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.bold)),
+                                    TextSpan(
+                                        text: k.note,
+                                        style:
+                                            const TextStyle(height: 1.6)),
+                                  ])),
+                                ),
+                            ],
+                            if (annotation.updatedAt != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: Text(
+                                    '註解更新於 ${_ymdOf(annotation.updatedAt!)}',
+                                    style: Theme.of(ctx)
+                                        .textTheme
+                                        .labelSmall
+                                        ?.copyWith(color: scheme.outline)),
+                              ),
+                          ],
+                        ),
+                      // 背景
+                      annotation?.background == null
+                          ? empty('此節尚無背景說明（內容待補）')
+                          : ListView(
+                              padding: const EdgeInsets.all(16),
+                              children: [
+                                Text(annotation!.background!,
+                                    style: const TextStyle(height: 1.8)),
+                              ],
+                            ),
+                      // 應用
+                      annotation?.application == null
+                          ? empty('此節尚無生活應用（內容待補）')
+                          : ListView(
+                              padding: const EdgeInsets.all(16),
+                              children: [
+                                if (annotation!.applicationCategory != null)
+                                  Padding(
+                                    padding:
+                                        const EdgeInsets.only(bottom: 6),
+                                    child: Text(
+                                        '分類：${annotation.applicationCategory}',
+                                        style: Theme.of(ctx)
+                                            .textTheme
+                                            .labelLarge),
+                                  ),
+                                Text(annotation.application!,
+                                    style: const TextStyle(height: 1.8)),
+                              ],
+                            ),
+                      // 相關：交叉引用 + 社群註解
+                      ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          if (annotation != null &&
+                              annotation.crossRefs.isNotEmpty) ...[
+                            Text('相關經文',
+                                style: Theme.of(ctx).textTheme.labelLarge),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                for (final r in annotation.crossRefs)
+                                  ActionChip(
+                                    avatar: const Icon(Icons.link, size: 16),
+                                    label: Text(r),
+                                    onPressed: () {
+                                      Navigator.pop(ctx);
+                                      _jumpToRef(books, r);
+                                    },
+                                  ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                          ],
+                          if (publicNotes.isNotEmpty) ...[
+                            Row(children: [
+                              Icon(Icons.groups_outlined,
+                                  size: 18, color: scheme.primary),
+                              const SizedBox(width: 6),
+                              Text('社群註解',
+                                  style: Theme.of(ctx)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(color: scheme.primary)),
+                            ]),
+                            const SizedBox(height: 6),
+                            for (final n in publicNotes)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(n.content,
+                                        style:
+                                            const TextStyle(height: 1.6)),
+                                    if (n.author.isNotEmpty)
+                                      Text('— ${n.author}',
+                                          style: Theme.of(ctx)
+                                              .textTheme
+                                              .bodySmall),
+                                  ],
+                                ),
+                              ),
+                          ],
+                          if ((annotation == null ||
+                                  annotation.crossRefs.isEmpty) &&
+                              publicNotes.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 40),
+                              child: empty('尚無相關經文與社群註解'),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
+  }
+
+  static String _ymdOf(int ms) {
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${d.year}/${d.month.toString().padLeft(2, '0')}/'
+        '${d.day.toString().padLeft(2, '0')}';
   }
 
   /// 投稿一則公開註解（登入後可投；提交後進待審佇列）。
@@ -1026,91 +1203,3 @@ class _BookSummaryCard extends StatelessWidget {
   }
 }
 
-/// 節操作選單裡的註解區塊（注釋／關鍵字／生活應用／經文串連）。
-class _VerseAnnotationView extends StatelessWidget {
-  final VerseAnnotation annotation;
-  final void Function(String ref) onTapRef;
-
-  const _VerseAnnotationView(
-      {required this.annotation, required this.onTapRef});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final tt = Theme.of(context).textTheme;
-
-    Widget header(String label) => Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Text(label,
-              style: tt.labelLarge?.copyWith(color: scheme.tertiary)),
-        );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Divider(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Icon(Icons.menu_book_outlined, size: 18, color: scheme.tertiary),
-              const SizedBox(width: 6),
-              Text('經文註解',
-                  style: tt.titleMedium?.copyWith(color: scheme.tertiary)),
-            ],
-          ),
-        ),
-        if (annotation.commentary != null) ...[
-          header('注釋'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(annotation.commentary!,
-                style: tt.bodyMedium?.copyWith(height: 1.6)),
-          ),
-        ],
-        if (annotation.keywords.isNotEmpty) ...[
-          header('關鍵字'),
-          for (final k in annotation.keywords)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 2, 16, 2),
-              child: Text.rich(TextSpan(children: [
-                TextSpan(
-                    text: '${k.word}　',
-                    style: tt.bodyMedium
-                        ?.copyWith(fontWeight: FontWeight.bold)),
-                TextSpan(
-                    text: k.note,
-                    style: tt.bodyMedium?.copyWith(height: 1.5)),
-              ])),
-            ),
-        ],
-        if (annotation.application != null) ...[
-          header('生活應用${annotation.applicationCategory != null ? '・${annotation.applicationCategory}' : ''}'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(annotation.application!,
-                style: tt.bodyMedium?.copyWith(height: 1.6)),
-          ),
-        ],
-        if (annotation.crossRefs.isNotEmpty) ...[
-          header('相關經文'),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final r in annotation.crossRefs)
-                  ActionChip(
-                    avatar: const Icon(Icons.link, size: 16),
-                    label: Text(r),
-                    onPressed: () => onTapRef(r),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-}

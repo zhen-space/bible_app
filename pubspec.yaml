@@ -47,6 +47,7 @@ dependencies:
   google_sign_in_web: ^1.1.0
   flutter_tts: ^4.2.5
   web: ^1.1.1
+  speech_to_text: ^7.4.0
 
 dev_dependencies:
   flutter_test:

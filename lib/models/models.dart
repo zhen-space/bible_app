@@ -148,18 +148,22 @@ class Keyword {
 
 /// 每節註解（注釋／生活應用／經文串連）。內容唯讀、可缺。
 class VerseAnnotation {
-  final String? commentary; // 注釋：每句背後意義
-  final List<Keyword> keywords; // 關鍵字解釋
+  final String? commentary; // 注釋：每句背後意義（字義）
+  final List<Keyword> keywords; // 關鍵字解釋（字義）
+  final String? background; // 這一節的歷史／文化背景
   final String? applicationCategory; // 生活應用分類
   final String? application; // 生活應用建議
   final List<String> crossRefs; // 經文串連（節位字串，可跳轉）
+  final int? updatedAt; // 雲端最後更新時間（版本化；asset 內容為 null）
 
   const VerseAnnotation({
     this.commentary,
     this.keywords = const [],
+    this.background,
     this.applicationCategory,
     this.application,
     this.crossRefs = const [],
+    this.updatedAt,
   });
 
   factory VerseAnnotation.fromJson(Map<String, dynamic> j) {
@@ -171,11 +175,13 @@ class VerseAnnotation {
                   (e as Map)['word'] as String, e['note'] as String))
               .toList() ??
           const [],
+      background: j['background'] as String?,
       applicationCategory: app?['category'] as String?,
       application: app?['text'] as String?,
       crossRefs:
           (j['crossRefs'] as List?)?.map((e) => e as String).toList() ??
               const [],
+      updatedAt: j['updated_at'] as int?,
     );
   }
 }

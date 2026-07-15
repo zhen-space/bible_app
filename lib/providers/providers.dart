@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -327,16 +330,44 @@ final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
 
 final contentServiceProvider = Provider((ref) => ContentService());
 
-/// 雲端內容層：annotations collection 全部 doc（Firebase 不可用或離線時為空，
-/// 讀經端自動退回 asset 內容）。
+/// 混合式快取：雲端內容抓到就存 SharedPreferences；離線或抓取失敗時
+/// 用上次快取（經文永遠在本地 asset，這裡只快取「雲端撰寫層」）。
+Future<Map<String, dynamic>?> _readCache(String key) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(key);
+    if (raw == null) return null;
+    return jsonDecode(raw) as Map<String, dynamic>;
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<void> _writeCache(String key, Map<String, dynamic> data) async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(key, jsonEncode(data));
+  } catch (_) {} // 快取失敗不影響功能
+}
+
+/// 雲端內容層：annotations collection 全部 doc。
+/// 線上抓最新並更新快取；離線/失敗退回上次快取；都沒有才回空（用 asset）。
 final cloudAnnotationsProvider =
     FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return const {};
-  try {
-    return await ref.watch(contentServiceProvider).fetchAll();
-  } catch (_) {
-    return const {};
+  const cacheKey = 'cache_annotations';
+  if (ref.watch(firebaseReadyProvider)) {
+    try {
+      final fresh = await ref.watch(contentServiceProvider).fetchAll();
+      await _writeCache(cacheKey, fresh);
+      return fresh;
+    } catch (_) {
+      // 落到下方快取
+    }
   }
+  final cached = await _readCache(cacheKey);
+  if (cached == null) return const {};
+  return cached.map((k, v) =>
+      MapEntry(k, (v as Map).cast<String, dynamic>()));
 });
 
 /// 整卷書的導讀＋統整（獨立標籤方格用）。雲端優先、asset 為底。
@@ -402,15 +433,22 @@ final pendingSubmissionsProvider =
 final knowledgeRepositoryProvider =
     Provider((ref) => KnowledgeRepository());
 
-/// 雲端知識資料（後台編輯的成果）；Firebase 不可用或無資料時為 null。
+/// 雲端知識資料（後台編輯的成果）。線上抓最新並更新快取；
+/// 離線退回上次快取；都沒有回 null（用 asset）。
 final cloudKnowledgeProvider =
     FutureProvider<Map<String, dynamic>?>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return null;
-  try {
-    return await ref.watch(contentServiceProvider).fetchKnowledge();
-  } catch (_) {
-    return null;
+  const cacheKey = 'cache_knowledge';
+  if (ref.watch(firebaseReadyProvider)) {
+    try {
+      final fresh =
+          await ref.watch(contentServiceProvider).fetchKnowledge();
+      if (fresh != null) await _writeCache(cacheKey, fresh);
+      return fresh;
+    } catch (_) {
+      // 落到下方快取
+    }
   }
+  return _readCache(cacheKey);
 });
 
 /// 知識架構：**雲端優先、asset 為底**。後台存檔後 invalidate 即刷新。
@@ -513,6 +551,8 @@ final syncServiceProvider =
 
 /// 同步狀態機：idle / syncing / 完成或錯誤訊息。
 class SyncStatusNotifier extends Notifier<String?> {
+  Timer? _autoSyncTimer;
+
   @override
   String? build() {
     // 轉址登入回來（或任何時候從未登入變成已登入）→ 自動同步一次
@@ -521,7 +561,23 @@ class SyncStatusNotifier extends Notifier<String?> {
         syncNow();
       }
     });
+    // 自動備份（Auto-Sync）：本地一有寫入（書籤/筆記/進度…），
+    // debounce 10 秒後自動上傳雲端——換手機或移除 App 不丟信仰紀錄。
+    ref.watch(databaseServiceProvider).onMutate = _scheduleAutoSync;
+    ref.onDispose(() => _autoSyncTimer?.cancel());
     return null;
+  }
+
+  void _scheduleAutoSync() {
+    if (Firebase.apps.isEmpty ||
+        FirebaseAuth.instance.currentUser == null) {
+      return; // 未登入：資料留在本地，登入後首次同步會補上
+    }
+    _autoSyncTimer?.cancel();
+    _autoSyncTimer = Timer(const Duration(seconds: 10), () {
+      if (state == '同步中…') return;
+      syncNow();
+    });
   }
 
   /// 執行一次完整同步；結束後刷新所有標記 providers。

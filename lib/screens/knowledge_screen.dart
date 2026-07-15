@@ -3,22 +3,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/knowledge.dart';
 import '../providers/providers.dart';
-import '../services/verse_locator.dart';
-import 'chapter_screen.dart';
+import '../services/app_links.dart';
 
-/// 依節位字串跳到讀經頁（可帶範圍，如「太8:23-27」取破折號前）。
-void _jumpRef(BuildContext context, WidgetRef ref, String refStr) {
-  final books = ref.read(booksProvider).value;
-  if (books == null) return;
-  final loc = VerseLocator.parse(refStr, books);
-  if (loc == null) return;
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (_) => ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
-    ),
-  );
-}
+/// 依節位字串跳到讀經頁（統一走 AppLinks 原子化跳轉）。
+void _jumpRef(BuildContext context, WidgetRef ref, String refStr) =>
+    AppLinks.openVerseRef(context, ref, refStr);
 
 Widget _empty(String msg) => Center(
       child: Padding(

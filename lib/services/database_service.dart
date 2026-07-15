@@ -14,6 +14,12 @@ class DatabaseService {
   static const _dbName = 'bible_app.db';
   static const _dbVersion = 6;
 
+  /// 資料異動通知（自動備份用）：每次寫入後呼叫。
+  /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
+  void Function()? onMutate;
+
+  void _mutated() => onMutate?.call();
+
   Database? _db;
 
   Future<Database> get database async {
@@ -191,6 +197,7 @@ class DatabaseService {
     } else {
       await _tombstone(db, 'bookmark', ref); // 刪除：記墓碑
     }
+    _mutated();
   }
 
   Future<List<Bookmark>> getAllBookmarks() async {
@@ -238,6 +245,7 @@ class DatabaseService {
       );
       await _untomb(db, 'highlight', ref);
     }
+    _mutated();
   }
 
   Future<List<Highlight>> getAllHighlights() async {
@@ -290,6 +298,7 @@ class DatabaseService {
       );
     }
     await _untomb(db, 'note', _rowRef(bookId, chapter, verse));
+    _mutated();
   }
 
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
@@ -300,6 +309,7 @@ class DatabaseService {
       whereArgs: [bookId, chapter, verse],
     );
     await _tombstone(db, 'note', _rowRef(bookId, chapter, verse));
+    _mutated();
   }
 
   Future<List<Note>> getAllNotes() async {
@@ -331,6 +341,7 @@ class DatabaseService {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    _mutated();
   }
 
   /// 已讀章數。
@@ -461,6 +472,7 @@ class DatabaseService {
         ..['updated_at'] = now;
       final id = await db.insert('sermon_notes', m);
       await _untomb(db, 'sermon', 's$now');
+      _mutated();
       return id;
     }
     await db.update(
@@ -470,6 +482,7 @@ class DatabaseService {
       whereArgs: [note.id],
     );
     await _untomb(db, 'sermon', 's${note.createdAt}');
+    _mutated();
     return note.id!;
   }
 
@@ -482,6 +495,7 @@ class DatabaseService {
     if (rows.isNotEmpty) {
       await _tombstone(db, 'sermon', 's${rows.first['created_at']}');
     }
+    _mutated();
   }
 
   /// 統計小卡用：各項數量。
@@ -568,6 +582,7 @@ class DatabaseService {
         whereArgs: [planId, day],
       );
     }
+    _mutated();
   }
 
   // ---- 刪除墓碑（同步刪除）----

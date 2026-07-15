@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/entities.dart';
 import '../data/topics.dart';
+import '../models/knowledge.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/app_links.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
@@ -54,6 +56,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       _results = ref.read(bibleRepositoryProvider).search(q);
       _searched = q.trim().isNotEmpty;
     });
+  }
+
+  /// 原子化關聯：搜尋到的「人物」若在知識庫（knowledge.people）有同名/別名
+  /// 條目，回傳其唯一 id，讓結果列一鍵跨到人物生平頁。
+  String? _personIdFor(BibleEntity e) {
+    if (e.type != EntityType.person) return null;
+    final kb = ref.read(knowledgeProvider).value ?? KnowledgeBase.empty;
+    for (final p in kb.people) {
+      if (p.name == e.name || p.aka.contains(e.name)) return p.id;
+    }
+    return null;
   }
 
   void _openChapter(int bookId, int chapter) {
@@ -137,7 +150,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     ),
                   ),
               ],
-              // 人物／地點／事件
+              // 人物／地點／事件（人物若在知識庫有生平頁，可一鍵跨過去）
               if (_entities.isNotEmpty) ...[
                 const _SectionLabel('人物・地點・事件'),
                 for (final e in _entities)
@@ -145,6 +158,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     leading: Icon(_entityIcon(e.type)),
                     title: Text(e.name),
                     subtitle: Text('${entityTypeLabel(e.type)}　找出全部出現處'),
+                    trailing: _personIdFor(e) != null
+                        ? IconButton(
+                            icon: const Icon(Icons.person_search),
+                            tooltip: '人物生平頁',
+                            onPressed: () => AppLinks.openPerson(
+                                context, _personIdFor(e)!),
+                          )
+                        : null,
                     onTap: () {
                       _controller.text = e.name;
                       _search(e.name);

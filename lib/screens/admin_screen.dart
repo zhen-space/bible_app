@@ -513,8 +513,9 @@ class AdminVerseEditor extends ConsumerWidget {
       title: '${book.name} $chapter:$verse · 註解',
       contextText: '「$text」',
       fields: const [
-        _Field('commentary', '注釋（這句背後的意義）', maxLines: 5),
+        _Field('commentary', '注釋／字義（這句背後的意義）', maxLines: 5),
         _Field('keywords', '關鍵字解釋（每行一個，格式：詞｜解釋）', maxLines: 6),
+        _Field('background', '背景（這一節的歷史／文化背景）', maxLines: 4),
         _Field('category', '生活應用分類（例：信心）', maxLines: 1),
         _Field('application', '生活應用建議', maxLines: 4),
         _Field('crossRefs', '相關經文（逗號分隔，例：約1:1, 詩33:6）', maxLines: 2),
@@ -527,6 +528,7 @@ class AdminVerseEditor extends ConsumerWidget {
           'commentary': v?.commentary ?? '',
           'keywords':
               _lines(v?.keywords.map((k) => '${k.word}｜${k.note}').toList() ?? []),
+          'background': v?.background ?? '',
           'category': v?.applicationCategory ?? '',
           'application': v?.application ?? '',
           'crossRefs': (v?.crossRefs ?? []).join(', '),
@@ -554,6 +556,7 @@ class AdminVerseEditor extends ConsumerWidget {
             .saveVerse(book.id, chapter, verse, {
           if (_nn(v['commentary']!) != null) 'commentary': v['commentary'],
           if (keywords.isNotEmpty) 'keywords': keywords,
+          if (_nn(v['background']!) != null) 'background': v['background'],
           if (_nn(v['application']!) != null)
             'application': {
               if (_nn(v['category']!) != null) 'category': v['category'],
