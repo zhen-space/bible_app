@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/knowledge.dart';
 import '../providers/providers.dart';
+import '../services/download_stub.dart'
+    if (dart.library.js_interop) '../services/download_web.dart';
 
 /// 知識架構後台：編輯平行經文／預表應驗／時間軸／人物。
 /// 存成雲端單一 doc（knowledge/data），讀經端雲端優先合併。
@@ -14,7 +19,21 @@ class KnowledgeAdminScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final kb = ref.watch(knowledgeProvider).value ?? KnowledgeBase.empty;
     return Scaffold(
-      appBar: AppBar(title: const Text('知識架構編輯')),
+      appBar: AppBar(
+        title: const Text('知識架構編輯'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: '匯出 JSON（電腦大量編輯用）',
+            onPressed: () => _export(context, kb),
+          ),
+          IconButton(
+            icon: const Icon(Icons.file_download_outlined),
+            tooltip: '匯入 JSON（貼上後整份覆蓋）',
+            onPressed: () => _import(context, ref, kb),
+          ),
+        ],
+      ),
       body: ListView(
         children: [
           _tile(context, Icons.compare_arrows, '平行經文對照',
@@ -25,6 +44,89 @@ class KnowledgeAdminScreen extends ConsumerWidget {
               '${kb.timeline.length} 個事件', const TimelineEditor()),
           _tile(context, Icons.people_alt_outlined, '人物',
               '${kb.people.length} 位', const PeopleEditor()),
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('提示：右上可整份匯出 JSON 到電腦編輯，再匯入貼回（覆蓋雲端）。'
+                '格式同 assets/knowledge/knowledge.json。',
+                style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 匯出：下載 JSON 檔（網頁），並複製到剪貼簿（各平台都通）。
+  Future<void> _export(BuildContext context, KnowledgeBase kb) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final json = const JsonEncoder.withIndent('  ').convert(kb.toJson());
+    await Clipboard.setData(ClipboardData(text: json));
+    final downloaded =
+        downloadTextFile('knowledge.json', 'application/json', json);
+    messenger.showSnackBar(SnackBar(
+        content: Text(downloaded
+            ? '已下載 knowledge.json，並複製到剪貼簿'
+            : '已複製 JSON 到剪貼簿')));
+  }
+
+  /// 匯入：貼上 JSON → 解析驗證 → 預覽筆數 → 確認後整份覆蓋雲端。
+  void _import(BuildContext context, WidgetRef ref, KnowledgeBase current) {
+    final controller = TextEditingController();
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('匯入 JSON'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  '貼上整份 knowledge JSON。匯入會**覆蓋**雲端現有內容'
+                  '（目前：平行 ${current.parallels.length}、預表 ${current.types.length}、'
+                  '時間軸 ${current.timeline.length}、人物 ${current.people.length}）。',
+                  style: Theme.of(ctx).textTheme.bodySmall),
+              const SizedBox(height: 8),
+              TextField(
+                controller: controller,
+                maxLines: 10,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: '{ "parallels": [...], "types": [...], ... }',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              final KnowledgeBase kb;
+              try {
+                kb = KnowledgeBase.fromJson(
+                    jsonDecode(controller.text) as Map<String, dynamic>);
+              } catch (e) {
+                messenger.showSnackBar(
+                    SnackBar(content: Text('JSON 解析失敗：$e')));
+                return;
+              }
+              Navigator.pop(ctx);
+              try {
+                await _saveKb(ref, kb);
+                messenger.showSnackBar(SnackBar(
+                    content: Text('已匯入：平行 ${kb.parallels.length}、'
+                        '預表 ${kb.types.length}、時間軸 ${kb.timeline.length}、'
+                        '人物 ${kb.people.length}')));
+              } catch (e) {
+                messenger
+                    .showSnackBar(SnackBar(content: Text('匯入失敗：$e')));
+              }
+            },
+            child: const Text('覆蓋匯入'),
+          ),
         ],
       ),
     );
