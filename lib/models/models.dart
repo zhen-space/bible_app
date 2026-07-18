@@ -186,6 +186,43 @@ class VerseAnnotation {
   }
 }
 
+/// 禱告事項（首頁區塊）：分類/子分類/內容，使用者自行增刪，不設打勾。
+class Prayer {
+  final int? id;
+  final String category; // 分類（例：家人）
+  final String subcategory; // 子分類（例：爸爸）
+  final String content; // 禱告內容
+  final int createdAt;
+  final int updatedAt;
+
+  const Prayer({
+    this.id,
+    this.category = '',
+    this.subcategory = '',
+    this.content = '',
+    this.createdAt = 0,
+    this.updatedAt = 0,
+  });
+
+  factory Prayer.fromMap(Map<String, dynamic> m) => Prayer(
+        id: m['id'] as int?,
+        category: m['category'] as String? ?? '',
+        subcategory: m['subcategory'] as String? ?? '',
+        content: m['content'] as String? ?? '',
+        createdAt: m['created_at'] as int? ?? 0,
+        updatedAt: m['updated_at'] as int? ?? 0,
+      );
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'category': category,
+        'subcategory': subcategory,
+        'content': content,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
+}
+
 /// 主日／證道筆記（結構化表單，白板「五、個人信仰整理」）。
 class SermonNote {
   final int? id;

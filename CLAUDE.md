@@ -11,7 +11,7 @@
 
 ## 專案概況
 
-Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引導式首頁、讀經（**兩種閱讀模式**：逐節分行／整章連續）、**中英對照**（KJV，每節中文下接英文）、**聽聖經**（TTS 逐節朗讀，朗讀中的節即時高亮）、卷導讀（獨立方格）＋卷統整（整卷最後一章末）、每節註解（注釋/關鍵字/生活應用/交叉引用可跳轉）、讀經頁內建搜尋、全文搜尋（含模糊/子序列）、節位快速跳轉（約3:16）、搜尋歷史、主題閱讀（含**主題導讀**欄位）、**讀經計畫**（一年通讀/90天速讀/新約，逐日勾選進度）、人生情境入口、每日經文、讀經進度、**我的信仰地圖**（66 卷依已讀比例上色）、首頁個人筆記、書籤、螢光筆（5 色，**可命名**）、經節筆記（含觀察/相信/行動三欄模板、標籤）、主日證道筆記、統計小卡、筆記匯出（Markdown 複製／HTML 下載可存 PDF/用 Word 開）、深淺色主題、字級調整、記住閱讀位置。
+Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引導式首頁、讀經（**兩種閱讀模式**：逐節分行／整章連續）、**中英對照**（KJV，每節中文下接英文）、**聽聖經**（TTS 逐節朗讀，朗讀中的節即時高亮）、卷導讀（獨立方格）＋卷統整（整卷最後一章末）、每節註解（注釋/關鍵字/生活應用/交叉引用可跳轉）、讀經頁內建搜尋、全文搜尋（含模糊/子序列）、節位快速跳轉（約3:16）、搜尋歷史、主題閱讀（含**主題導讀**欄位）、**讀經計畫**（一年通讀/90天速讀/新約，逐日勾選進度）、人生情境入口、每日經文、讀經進度、**我的信仰地圖**（66 卷依已讀比例上色）、首頁個人筆記、**禱告事項**（分類/子分類/內容，位置可選「繼續閱讀下／整頁下」）、書籤、螢光筆（5 色，**可命名**）、經節筆記（含觀察/相信/行動三欄模板、標籤）、主日證道筆記、統計小卡、筆記匯出（Markdown 複製／HTML 下載可存 PDF/用 Word 開）、深淺色主題、字級調整、記住閱讀位置。
 
 - 配色（使用者要 Apple 風、不要像 Google）：淺色＝天空藍底（`_skyBg`）＋白圓角卡片＋**金圖標**＋黑字；深色＝深藍底＋白字＋金圖標。圖標色靠 `iconTheme`/`appBarTheme.actionsIconTheme`/`listTileTheme` 統一設金。iOS 感：大標題（左對齊粗體）、Card 圓角 18、elevation 0。見 `theme/app_theme.dart`。
 - 登入：Google（已通）＋ Apple（`OAuthProvider('apple.com')` popup；需 Firebase 啟用 Apple provider、Apple Developer 建 Service ID 才會動）。
@@ -20,10 +20,10 @@ Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引�
 
 - 聽聖經：`flutter_tts`（網頁走瀏覽器 SpeechSynthesis、手機走系統 TTS），`services/tts_service.dart` 逐節朗讀、追蹤目前節號供高亮；換章/離開頁自動停。
 - 狀態管理：Riverpod（`flutter_riverpod`，Notifier/FutureProvider）
-- 使用者資料：sqflite（存書籤/螢光筆/筆記/讀經紀錄/證道筆記/讀經計畫進度/刪除墓碑；**經文不進 DB**）
+- 使用者資料：sqflite（存書籤/螢光筆/筆記/讀經紀錄/證道筆記/讀經計畫進度/禱告事項/刪除墓碑；**經文不進 DB**）
 - 經文來源：`assets/bible/cuv.json`（約 3.3MB，66 卷 31,104 節），啟動時載入記憶體，搜尋直接掃記憶體
 - 設定持久化：shared_preferences（主題、字級、閱讀位置）
-- Firebase：**已接（Web 先行）**。專案 `bible-app-c0eac`；`lib/firebase_options.dart` 只有 web 設定（iOS/Android 之後在 Mac 跑 `flutterfire configure` 覆蓋該檔）。Google 登入（popup）＋ Firestore 雲端備份：`services/sync_service.dart` 多表雙向 LWW 合併（bookmarks/highlights/notes/reading_log/sermon_notes/plan_progress→`users/{uid}/...`）。**已支援同步刪除（tombstone）**：`tombstones` 表記錄刪除，不變量＝同一筆資料「活資料」與「墓碑」互斥（刪除寫墓碑、新增/更新清墓碑）；sync 先合併墓碑→下載擋掉被刪→套用墓碑刪本地→上傳墓碑並刪雲端 doc。main() 裡 init 失敗不擋 App；未登入一切照常。**新資料表記得加進 sync service，刪除要記墓碑**。
+- Firebase：**已接（Web 先行）**。專案 `bible-app-c0eac`；`lib/firebase_options.dart` 只有 web 設定（iOS/Android 之後在 Mac 跑 `flutterfire configure` 覆蓋該檔）。Google 登入（popup）＋ Firestore 雲端備份：`services/sync_service.dart` 多表雙向 LWW 合併（bookmarks/highlights/notes/reading_log/sermon_notes/plan_progress/prayers→`users/{uid}/...`）。**已支援同步刪除（tombstone）**：`tombstones` 表記錄刪除，不變量＝同一筆資料「活資料」與「墓碑」互斥（刪除寫墓碑、新增/更新清墓碑）；sync 先合併墓碑→下載擋掉被刪→套用墓碑刪本地→上傳墓碑並刪雲端 doc。main() 裡 init 失敗不擋 App；未登入一切照常。**新資料表記得加進 sync service，刪除要記墓碑**。
 
 ## 目錄結構
 
@@ -40,7 +40,7 @@ lib/
   models/models.dart        Book/VerseRef/Bookmark/Highlight/Note
   data/topics.dart          主題/情境精選經文（節位字串，有測試守著有效性）
   services/
-    database_service.dart   SQLite（含升版框架，見下；目前 v6）
+    database_service.dart   SQLite（含升版框架，見下；目前 v7）
     bible_repository.dart   經文載入與搜尋（含模糊/子序列）
     verse_locator.dart      節位解析（「約3:16」→ bookId/章/節）
     annotation_repository.dart  註解內容載入（章導讀/節註解，可插拔）
@@ -122,7 +122,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 v6（v2 加 reading_log；v3 加 notes.tags；v4 加 sermon_notes 證道筆記表；v5 加 plan_progress 讀經計畫進度；v6 加 tombstones 刪除墓碑）。升版時：
+`database_service.dart`，目前 v7（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers 禱告事項）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）

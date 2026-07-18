@@ -41,6 +41,7 @@ class SyncService {
     final tombH = await db.getTombstoneMap('highlight');
     final tombN = await db.getTombstoneMap('note');
     final tombS = await db.getTombstoneMap('sermon');
+    final tombP = await db.getTombstoneMap('prayer');
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
@@ -112,6 +113,26 @@ class SyncService {
       }
     }
 
+    // 禱告事項：以 created_at 對應本地（較新的 updated_at 為準）
+    final cloudPrayers = await _col(uid, 'prayers').get();
+    final localPrayers = await db.getPrayers();
+    for (final d in cloudPrayers.docs) {
+      final m = d.data();
+      final createdAt = m['created_at'] as int;
+      final t = tombP['p$createdAt'];
+      if (t != null && t >= (m['updated_at'] as int)) continue;
+      final localMatch =
+          localPrayers.where((p) => p.createdAt == createdAt).firstOrNull;
+      if (localMatch == null ||
+          (m['updated_at'] as int) > localMatch.updatedAt) {
+        await db.savePrayer(Prayer.fromMap({
+          ...m,
+          if (localMatch != null) 'id': localMatch.id,
+        }));
+        downloaded++;
+      }
+    }
+
     // 套用所有（合併後）墓碑到本地：刪掉時間不比刪除時間新的本地資料。
     // （擋掉「另一台裝置刪除、但本機還留著」的情形。）
     for (final tomb in await db.getAllTombstones()) {
@@ -173,6 +194,13 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    for (final p in await db.getPrayers()) {
+      final m = p.toMap()..remove('id');
+      batch.set(_col(uid, 'prayers').doc('p${p.createdAt}'), m);
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
     for (final m in await db.getAllPlanProgress()) {
       batch.set(
           _col(uid, 'plan_progress')
@@ -193,6 +221,7 @@ class SyncService {
       'highlight': 'highlights',
       'note': 'notes',
       'sermon': 'sermon_notes',
+      'prayer': 'prayers',
     };
     for (final t in await db.getAllTombstones()) {
       final kind = t['kind'] as String;

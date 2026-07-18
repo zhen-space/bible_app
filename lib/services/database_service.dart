@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 6;
+  static const _dbVersion = 7;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -79,6 +79,21 @@ class DatabaseService {
     await _createSermonNotesTable(db); // v4
     await _createPlanProgressTable(db); // v5
     await _createTombstonesTable(db); // v6
+    await _createPrayersTable(db); // v7
+  }
+
+  /// 禱告事項（首頁區塊）：分類/子分類/內容，使用者自行增刪，不設打勾。
+  Future<void> _createPrayersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE prayers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL DEFAULT '',
+        subcategory TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _createReadingLogTable(Database db) async {
@@ -173,6 +188,9 @@ class DatabaseService {
     }
     if (oldV < 6) {
       await _createTombstonesTable(db);
+    }
+    if (oldV < 7) {
+      await _createPrayersTable(db);
     }
   }
 
@@ -585,6 +603,50 @@ class DatabaseService {
     _mutated();
   }
 
+  // ---- 禱告事項 ----
+
+  Future<List<Prayer>> getPrayers() async {
+    final db = await database;
+    final rows = await db.query('prayers',
+        orderBy: 'category, subcategory, created_at DESC');
+    return rows.map(Prayer.fromMap).toList();
+  }
+
+  /// 新增或更新（id 為 null 則新增），回傳 id。
+  Future<int> savePrayer(Prayer p) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (p.id == null) {
+      final m = p.toMap()
+        ..['created_at'] = now
+        ..['updated_at'] = now;
+      final id = await db.insert('prayers', m);
+      await _untomb(db, 'prayer', 'p$now');
+      _mutated();
+      return id;
+    }
+    await db.update(
+      'prayers',
+      p.toMap()..['updated_at'] = now,
+      where: 'id = ?',
+      whereArgs: [p.id],
+    );
+    await _untomb(db, 'prayer', 'p${p.createdAt}');
+    _mutated();
+    return p.id!;
+  }
+
+  Future<void> deletePrayer(int id) async {
+    final db = await database;
+    final rows = await db.query('prayers',
+        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+    await db.delete('prayers', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      await _tombstone(db, 'prayer', 'p${rows.first['created_at']}');
+    }
+    _mutated();
+  }
+
   // ---- 刪除墓碑（同步刪除）----
 
   Future<List<Map<String, dynamic>>> getAllTombstones() async {
@@ -648,6 +710,14 @@ class DatabaseService {
         if (createdAt == null) return 0;
         removed = await db.delete(
           'sermon_notes',
+          where: 'created_at = ? AND updated_at <= ?',
+          whereArgs: [createdAt, deletedAt],
+        );
+      case 'prayer':
+        final createdAt = int.tryParse(ref.replaceFirst('p', ''));
+        if (createdAt == null) return 0;
+        removed = await db.delete(
+          'prayers',
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
         );

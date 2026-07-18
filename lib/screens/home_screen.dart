@@ -8,6 +8,7 @@ import 'bookmarks_screen.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
 import 'knowledge_screen.dart';
+import 'prayers_screen.dart';
 import 'qa_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
@@ -25,6 +26,8 @@ class HomeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final lastRead = ref.watch(lastReadProvider);
     final books = ref.watch(booksProvider).value;
+    // 禱告事項區塊位置由使用者在設定選（top＝繼續閱讀下、bottom＝整頁下面）
+    final prayerPos = ref.watch(prayerPositionProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -50,6 +53,10 @@ class HomeScreen extends ConsumerWidget {
               book: books[lastRead.bookId - 1],
               chapter: lastRead.chapter,
             ),
+            const SizedBox(height: 12),
+          ],
+          if (prayerPos == 'top') ...[
+            const _PrayerSection(),
             const SizedBox(height: 12),
           ],
           // 四大入口（2×2；不用 GridView，避免捲動父層衝突）
@@ -117,6 +124,10 @@ class HomeScreen extends ConsumerWidget {
           const SizedBox(height: 16),
           const _ReadingProgressBar(),
           const _RecentNotesSection(),
+          if (prayerPos == 'bottom') ...[
+            const SizedBox(height: 8),
+            const _PrayerSection(),
+          ],
         ],
       ),
     );
@@ -381,6 +392,91 @@ class _RecentNotesSection extends ConsumerWidget {
             },
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// 首頁「禱告事項」區塊：預覽最近幾則（分類·子分類｜內容），
+/// 點「看全部」進完整頁面新增/編輯；沒有內容時顯示引導卡。
+class _PrayerSection extends ConsumerWidget {
+  const _PrayerSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prayers = ref.watch(allPrayersProvider).value ?? const <Prayer>[];
+    final scheme = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(children: [
+                Icon(Icons.volunteer_activism_outlined,
+                    size: 18, color: scheme.secondary),
+                const SizedBox(width: 6),
+                Text('禱告事項',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ]),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const PrayersScreen()),
+                ),
+                child: Text(prayers.isEmpty ? '新增' : '看全部'),
+              ),
+            ],
+          ),
+        ),
+        if (prayers.isEmpty)
+          Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: Icon(Icons.add_circle_outline,
+                  color: scheme.secondary),
+              title: const Text('寫下你的禱告事項'),
+              subtitle: const Text('可自訂分類與子分類（例：家人 · 爸爸）'),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PrayersScreen()),
+              ),
+            ),
+          )
+        else
+          Card(
+            margin: EdgeInsets.zero,
+            child: Column(
+              children: [
+                for (final p in prayers.take(3))
+                  ListTile(
+                    dense: true,
+                    leading: Icon(Icons.circle,
+                        size: 8, color: scheme.secondary),
+                    title: Text(p.content,
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
+                    subtitle: Text([
+                      if (p.category.isNotEmpty) p.category,
+                      if (p.subcategory.isNotEmpty) p.subcategory,
+                    ].join(' · ')),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => const PrayersScreen()),
+                    ),
+                  ),
+                if (prayers.length > 3)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('共 ${prayers.length} 則',
+                        style: Theme.of(context).textTheme.labelSmall),
+                  ),
+              ],
+            ),
+          ),
       ],
     );
   }

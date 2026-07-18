@@ -209,6 +209,25 @@ void main() {
     });
   });
 
+  group('Prayer round-trip', () {
+    test('toMap/fromMap 保留分類/子分類/內容', () {
+      const p = Prayer(
+        id: 2,
+        category: '家人',
+        subcategory: '爸爸',
+        content: '為健康禱告',
+        createdAt: 5,
+        updatedAt: 6,
+      );
+      final r = Prayer.fromMap(p.toMap());
+      expect(r.category, '家人');
+      expect(r.subcategory, '爸爸');
+      expect(r.content, '為健康禱告');
+      expect(r.createdAt, 5);
+      expect(r.updatedAt, 6);
+    });
+  });
+
   group('sentenceWithMatch', () {
     test('取出含關鍵詞的那一句', () {
       const content = '今天讀經很有收穫。神的愛真奇妙。要記得禱告。';

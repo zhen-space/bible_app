@@ -81,6 +81,26 @@ class SettingsScreen extends ConsumerWidget {
                 ref.read(bilingualProvider.notifier).toggle(),
           ),
           const Divider(),
+          const _SectionHeader('首頁'),
+          ListTile(
+            title: const Text('禱告事項區塊位置'),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(
+                      value: 'top', label: Text('繼續閱讀下面')),
+                  ButtonSegment(
+                      value: 'bottom', label: Text('整頁下面')),
+                ],
+                selected: {ref.watch(prayerPositionProvider)},
+                onSelectionChanged: (s) => ref
+                    .read(prayerPositionProvider.notifier)
+                    .set(s.first),
+              ),
+            ),
+          ),
+          const Divider(),
           const _SectionHeader('螢光筆命名'),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 4),

@@ -525,6 +525,40 @@ final faithMapProvider = FutureProvider<
   );
 });
 
+/// 全部禱告事項。
+final allPrayersProvider = FutureProvider<List<Prayer>>(
+    (ref) => ref.watch(databaseServiceProvider).getPrayers());
+
+/// 禱告事項區塊在首頁的位置（使用者自選）：'top'＝繼續閱讀下面、
+/// 'bottom'＝整頁下面。持久化到 SharedPreferences。
+class PrayerPositionNotifier extends Notifier<String> {
+  static const _key = 'prayer_position';
+
+  @override
+  String build() {
+    _load();
+    return 'bottom';
+  }
+
+  Future<void> _load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final v = prefs.getString(_key);
+      if (v == 'top' || v == 'bottom') state = v!;
+    } catch (_) {}
+  }
+
+  Future<void> set(String v) async {
+    state = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, v);
+  }
+}
+
+final prayerPositionProvider =
+    NotifierProvider<PrayerPositionNotifier, String>(
+        PrayerPositionNotifier.new);
+
 /// 各讀經計畫已完成天數（planId → 已完成天數），計畫列表用。
 final planDoneCountsProvider = FutureProvider<Map<String, int>>(
     (ref) => ref.watch(databaseServiceProvider).getPlanDoneCounts());
