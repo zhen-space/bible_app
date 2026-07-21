@@ -233,26 +233,36 @@ class AdminChapterScreen extends ConsumerWidget {
           Text('選一節編輯註解（📖 = 已有註解）',
               style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var v = 1; v <= verses.length; v++)
-                ActionChip(
-                  avatar: annotated.contains(v)
-                      ? const Icon(Icons.menu_book_outlined, size: 14)
-                      : null,
-                  label: Text('$v'),
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AdminVerseEditor(
-                          book: book, chapter: chapter, verse: v),
-                    ),
+          // 直接列出整章經文（節號＋整句），一眼看到要註解哪一句
+          for (var v = 1; v <= verses.length; v++)
+            Card(
+              margin: const EdgeInsets.symmetric(vertical: 3),
+              child: ListTile(
+                leading: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: annotated.contains(v)
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: Text('$v',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: annotated.contains(v)
+                              ? Colors.white
+                              : Theme.of(context).colorScheme.onSurface)),
+                ),
+                title: Text(verses[v - 1], style: const TextStyle(height: 1.5)),
+                trailing: annotated.contains(v)
+                    ? const Icon(Icons.menu_book_outlined, size: 18)
+                    : const Icon(Icons.edit_outlined, size: 18),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => AdminVerseEditor(
+                        book: book, chapter: chapter, verse: v),
                   ),
                 ),
-            ],
-          ),
+              ),
+            ),
         ],
       ),
     );
@@ -350,14 +360,26 @@ class _EditorScaffoldState extends ConsumerState<_EditorScaffold> {
               padding: const EdgeInsets.all(16),
               children: [
                 if (widget.contextText != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: Text(
-                      widget.contextText!,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(height: 1.6),
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Scrollbar(
+                      child: SingleChildScrollView(
+                        child: Text(
+                          widget.contextText!,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(height: 1.7),
+                        ),
+                      ),
                     ),
                   ),
                 for (final f in widget.fields) ...[
@@ -455,8 +477,14 @@ class AdminChapterEditor extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 整章經文（帶節號）當參考，寫導讀/分段時對照著看
+    final verses = book.chapters[chapter - 1];
+    final chapterText = [
+      for (var i = 0; i < verses.length; i++) '${i + 1} ${verses[i]}'
+    ].join('\n');
     return _EditorScaffold(
       title: '${book.name} $chapter · 章導讀',
+      contextText: chapterText,
       fields: const [
         _Field('summary', '段落大意整理', maxLines: 4),
         _Field('purpose', '目的', maxLines: 3),
