@@ -16,7 +16,6 @@ class AppTheme {
   static const _ink = Color(0xFF1C1C1E); // 黑字
   static const _cardBorder = Color(0xFFE4E8EE); // 白卡片在白底上的細邊
   static const _blueContainer = Color(0xFFE4F0F8); // 淺藍容器（章節格等）
-  static const _skyBg = Color(0xFFE7F1FA); // 天空藍底（白卡片浮在其上）
   static const _navy = Color(0xFF071726); // 深藍底
   static const _navyCard = Color(0xFF0E2438); // 深藍卡片
   static const _navyContainer = Color(0xFF16324B); // 深藍容器
@@ -64,7 +63,7 @@ class AppTheme {
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
-    scaffoldBackgroundColor: _skyBg, // 天空藍底（不是灰、不是白）
+    scaffoldBackgroundColor: Colors.white, // 整個白底
     iconTheme: const IconThemeData(color: _gold),
     cardTheme: CardThemeData(
       elevation: 0,
@@ -89,7 +88,7 @@ class AppTheme {
     listTileTheme: const ListTileThemeData(iconColor: _gold),
     dividerTheme: const DividerThemeData(color: _cardBorder, thickness: 1),
     bottomAppBarTheme: const BottomAppBarTheme(
-        color: _skyBg, elevation: 0, surfaceTintColor: Colors.transparent),
+        color: Colors.white, elevation: 0, surfaceTintColor: Colors.transparent),
   );
 
   static final ThemeData dark = ThemeData(
