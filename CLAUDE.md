@@ -22,7 +22,7 @@ Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引�
 - 狀態管理：Riverpod（`flutter_riverpod`，Notifier/FutureProvider）
 - 使用者資料：sqflite（存書籤/螢光筆/筆記/讀經紀錄/證道筆記/讀經計畫進度/禱告事項/刪除墓碑；**經文不進 DB**）
 - 經文來源：`assets/bible/cuv.json`（約 3.3MB，66 卷 31,104 節），啟動時載入記憶體，搜尋直接掃記憶體
-- 設定持久化：shared_preferences（主題、字級、閱讀位置）
+- 設定持久化：shared_preferences（主題、字級、閱讀位置含節、螢光筆命名、禱告位置）
 - Firebase：**已接（Web 先行）**。專案 `bible-app-c0eac`；`lib/firebase_options.dart` 只有 web 設定（iOS/Android 之後在 Mac 跑 `flutterfire configure` 覆蓋該檔）。Google 登入（popup）＋ Firestore 雲端備份：`services/sync_service.dart` 多表雙向 LWW 合併（bookmarks/highlights/notes/reading_log/sermon_notes/plan_progress/prayers→`users/{uid}/...`）。**已支援同步刪除（tombstone）**：`tombstones` 表記錄刪除，不變量＝同一筆資料「活資料」與「墓碑」互斥（刪除寫墓碑、新增/更新清墓碑）；sync 先合併墓碑→下載擋掉被刪→套用墓碑刪本地→上傳墓碑並刪雲端 doc。main() 裡 init 失敗不擋 App；未登入一切照常。**新資料表記得加進 sync service，刪除要記墓碑**。
 
 ## 目錄結構
@@ -136,8 +136,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   **新增寫入方法記得呼叫 `_mutated()`**。
 - **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
   各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
-- **長章渲染**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）；
-  段落模式是單一 Text.rich 維持原樣。
+- **長章渲染＋記住位置**：逐節模式用 `ScrollablePositionedList`（懶載入＋可精準
+  跳到某節＋回報頂端節號）。`lastRead` 存 book:chapter:**verse**，捲動時 debounce
+  更新頂端節，「繼續閱讀」用 initialVerse 還原到上次讀到的那一節。段落模式維持章層級。
 - **語音**：輸入用 `speech_to_text`、輸出用 `flutter_tts`，皆 zh-TW。
 
 ## 開發守則（歷史教訓）

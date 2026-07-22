@@ -52,6 +52,7 @@ class HomeScreen extends ConsumerWidget {
             _ContinueReadingCard(
               book: books[lastRead.bookId - 1],
               chapter: lastRead.chapter,
+              verse: lastRead.verse,
             ),
             const SizedBox(height: 12),
           ],
@@ -250,12 +251,14 @@ class _DailyVerseCard extends ConsumerWidget {
   }
 }
 
-/// 繼續閱讀卡。
+/// 繼續閱讀卡。點了回到上次「讀到的那一節」（不只是章頂）。
 class _ContinueReadingCard extends StatelessWidget {
   final Book book;
   final int chapter;
+  final int verse;
 
-  const _ContinueReadingCard({required this.book, required this.chapter});
+  const _ContinueReadingCard(
+      {required this.book, required this.chapter, required this.verse});
 
   @override
   Widget build(BuildContext context) {
@@ -264,11 +267,13 @@ class _ContinueReadingCard extends StatelessWidget {
       child: ListTile(
         leading: const Icon(Icons.auto_stories),
         title: Text('繼續閱讀：${book.name} 第 $chapter 章'),
+        subtitle: verse > 1 ? Text('上次讀到第 $verse 節') : null,
         trailing: const Icon(Icons.chevron_right),
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => ChapterScreen(bookId: book.id, chapter: chapter),
+            builder: (_) => ChapterScreen(
+                bookId: book.id, chapter: chapter, initialVerse: verse),
           ),
         ),
       ),

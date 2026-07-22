@@ -221,12 +221,14 @@ final englishReadyProvider = FutureProvider<bool>((ref) async {
   return true;
 });
 
-/// 上次閱讀位置（書卷+章），持久化。
-class LastReadNotifier extends Notifier<({int bookId, int chapter})?> {
+/// 上次閱讀位置（書卷+章+**捲到的那一節**），持久化。
+/// verse＝離開時螢幕頂端的節號，用來還原「讀到的畫面」而不只是章頂。
+class LastReadNotifier
+    extends Notifier<({int bookId, int chapter, int verse})?> {
   static const _key = 'last_read';
 
   @override
-  ({int bookId, int chapter})? build() {
+  ({int bookId, int chapter, int verse})? build() {
     _load();
     return null;
   }
@@ -237,20 +239,36 @@ class LastReadNotifier extends Notifier<({int bookId, int chapter})?> {
       final v = prefs.getString(_key);
       if (v != null) {
         final parts = v.split(':');
-        state = (bookId: int.parse(parts[0]), chapter: int.parse(parts[1]));
+        state = (
+          bookId: int.parse(parts[0]),
+          chapter: int.parse(parts[1]),
+          // 舊格式（book:chapter）沒有 verse，預設第 1 節
+          verse: parts.length > 2 ? int.parse(parts[2]) : 1,
+        );
       }
     } catch (_) {}
   }
 
-  Future<void> set(int bookId, int chapter) async {
-    state = (bookId: bookId, chapter: chapter);
+  /// 換章時呼叫（verse 預設 1）。
+  Future<void> set(int bookId, int chapter, [int verse = 1]) async {
+    state = (bookId: bookId, chapter: chapter, verse: verse);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, '$bookId:$chapter');
+    await prefs.setString(_key, '$bookId:$chapter:$verse');
+  }
+
+  /// 捲動時更新頂端節號（章沒變才更新，避免蓋掉剛換的章）。
+  Future<void> setVerse(int bookId, int chapter, int verse) async {
+    final s = state;
+    if (s == null || s.bookId != bookId || s.chapter != chapter) return;
+    if (s.verse == verse) return;
+    state = (bookId: bookId, chapter: chapter, verse: verse);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_key, '$bookId:$chapter:$verse');
   }
 }
 
 final lastReadProvider =
-    NotifierProvider<LastReadNotifier, ({int bookId, int chapter})?>(
+    NotifierProvider<LastReadNotifier, ({int bookId, int chapter, int verse})?>(
         LastReadNotifier.new);
 
 /// 某章的使用者標記（書籤/螢光筆/筆記），改動後 invalidate 重抓。
