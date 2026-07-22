@@ -186,7 +186,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: Text('${book.name} $_chapter'),
+            // 點標題開「選卷選章」（可切書卷）
+            title: InkWell(
+              onTap: () => _showBookChapterPicker(books),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(child: Text('${book.name} $_chapter')),
+                  const Icon(Icons.arrow_drop_down, size: 22),
+                ],
+              ),
+            ),
             actions: [
               IconButton(
                 icon: const Icon(Icons.search),
@@ -226,8 +236,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.list),
-                tooltip: '選章',
-                onPressed: () => _showChapterPicker(book),
+                tooltip: '選卷選章',
+                onPressed: () => _showBookChapterPicker(books),
               ),
             ],
           ),
@@ -330,7 +340,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   tooltip: '上一章',
                   onPressed: () => _turn(books, -1),
                 ),
-                Text('${book.name} 第 $_chapter 章'),
+                // 點中間開「選卷選章」（可切書卷、點章跳轉）
+                TextButton(
+                  onPressed: () => _showBookChapterPicker(books),
+                  child: Text('${book.name} 第 $_chapter 章',
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface)),
+                ),
                 IconButton(
                   icon: const Icon(Icons.chevron_right),
                   tooltip: '下一章',
@@ -344,31 +360,73 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     );
   }
 
-  void _showChapterPicker(Book book) {
+  /// 選卷選章：頂端可用 ‹ › 切換書卷（上一卷／下一卷），下面點章跳轉。
+  void _showBookChapterPicker(List<Book> books) {
+    var pickBookId = _bookId; // 目前展示哪一卷的章格（可與正在讀的不同）
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          // 注意：用 Wrap，不用 GridView（GridView 放進可捲動父層會出問題）
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (var c = 1; c <= book.chapterCount; c++)
-                ActionChip(
-                  label: Text('$c'),
-                  backgroundColor: c == _chapter
-                      ? Theme.of(ctx).colorScheme.primaryContainer
-                      : null,
-                  onPressed: () {
-                    Navigator.pop(ctx);
-                    _goTo(book.id, c);
-                  },
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) {
+          final b = books[pickBookId - 1];
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 書卷切換列
+                Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.chevron_left),
+                      tooltip: '上一卷',
+                      onPressed: pickBookId > 1
+                          ? () => setSheet(() => pickBookId -= 1)
+                          : null,
+                    ),
+                    Expanded(
+                      child: Text('${b.name}（${b.chapterCount} 章）',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(ctx).textTheme.titleMedium),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.chevron_right),
+                      tooltip: '下一卷',
+                      onPressed: pickBookId < books.length
+                          ? () => setSheet(() => pickBookId += 1)
+                          : null,
+                    ),
+                  ],
                 ),
-            ],
-          ),
-        ),
+                const Divider(height: 1),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    // 注意：用 Wrap，不用 GridView（GridView 放進可捲動父層會出問題）
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var c = 1; c <= b.chapterCount; c++)
+                          ActionChip(
+                            label: Text('$c'),
+                            backgroundColor:
+                                (b.id == _bookId && c == _chapter)
+                                    ? Theme.of(ctx)
+                                        .colorScheme
+                                        .primaryContainer
+                                    : null,
+                            onPressed: () {
+                              Navigator.pop(ctx);
+                              _goTo(b.id, c);
+                            },
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
