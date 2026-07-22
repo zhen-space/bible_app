@@ -136,9 +136,10 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   **新增寫入方法記得呼叫 `_mutated()`**。
 - **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
   各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
-- **長章渲染＋記住位置**：逐節模式用 `ScrollablePositionedList`（懶載入＋可精準
-  跳到某節＋回報頂端節號）。`lastRead` 存 book:chapter:**verse**，捲動時 debounce
-  更新頂端節，「繼續閱讀」用 initialVerse 還原到上次讀到的那一節。段落模式維持章層級。
+- **長章渲染＋記住位置**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）。
+  記住位置走 `ScrollController` 位移：`lastRead` 存 book:chapter:**offset**，捲動時
+  debounce 存 offset，「繼續閱讀」用 initialOffset 還原捲動位置（首屏後 jumpTo）。
+  ⚠️ 曾試 `scrollable_positioned_list` 但在 iOS Safari 首屏渲染空白（民數記17 實測），已移除。
 - **語音**：輸入用 `speech_to_text`、輸出用 `flutter_tts`，皆 zh-TW。
 
 ## 開發守則（歷史教訓）

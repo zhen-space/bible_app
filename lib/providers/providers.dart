@@ -221,14 +221,15 @@ final englishReadyProvider = FutureProvider<bool>((ref) async {
   return true;
 });
 
-/// 上次閱讀位置（書卷+章+**捲到的那一節**），持久化。
-/// verse＝離開時螢幕頂端的節號，用來還原「讀到的畫面」而不只是章頂。
+/// 上次閱讀位置（書卷+章+**捲動位移**），持久化。
+/// offset＝離開時的捲動像素位置，用來還原「讀到的畫面」而不只是章頂。
+/// 用 offset（而非節號）是因為它對逐節／段落兩種模式都適用、且渲染穩定。
 class LastReadNotifier
-    extends Notifier<({int bookId, int chapter, int verse})?> {
+    extends Notifier<({int bookId, int chapter, double offset})?> {
   static const _key = 'last_read';
 
   @override
-  ({int bookId, int chapter, int verse})? build() {
+  ({int bookId, int chapter, double offset})? build() {
     _load();
     return null;
   }
@@ -242,34 +243,32 @@ class LastReadNotifier
         state = (
           bookId: int.parse(parts[0]),
           chapter: int.parse(parts[1]),
-          // 舊格式（book:chapter）沒有 verse，預設第 1 節
-          verse: parts.length > 2 ? int.parse(parts[2]) : 1,
+          // 舊格式（book:chapter）沒有 offset，預設 0（章頂）
+          offset: parts.length > 2 ? (double.tryParse(parts[2]) ?? 0) : 0,
         );
       }
     } catch (_) {}
   }
 
-  /// 換章時呼叫（verse 預設 1）。
-  Future<void> set(int bookId, int chapter, [int verse = 1]) async {
-    state = (bookId: bookId, chapter: chapter, verse: verse);
+  /// 換章時呼叫（offset 預設 0＝章頂）。
+  Future<void> set(int bookId, int chapter, [double offset = 0]) async {
+    state = (bookId: bookId, chapter: chapter, offset: offset);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, '$bookId:$chapter:$verse');
+    await prefs.setString(_key, '$bookId:$chapter:${offset.toStringAsFixed(1)}');
   }
 
-  /// 捲動時更新頂端節號（章沒變才更新，避免蓋掉剛換的章）。
-  Future<void> setVerse(int bookId, int chapter, int verse) async {
+  /// 捲動時更新位移（章沒變才更新，避免蓋掉剛換的章）。
+  Future<void> setOffset(int bookId, int chapter, double offset) async {
     final s = state;
     if (s == null || s.bookId != bookId || s.chapter != chapter) return;
-    if (s.verse == verse) return;
-    state = (bookId: bookId, chapter: chapter, verse: verse);
+    state = (bookId: bookId, chapter: chapter, offset: offset);
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, '$bookId:$chapter:$verse');
+    await prefs.setString(_key, '$bookId:$chapter:${offset.toStringAsFixed(1)}');
   }
 }
 
-final lastReadProvider =
-    NotifierProvider<LastReadNotifier, ({int bookId, int chapter, int verse})?>(
-        LastReadNotifier.new);
+final lastReadProvider = NotifierProvider<LastReadNotifier,
+    ({int bookId, int chapter, double offset})?>(LastReadNotifier.new);
 
 /// 某章的使用者標記（書籤/螢光筆/筆記），改動後 invalidate 重抓。
 final chapterMarksProvider = FutureProvider.family<ChapterMarks,

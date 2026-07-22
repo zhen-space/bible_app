@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -20,14 +19,14 @@ class ChapterScreen extends ConsumerStatefulWidget {
   final int bookId;
   final int chapter;
 
-  /// 進來時要捲到的節（「繼續閱讀」帶上次讀到的節；一般進入預設 1＝章頂）。
-  final int initialVerse;
+  /// 進來時要還原到的捲動位移（「繼續閱讀」帶上次的 offset；一般進入 0＝章頂）。
+  final double initialOffset;
 
   const ChapterScreen({
     super.key,
     required this.bookId,
     required this.chapter,
-    this.initialVerse = 1,
+    this.initialOffset = 0,
   });
 
   @override
@@ -39,11 +38,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   late int _chapter;
   TtsController? _ttsCtrl;
 
-  // 逐節模式用：可跳到指定節、可回報目前在看哪節（記住閱讀位置）
-  final ItemScrollController _itemScrollController = ItemScrollController();
-  final ItemPositionsListener _itemPositionsListener =
-      ItemPositionsListener.create();
-  int _pendingInitialVerse = 1; // 這一章要落在的起始節（換章時歸 1）
+  // 記住閱讀位置：ScrollController 存/還原捲動位移（逐節、段落兩模式通用，渲染穩定）
+  final ScrollController _scroll = ScrollController();
+  double? _restoreOffset; // 本章要還原到的位移（套用一次後清空）
   Timer? _savePosDebounce;
 
   @override
@@ -51,14 +48,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     super.initState();
     _bookId = widget.bookId;
     _chapter = widget.chapter;
-    _pendingInitialVerse = widget.initialVerse;
-    _itemPositionsListener.itemPositions.addListener(_onScrollPositions);
+    _restoreOffset = widget.initialOffset > 0 ? widget.initialOffset : null;
+    _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ttsCtrl = ref.read(ttsProvider.notifier);
-      // 記住進來的位置（含起始節）
       ref
           .read(lastReadProvider.notifier)
-          .set(_bookId, _chapter, widget.initialVerse);
+          .set(_bookId, _chapter, widget.initialOffset);
       _logRead();
       // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
       ref.read(bibleRepositoryProvider).loadEnglish();
@@ -68,28 +64,30 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   @override
   void dispose() {
     _savePosDebounce?.cancel();
-    _itemPositionsListener.itemPositions.removeListener(_onScrollPositions);
+    _scroll.removeListener(_onScroll);
+    _scroll.dispose();
     // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref）
     _ttsCtrl?.stop();
     super.dispose();
   }
 
-  /// 捲動時算出螢幕頂端的節，debounce 後存進 lastRead（記住讀到的畫面）。
-  void _onScrollPositions() {
-    final positions = _itemPositionsListener.itemPositions.value;
-    if (positions.isEmpty) return;
-    // 頂端可見項＝仍在畫面內（trailingEdge>0）中 index 最小者
-    final top = positions
-        .where((p) => p.itemTrailingEdge > 0)
-        .fold<int?>(null, (min, p) => min == null || p.index < min ? p.index : min);
-    if (top == null) return;
-    final verse = top + 1; // index → 節號
+  /// 捲動時 debounce 存位移（記住讀到的畫面）。
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final offset = _scroll.offset;
     _savePosDebounce?.cancel();
     _savePosDebounce = Timer(const Duration(milliseconds: 400), () {
-      ref
-          .read(lastReadProvider.notifier)
-          .setVerse(_bookId, _chapter, verse);
+      ref.read(lastReadProvider.notifier).setOffset(_bookId, _chapter, offset);
     });
+  }
+
+  /// 首屏後把捲動位置還原到上次讀到的地方（只做一次）。
+  void _maybeRestore() {
+    final target = _restoreOffset;
+    if (target == null || !_scroll.hasClients) return;
+    _restoreOffset = null;
+    final max = _scroll.position.maxScrollExtent;
+    _scroll.jumpTo(target.clamp(0, max));
   }
 
   Future<void> _logRead() async {
@@ -104,11 +102,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   void _goTo(int bookId, int chapter) {
     ref.read(ttsProvider.notifier).stop(); // 換章先停止朗讀
-    _pendingInitialVerse = 1; // 換章從頂端開始
+    _restoreOffset = null; // 換章從頂端開始
     setState(() {
       _bookId = bookId;
       _chapter = chapter;
     });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
     ref.read(lastReadProvider.notifier).set(bookId, chapter);
     _logRead();
   }
@@ -242,18 +241,20 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             // 進到畫面的節，捲動不卡頓（白板「多線程渲染優化」的 Flutter 正解——
             // UI 單執行緒下靠 lazy build 而非開執行緒）。
             child: mode == ReadingMode.verse
-                // ScrollablePositionedList：懶載入＋可精準跳到某節＋回報
-                // 目前在看哪節（記住「讀到的畫面」而不只是章）。
-                ? ScrollablePositionedList.builder(
+                // 逐節模式用 builder 懶載入：超長章（詩119 有 176 節）只建
+                // 進到畫面的節，捲動不卡頓。位置還原走 ScrollController offset。
+                ? ListView.builder(
                     key: PageStorageKey('$_bookId-$_chapter'),
-                    itemScrollController: _itemScrollController,
-                    itemPositionsListener: _itemPositionsListener,
-                    initialScrollIndex:
-                        (_pendingInitialVerse - 1).clamp(0, verses.length - 1),
+                    controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
                     itemCount:
                         verses.length + (bookSummary != null ? 1 : 0),
                     itemBuilder: (context, i) {
+                      // 首個 item 建好後（有 clients）嘗試還原捲動位置
+                      if (i == 0) {
+                        WidgetsBinding.instance
+                            .addPostFrameCallback((_) => _maybeRestore());
+                      }
                       if (i == verses.length) {
                         return _BookSummaryCard(
                             bookName: book.name, text: bookSummary!);
@@ -284,9 +285,15 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   )
                 : ListView(
                     key: PageStorageKey('$_bookId-$_chapter'),
+                    controller: _scroll,
                     // 左右留白、上下寬鬆，讀起來不擁擠
                     padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
                     children: [
+                      Builder(builder: (_) {
+                        WidgetsBinding.instance
+                            .addPostFrameCallback((_) => _maybeRestore());
+                        return const SizedBox.shrink();
+                      }),
                       _ParagraphChapter(
                         verses: verses,
                         english: englishReady
