@@ -38,42 +38,101 @@ class PrayersScreen extends ConsumerWidget {
               ),
             )
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
               children: [
-                for (final cat in byCategory.entries) ...[
-                  Padding(
-                    padding: const EdgeInsets.only(top: 14, bottom: 6),
-                    child: Text(cat.key,
-                        style: Theme.of(context)
-                            .textTheme
-                            .titleMedium
-                            ?.copyWith(
-                                color: scheme.primary,
-                                fontWeight: FontWeight.w700)),
-                  ),
-                  for (final sub in cat.value.entries) ...[
-                    if (sub.key.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4, bottom: 2),
-                        child: Text(sub.key,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(color: scheme.secondary)),
-                      ),
-                    for (final p in sub.value)
-                      Card(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        child: ListTile(
-                          leading: Icon(Icons.volunteer_activism_outlined,
-                              color: scheme.secondary),
-                          title: Text(p.content,
-                              style: const TextStyle(height: 1.5)),
-                          onTap: () => showPrayerEditor(context, ref, p),
+                // 每個「分類」＝一張獨立卡片；子分類、內容在卡內縮排巢狀
+                for (final cat in byCategory.entries)
+                  Card(
+                    margin: const EdgeInsets.only(bottom: 14),
+                    clipBehavior: Clip.antiAlias,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // 分類標題條（實心底色，最顯眼那層）
+                        Container(
+                          color: scheme.primary,
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.folder_outlined,
+                                  size: 18, color: Colors.white),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(cat.key,
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 16)),
+                              ),
+                              Text(
+                                  '${cat.value.values.fold<int>(0, (a, b) => a + b.length)} 則',
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
                         ),
-                      ),
-                  ],
-                ],
+                        // 子分類 + 內容
+                        for (final sub in cat.value.entries)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (sub.key.isNotEmpty)
+                                Container(
+                                  width: double.infinity,
+                                  color: scheme.primary.withValues(alpha: 0.08),
+                                  padding: const EdgeInsets.fromLTRB(
+                                      16, 6, 16, 6),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.subdirectory_arrow_right,
+                                          size: 16, color: scheme.secondary),
+                                      const SizedBox(width: 6),
+                                      Text(sub.key,
+                                          style: TextStyle(
+                                              color: scheme.secondary,
+                                              fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
+                                ),
+                              for (final p in sub.value)
+                                InkWell(
+                                  onTap: () =>
+                                      showPrayerEditor(context, ref, p),
+                                  child: Padding(
+                                    // 有子分類→再縮排；沒有→只縮一層
+                                    padding: EdgeInsets.fromLTRB(
+                                        sub.key.isNotEmpty ? 34 : 16,
+                                        10,
+                                        16,
+                                        10),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 6),
+                                          child: Icon(Icons.circle,
+                                              size: 6,
+                                              color: scheme.secondary),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(p.content,
+                                              style: const TextStyle(
+                                                  height: 1.5)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              const Divider(height: 1),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
               ],
             ),
     );
