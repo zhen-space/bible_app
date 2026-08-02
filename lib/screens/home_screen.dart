@@ -10,6 +10,7 @@ import 'chapter_screen.dart';
 import 'knowledge_screen.dart';
 import 'prayers_screen.dart';
 import 'qa_screen.dart';
+import 'todos_screen.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'topics_screen.dart';
@@ -122,6 +123,8 @@ class HomeScreen extends ConsumerWidget {
               onTap: () => _push(context, const KnowledgeScreen()),
             ),
           ),
+          const SizedBox(height: 12),
+          const _TodoSection(),
           const SizedBox(height: 16),
           const _ReadingProgressBar(),
           const _RecentNotesSection(),
@@ -476,6 +479,95 @@ class _PrayerSection extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text('共 ${prayers.length} 則',
+                        style: Theme.of(context).textTheme.labelSmall),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 首頁「信仰生活代辦」區塊：預覽未完成的幾項（可直接打勾），點看全部進完整頁。
+class _TodoSection extends ConsumerWidget {
+  const _TodoSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final todos = ref.watch(allTodosProvider).value ?? const <Todo>[];
+    final scheme = Theme.of(context).colorScheme;
+    final undone = todos.where((t) => !t.done).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(children: [
+                Icon(Icons.checklist, size: 18, color: scheme.secondary),
+                const SizedBox(width: 6),
+                Text('信仰生活代辦',
+                    style: Theme.of(context).textTheme.titleSmall),
+              ]),
+              TextButton(
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TodosScreen()),
+                ),
+                child: Text(todos.isEmpty ? '新增' : '看全部'),
+              ),
+            ],
+          ),
+        ),
+        if (todos.isEmpty)
+          Card(
+            margin: EdgeInsets.zero,
+            child: ListTile(
+              leading: Icon(Icons.add_task, color: scheme.secondary),
+              title: const Text('列出你要做的信仰生活事項'),
+              subtitle: const Text('例：讀完一卷書、關懷一位弟兄、背一節經文'),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TodosScreen()),
+              ),
+            ),
+          )
+        else
+          Card(
+            margin: EdgeInsets.zero,
+            child: Column(
+              children: [
+                if (undone.isEmpty)
+                  const ListTile(
+                    dense: true,
+                    leading: Icon(Icons.celebration_outlined),
+                    title: Text('都完成了！'),
+                  )
+                else
+                  for (final t in undone.take(4))
+                    CheckboxListTile(
+                      dense: true,
+                      value: false,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      onChanged: (_) async {
+                        await ref
+                            .read(databaseServiceProvider)
+                            .saveTodo(t.copyWith(done: true));
+                        ref.invalidate(allTodosProvider);
+                      },
+                      title: Text(t.content,
+                          maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle:
+                          t.category.isEmpty ? null : Text(t.category),
+                    ),
+                if (undone.length > 4)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('還有 ${undone.length - 4} 項未完成',
                         style: Theme.of(context).textTheme.labelSmall),
                   ),
               ],

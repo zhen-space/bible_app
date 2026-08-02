@@ -546,6 +546,10 @@ final faithMapProvider = FutureProvider<
 final allPrayersProvider = FutureProvider<List<Prayer>>(
     (ref) => ref.watch(databaseServiceProvider).getPrayers());
 
+/// 全部信仰生活代辦事項。
+final allTodosProvider = FutureProvider<List<Todo>>(
+    (ref) => ref.watch(databaseServiceProvider).getTodos());
+
 /// 禱告事項區塊在首頁的位置（使用者自選）：'top'＝繼續閱讀下面、
 /// 'bottom'＝整頁下面。持久化到 SharedPreferences。
 class PrayerPositionNotifier extends Notifier<String> {

@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 7;
+  static const _dbVersion = 8;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -80,6 +80,21 @@ class DatabaseService {
     await _createPlanProgressTable(db); // v5
     await _createTombstonesTable(db); // v6
     await _createPrayersTable(db); // v7
+    await _createTodosTable(db); // v8
+  }
+
+  /// 信仰生活代辦事項（首頁區塊）：分類/內容/完成狀態，使用者自行增刪，**可打勾**。
+  Future<void> _createTodosTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE todos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        done INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
   }
 
   /// 禱告事項（首頁區塊）：分類/子分類/內容，使用者自行增刪，不設打勾。
@@ -191,6 +206,9 @@ class DatabaseService {
     }
     if (oldV < 7) {
       await _createPrayersTable(db);
+    }
+    if (oldV < 8) {
+      await _createTodosTable(db);
     }
   }
 
@@ -647,6 +665,45 @@ class DatabaseService {
     _mutated();
   }
 
+  // ---- 信仰生活代辦事項 ----
+
+  Future<List<Todo>> getTodos() async {
+    final db = await database;
+    final rows = await db.query('todos',
+        orderBy: 'done, category, created_at DESC');
+    return rows.map(Todo.fromMap).toList();
+  }
+
+  Future<int> saveTodo(Todo t) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (t.id == null) {
+      final m = t.toMap()
+        ..['created_at'] = now
+        ..['updated_at'] = now;
+      final id = await db.insert('todos', m);
+      await _untomb(db, 'todo', 't$now');
+      _mutated();
+      return id;
+    }
+    await db.update('todos', t.toMap()..['updated_at'] = now,
+        where: 'id = ?', whereArgs: [t.id]);
+    await _untomb(db, 'todo', 't${t.createdAt}');
+    _mutated();
+    return t.id!;
+  }
+
+  Future<void> deleteTodo(int id) async {
+    final db = await database;
+    final rows = await db.query('todos',
+        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+    await db.delete('todos', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      await _tombstone(db, 'todo', 't${rows.first['created_at']}');
+    }
+    _mutated();
+  }
+
   // ---- 刪除墓碑（同步刪除）----
 
   Future<List<Map<String, dynamic>>> getAllTombstones() async {
@@ -718,6 +775,14 @@ class DatabaseService {
         if (createdAt == null) return 0;
         removed = await db.delete(
           'prayers',
+          where: 'created_at = ? AND updated_at <= ?',
+          whereArgs: [createdAt, deletedAt],
+        );
+      case 'todo':
+        final createdAt = int.tryParse(ref.replaceFirst('t', ''));
+        if (createdAt == null) return 0;
+        removed = await db.delete(
+          'todos',
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
         );

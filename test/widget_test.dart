@@ -228,6 +228,24 @@ void main() {
     });
   });
 
+  group('Todo round-trip', () {
+    test('toMap/fromMap 保留分類/內容/完成', () {
+      const t = Todo(
+        id: 3,
+        category: '靈修',
+        content: '讀完馬可福音',
+        done: true,
+        createdAt: 7,
+        updatedAt: 8,
+      );
+      final r = Todo.fromMap(t.toMap());
+      expect(r.category, '靈修');
+      expect(r.content, '讀完馬可福音');
+      expect(r.done, true);
+      expect(r.copyWith(done: false).done, false);
+    });
+  });
+
   group('sentenceWithMatch', () {
     test('取出含關鍵詞的那一句', () {
       const content = '今天讀經很有收穫。神的愛真奇妙。要記得禱告。';

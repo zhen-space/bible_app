@@ -223,6 +223,52 @@ class Prayer {
       };
 }
 
+/// 信仰生活代辦事項（首頁區塊）：分類/內容/完成狀態，**可打勾**（與禱告不同）。
+class Todo {
+  final int? id;
+  final String category; // 分類（例：靈修、服事、關懷）
+  final String content;
+  final bool done;
+  final int createdAt;
+  final int updatedAt;
+
+  const Todo({
+    this.id,
+    this.category = '',
+    this.content = '',
+    this.done = false,
+    this.createdAt = 0,
+    this.updatedAt = 0,
+  });
+
+  Todo copyWith({bool? done}) => Todo(
+        id: id,
+        category: category,
+        content: content,
+        done: done ?? this.done,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+
+  factory Todo.fromMap(Map<String, dynamic> m) => Todo(
+        id: m['id'] as int?,
+        category: m['category'] as String? ?? '',
+        content: m['content'] as String? ?? '',
+        done: (m['done'] as int? ?? 0) == 1,
+        createdAt: m['created_at'] as int? ?? 0,
+        updatedAt: m['updated_at'] as int? ?? 0,
+      );
+
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'category': category,
+        'content': content,
+        'done': done ? 1 : 0,
+        'created_at': createdAt,
+        'updated_at': updatedAt,
+      };
+}
+
 /// 主日／證道筆記（結構化表單，白板「五、個人信仰整理」）。
 class SermonNote {
   final int? id;
