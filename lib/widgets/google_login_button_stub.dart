@@ -4,3 +4,6 @@ import 'package:flutter/material.dart';
 Widget googleLoginButton() => const SizedBox.shrink();
 
 bool get gisSupported => false;
+
+/// 與 web 版同名符號（非網頁不會有 GIS 錯誤）。
+final ValueNotifier<String?> googleLoginError = ValueNotifier<String?>(null);

@@ -153,12 +153,26 @@ class _AccountSection extends ConsumerWidget {
           if (gisSupported) ...[
             // 網頁版：Google 官方登入按鈕（GIS）
             googleLoginButton(),
-            // 備用：同網域轉址登入（官方按鈕視窗打不開/空白時用這個）
+            // GIS 換憑證若失敗，把錯誤顯示出來（不再靜默看起來像空白）
+            ValueListenableBuilder<String?>(
+              valueListenable: googleLoginError,
+              builder: (context, err, _) => err == null
+                  ? const SizedBox.shrink()
+                  : Padding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Text(err,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error,
+                              fontSize: 13)),
+                    ),
+            ),
+            // 備用：signInWithPopup（官方按鈕視窗打不開/空白時用這個）
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextButton(
                 onPressed: notifier.signIn,
-                child: const Text('上面的按鈕沒反應？改用備用方式登入'),
+                child: const Text('上面的按鈕沒反應？改用備用視窗登入'),
               ),
             ),
           ] else

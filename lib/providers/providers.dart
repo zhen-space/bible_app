@@ -655,18 +655,18 @@ class SyncStatusNotifier extends Notifier<String?> {
 
   bool _signingIn = false; // 防止連點
 
-  /// Google 登入。網頁用「轉址」流程：authDomain 已設為本站網域、
-  /// /__/auth/* 由 Render 代理回 Firebase——全程同網域，iOS Safari 也可靠。
-  /// 轉址回來後由 build() 裡的 auth 監聽自動觸發同步。
+  /// Google 登入。網頁用 `signInWithPopup`（自帶視窗、會自己關，
+  /// 比 signInWithRedirect 穩定——轉址常在跨網域儲存受限時掉進空白頁）。
+  /// 官方 GIS 按鈕是主要路徑，這個是備用；兩者成功後都由 build() 的
+  /// auth 監聽自動觸發同步。
   Future<void> signIn() async {
     if (_signingIn) return;
     _signingIn = true;
-    state = '前往 Google 登入…';
+    state = '開啟 Google 登入視窗…';
     try {
       if (kIsWeb) {
-        await FirebaseAuth.instance
-            .signInWithRedirect(GoogleAuthProvider());
-        // 頁面即將整頁轉址離開；回來時已是登入狀態
+        await FirebaseAuth.instance.signInWithPopup(GoogleAuthProvider());
+        state = '登入成功，同步中…';
       } else {
         await FirebaseAuth.instance
             .signInWithProvider(GoogleAuthProvider());

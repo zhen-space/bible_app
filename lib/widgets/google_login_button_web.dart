@@ -12,6 +12,10 @@ const _webClientId =
 
 bool get gisSupported => true;
 
+/// GIS 官方按鈕登入的狀態／錯誤（讓「換 Firebase 憑證」失敗不再靜默，
+/// 設定頁會顯示出來；成功時清空）。stub 版有同名符號。
+final ValueNotifier<String?> googleLoginError = ValueNotifier<String?>(null);
+
 Future<void>? _initFuture;
 bool _listening = false;
 
@@ -22,14 +26,24 @@ Future<void> _ensureInit() {
     GoogleSignIn.instance.authenticationEvents.listen((event) async {
       if (event is GoogleSignInAuthenticationEventSignIn) {
         final idToken = event.user.authentication.idToken;
-        if (idToken != null) {
+        if (idToken == null) {
+          googleLoginError.value = '沒有拿到 Google idToken，請重試或改用備用登入。';
+          return;
+        }
+        try {
+          googleLoginError.value = '登入中…';
           // 換成 Firebase 登入（authStateChanges 會觸發自動同步）
           await FirebaseAuth.instance.signInWithCredential(
             GoogleAuthProvider.credential(idToken: idToken),
           );
+          googleLoginError.value = null; // 成功
+        } catch (e) {
+          googleLoginError.value = '換 Firebase 憑證失敗：$e';
         }
       }
-    }, onError: (_) {});
+    }, onError: (e) {
+      googleLoginError.value = 'Google 登入錯誤：$e';
+    });
   }
   return _initFuture!;
 }
