@@ -20,7 +20,15 @@ Future<void>? _initFuture;
 bool _listening = false;
 
 Future<void> _ensureInit() {
-  _initFuture ??= GoogleSignIn.instance.initialize(clientId: _webClientId);
+  _initFuture ??= _initializeGoogleSignIn();
+  return _initFuture!;
+}
+
+Future<void> _initializeGoogleSignIn() async {
+  // google_sign_in 7.x 規定 initialize 完成前不能呼叫任何其他 API，
+  // 包括 authenticationEvents。太早訂閱會讓網頁登入事件不穩定。
+  await GoogleSignIn.instance.initialize(clientId: _webClientId);
+
   if (!_listening) {
     _listening = true;
     GoogleSignIn.instance.authenticationEvents.listen((event) async {
@@ -45,7 +53,6 @@ Future<void> _ensureInit() {
       googleLoginError.value = 'Google 登入錯誤：$e';
     });
   }
-  return _initFuture!;
 }
 
 Widget googleLoginButton() => const _GisButton();
