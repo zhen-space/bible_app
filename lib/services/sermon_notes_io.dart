@@ -19,8 +19,6 @@ const _labelToField = {
   '感想': 'reflection',
 };
 
-const _whoOptions = {'神', '聖子', '聖靈', '耶穌'};
-
 String _fmtDate(int millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis);
   return '${d.year}/${d.month.toString().padLeft(2, '0')}/'
@@ -93,13 +91,12 @@ List<SermonNote> parseSermonNotes(String text) {
     String val(String k) => (m[k]?.join('\n') ?? '').trim();
     final hasAny = _labelToField.values.any((k) => val(k).isNotEmpty);
     if (!hasAny) return;
-    final who = val('who');
     notes.add(SermonNote(
       date: _parseDate(val('date')) ?? now,
       title: val('title'),
       scripture: val('scripture'),
       content: val('content'),
-      trinityWho: _whoOptions.contains(who) ? who : '',
+      trinityWho: val('who'), // 自填分類，不再限定固定選項
       trinityWord: val('word'),
       practice: val('practice'),
       reflection: val('reflection'),

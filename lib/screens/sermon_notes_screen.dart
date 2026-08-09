@@ -231,20 +231,20 @@ class SermonNoteEditor extends ConsumerStatefulWidget {
 class _SermonNoteEditorState extends ConsumerState<SermonNoteEditor> {
   late final Map<String, TextEditingController> _c;
   late int _date;
-  late String _who;
 
-  static const _whoOptions = ['', '神', '聖子', '聖靈', '耶穌'];
+  /// 分類快速點選捷徑（可自填其他值）。
+  static const _whoShortcuts = ['神', '聖子', '聖靈', '耶穌'];
 
   @override
   void initState() {
     super.initState();
     final e = widget.existing;
     _date = e?.date ?? DateTime.now().millisecondsSinceEpoch;
-    _who = e?.trinityWho ?? '';
     _c = {
       'title': TextEditingController(text: e?.title ?? ''),
       'scripture': TextEditingController(text: e?.scripture ?? ''),
       'content': TextEditingController(text: e?.content ?? ''),
+      'who': TextEditingController(text: e?.trinityWho ?? ''),
       'trinityWord': TextEditingController(text: e?.trinityWord ?? ''),
       'practice': TextEditingController(text: e?.practice ?? ''),
       'reflection': TextEditingController(text: e?.reflection ?? ''),
@@ -268,7 +268,7 @@ class _SermonNoteEditorState extends ConsumerState<SermonNoteEditor> {
       title: _c['title']!.text.trim(),
       scripture: _c['scripture']!.text.trim(),
       content: _c['content']!.text.trim(),
-      trinityWho: _who,
+      trinityWho: _c['who']!.text.trim(),
       trinityWord: _c['trinityWord']!.text.trim(),
       practice: _c['practice']!.text.trim(),
       reflection: _c['reflection']!.text.trim(),
@@ -333,23 +333,22 @@ class _SermonNoteEditorState extends ConsumerState<SermonNoteEditor> {
           _field('title', '主題'),
           _field('scripture', '經文（例：約 3:16）'),
           _field('content', '筆記', maxLines: 6),
-          const SizedBox(height: 8),
-          Text('神／聖子／聖靈／耶穌的話',
+          const SizedBox(height: 12),
+          Text('祂的話・分類（自填，可點下方快選）',
               style: Theme.of(context).textTheme.labelLarge),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 8,
             children: [
-              for (final w in _whoOptions)
-                ChoiceChip(
-                  label: Text(w.isEmpty ? '未選' : w),
-                  selected: _who == w,
-                  onSelected: (_) => setState(() => _who = w),
+              for (final w in _whoShortcuts)
+                ActionChip(
+                  label: Text(w),
+                  onPressed: () => setState(() => _c['who']!.text = w),
                 ),
             ],
           ),
-          const SizedBox(height: 8),
-          _field('trinityWord', '祂的話', maxLines: 3),
+          _field('who', '分類（例：神／聖子／聖靈／耶穌，或自訂）'),
+          _field('trinityWord', '祂的話（內容）', maxLines: 3),
           _field('practice', '實踐', maxLines: 3),
           _field('reflection', '感想', maxLines: 3),
           const SizedBox(height: 80),

@@ -55,17 +55,17 @@ void main() {
       expect(parsed.map((e) => e.title), ['A', 'B']);
     });
 
-    test('無效位格會被清空', () {
+    test('分類為自填，任何文字都保留', () {
       const text = '''
 #### 主題
 測試
 #### 位格
-天使
+牧師的話
 ---
 ''';
       final parsed = parseSermonNotes(text);
       expect(parsed, hasLength(1));
-      expect(parsed.first.trinityWho, '');
+      expect(parsed.first.trinityWho, '牧師的話');
     });
 
     test('認不出格式回空陣列', () {
