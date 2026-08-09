@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/download_stub.dart'
+    if (dart.library.js_interop) '../services/download_web.dart';
+import '../services/sermon_notes_io.dart';
 
 String _fmtDate(int millis) {
   final d = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -17,7 +21,31 @@ class SermonNotesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final notesAsync = ref.watch(allSermonNotesProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('主日・證道筆記')),
+      appBar: AppBar(
+        title: const Text('主日・證道筆記'),
+        actions: [
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.ios_share),
+            tooltip: '匯入／匯出',
+            onSelected: (v) {
+              if (v == 'export_copy') _exportCopy(context, ref);
+              if (v == 'export_file') _exportFile(context, ref);
+              if (v == 'import') _import(context, ref);
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                  value: 'export_copy', child: Text('匯出：複製文字')),
+              if (canPickFile)
+                const PopupMenuItem(
+                    value: 'export_file', child: Text('匯出：下載檔案')),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                  value: 'import',
+                  child: Text(canPickFile ? '匯入：從檔案／貼上' : '匯入：貼上文字')),
+            ],
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         icon: const Icon(Icons.add),
         label: const Text('新增'),
@@ -58,6 +86,136 @@ class SermonNotesScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// 匯出：把全部證道筆記整理成 Markdown 複製到剪貼簿（各平台都通）。
+Future<void> _exportCopy(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final notes = await ref.read(allSermonNotesProvider.future);
+    if (notes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('還沒有筆記可匯出')));
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: sermonNotesToText(notes)));
+    messenger.showSnackBar(
+        SnackBar(content: Text('已複製 ${notes.length} 則筆記')));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+  }
+}
+
+/// 匯出：下載成 .md 檔（網頁）。之後可原樣匯回，或自己編輯後匯入。
+Future<void> _exportFile(BuildContext context, WidgetRef ref) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final notes = await ref.read(allSermonNotesProvider.future);
+    if (notes.isEmpty) {
+      messenger.showSnackBar(const SnackBar(content: Text('還沒有筆記可匯出')));
+      return;
+    }
+    final ok = downloadTextFile(
+        '證道筆記.md', 'text/markdown', sermonNotesToText(notes));
+    messenger.showSnackBar(SnackBar(
+        content: Text(ok ? '已下載 證道筆記.md' : '此平台不支援下載，請改用「複製文字」')));
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+  }
+}
+
+/// 匯入：從檔案（網頁）或貼上文字取得內容 → 解析成筆記格式 → 確認後新增。
+Future<void> _import(BuildContext context, WidgetRef ref) async {
+  String? text;
+  if (canPickFile) {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.upload_file),
+              title: const Text('選擇檔案（.txt／.md）'),
+              onTap: () => Navigator.pop(ctx, 'file'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.content_paste),
+              title: const Text('貼上文字'),
+              onTap: () => Navigator.pop(ctx, 'paste'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    if (choice == 'file') {
+      text = await pickTextFile();
+    } else if (context.mounted) {
+      text = await _pasteDialog(context);
+    }
+  } else {
+    text = await _pasteDialog(context);
+  }
+  if (text == null || text.trim().isEmpty || !context.mounted) return;
+
+  final parsed = parseSermonNotes(text);
+  final messenger = ScaffoldMessenger.of(context);
+  if (parsed.isEmpty) {
+    messenger.showSnackBar(const SnackBar(
+        content: Text('讀不到符合格式的筆記。請用「匯出」下載的格式，或每則含 #### 主題／日期…等小標。')));
+    return;
+  }
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('確認匯入'),
+      content: Text('將新增 ${parsed.length} 則證道筆記（不會覆蓋現有筆記）。'),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('匯入')),
+      ],
+    ),
+  );
+  if (confirm != true) return;
+  final db = ref.read(databaseServiceProvider);
+  for (final n in parsed) {
+    await db.saveSermonNote(n);
+  }
+  ref.invalidate(allSermonNotesProvider);
+  ref.invalidate(statsProvider);
+  messenger.showSnackBar(SnackBar(content: Text('已匯入 ${parsed.length} 則筆記')));
+}
+
+/// 貼上文字的輸入對話框（手機主要靠這個匯入）。
+Future<String?> _pasteDialog(BuildContext context) {
+  final controller = TextEditingController();
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('貼上筆記文字'),
+      content: TextField(
+        controller: controller,
+        maxLines: 10,
+        minLines: 6,
+        autofocus: true,
+        decoration: const InputDecoration(
+          border: OutlineInputBorder(),
+          hintText: '貼上匯出的內容，或每則含 #### 主題／日期／經文…等小標',
+        ),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('解析')),
+      ],
+    ),
+  );
 }
 
 /// 證道筆記編輯（結構化表單）。
