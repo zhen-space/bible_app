@@ -11,7 +11,6 @@ void main() {
           title: '恩典夠用',
           scripture: '林後 12:9',
           content: '第一行筆記\n第二行筆記',
-          trinityWho: '耶穌',
           trinityWord: '我的恩典夠你用的',
           practice: '每天禱告',
           reflection: '深受感動',
@@ -28,7 +27,6 @@ void main() {
       expect(n.title, '恩典夠用');
       expect(n.scripture, '林後 12:9');
       expect(n.content, '第一行筆記\n第二行筆記'); // 保留多行
-      expect(n.trinityWho, '耶穌');
       expect(n.trinityWord, '我的恩典夠你用的');
       expect(n.practice, '每天禱告');
       expect(n.reflection, '深受感動');
@@ -53,26 +51,6 @@ void main() {
       ];
       final parsed = parseSermonNotes(sermonNotesToText(notes));
       expect(parsed.map((e) => e.title), ['A', 'B']);
-    });
-
-    test('分類為自填，任何文字都保留（並相容舊「位格」標籤）', () {
-      const withNew = '''
-#### 主題
-測試
-#### 分類
-牧師的話
----
-''';
-      expect(parseSermonNotes(withNew).first.trinityWho, '牧師的話');
-
-      const withOld = '''
-#### 主題
-測試
-#### 位格
-會友的話
----
-''';
-      expect(parseSermonNotes(withOld).first.trinityWho, '會友的話');
     });
 
     test('認不出格式回空陣列', () {
