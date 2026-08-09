@@ -641,7 +641,12 @@ class SyncStatusNotifier extends Notifier<String?> {
     if (user == null) return;
     state = '同步中…';
     try {
-      state = await ref.read(syncServiceProvider).syncAll(user.uid);
+      // onStep 讓狀態列顯示卡在哪一步；timeout 讓卡住變成明確失敗（不再永遠轉圈）。
+      state = await ref
+          .read(syncServiceProvider)
+          .syncAll(user.uid, onStep: (s) => state = s)
+          .timeout(const Duration(seconds: 45),
+              onTimeout: () => '同步逾時（卡在「${state ?? ''}」）。請把這行字告訴我。');
     } catch (e) {
       state = '同步失敗：$e';
     } finally {

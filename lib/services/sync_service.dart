@@ -25,10 +25,12 @@ class SyncService {
       'b${m['book_id']}_c${m['chapter']}_v${m['verse'] ?? 0}';
 
   /// 完整雙向同步，回傳訊息（顯示在 UI）。
-  Future<String> syncAll(String uid) async {
+  /// [onStep] 回報目前進行到哪一步（顯示在狀態列，方便診斷卡在哪）。
+  Future<String> syncAll(String uid, {void Function(String step)? onStep}) async {
     var uploaded = 0;
     var downloaded = 0;
 
+    onStep?.call('同步中…讀取刪除紀錄');
     // ---- 墓碑先合併（決定哪些雲端資料已被刪、不該下載回來）----
     final cloudTombs = await _col(uid, 'tombstones').get();
     for (final d in cloudTombs.docs) {
@@ -46,6 +48,7 @@ class SyncService {
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
+    onStep?.call('同步中…下載雲端資料');
     // ---- 下載（雲端 → 本地，LWW 合併，被刪的（墓碑較新）跳過）----
     final cloudBookmarks = await _col(uid, 'bookmarks').get();
     for (final d in cloudBookmarks.docs) {
@@ -161,6 +164,7 @@ class SyncService {
           tomb['deleted_at'] as int);
     }
 
+    onStep?.call('同步中…上傳到雲端');
     // ---- 上傳（本地 → 雲端，batch 寫入）----
     var batch = _fs.batch();
     var pending = 0;
@@ -269,7 +273,10 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
-    if (pending > 0) await batch.commit();
+    if (pending > 0) {
+      onStep?.call('同步中…寫入雲端');
+      await batch.commit();
+    }
 
     return '已同步（上傳 $uploaded 筆、下載合併 $downloaded 筆）';
   }
