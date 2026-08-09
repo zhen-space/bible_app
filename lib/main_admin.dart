@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -17,6 +18,11 @@ Future<void> main() async {
     try {
       await Firebase.initializeApp(options: DefaultFirebaseOptions.web)
           .timeout(const Duration(seconds: 8));
+      // 同讀經 app：強制 Firestore 走 long-polling，避免 WebChannel 卡死。
+      FirebaseFirestore.instance.settings = const Settings(
+        persistenceEnabled: false,
+        webExperimentalForceLongPolling: true,
+      );
     } catch (_) {
       // 後台一定要雲端；失敗時 AdminGate 會顯示提示。
     }
