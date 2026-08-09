@@ -24,6 +24,8 @@ Flutter 聖經 App，**和合本神版**（繁體）離線讀經。功能：引�
 - 經文來源：`assets/bible/cuv.json`（約 3.3MB，66 卷 31,104 節），啟動時載入記憶體，搜尋直接掃記憶體
 - 設定持久化：shared_preferences（主題、字級、閱讀位置含節、螢光筆命名、禱告位置）
 - Firebase：**已接（Web 先行）**。專案 `bible-app-c0eac`；`lib/firebase_options.dart` 只有 web 設定（iOS/Android 之後在 Mac 跑 `flutterfire configure` 覆蓋該檔）。Google 登入（popup）＋ Firestore 雲端備份：`services/sync_service.dart` 多表雙向 LWW 合併（bookmarks/highlights/notes/reading_log/sermon_notes/plan_progress/prayers/todos→`users/{uid}/...`）。**已支援同步刪除（tombstone）**：`tombstones` 表記錄刪除，不變量＝同一筆資料「活資料」與「墓碑」互斥（刪除寫墓碑、新增/更新清墓碑）；sync 先合併墓碑→下載擋掉被刪→套用墓碑刪本地→上傳墓碑並刪雲端 doc。main() 裡 init 失敗不擋 App；未登入一切照常。**新資料表記得加進 sync service，刪除要記墓碑**。
+  - **網頁 Firestore 強制 long-polling**：`main.dart`/`main_admin.dart` init 後設 `FirebaseFirestore.instance.settings = Settings(persistenceEnabled:false, webExperimentalForceLongPolling:true)`。預設 WebChannel 在部分瀏覽器/網路會默默卡死（`.get()` 不回也不報錯，同步停在「同步中…」），long-polling 幾乎所有環境都通。**設定必須在任何 Firestore 呼叫前套用**（放 runApp 前）。
+  - **⚠️ 已實機驗證通過（登入＋雲端同步＋刪除同步）**，但有瀏覽器層限制：**Mac Safari 對 Firestore 長連線不友善會卡**（換 Chrome 正常）；**iOS Safari 需關「防止跨網站追蹤」**登入才過（ITP 擋 GIS 跨站憑證回傳）。部署站 COOP 必須是 `same-origin-allow-popups`（見下 render.yaml 段），否則登入彈窗空白。
 
 ## 目錄結構
 
@@ -133,7 +135,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 - **自動備份（Auto-Sync）**：`DatabaseService.onMutate` 在每個寫入方法尾端觸發；
   `SyncStatusNotifier.build()` 掛上 debounce 10 秒的 `syncNow()`（登入時才動）。
-  **新增寫入方法記得呼叫 `_mutated()`**。
+  **新增寫入方法記得呼叫 `_mutated()`**。`syncAll` 各階段（讀取刪除紀錄／下載／
+  上傳／寫入雲端）以 `onStep` 回報進度到狀態列；`syncNow` 有 45 秒逾時（卡住會停在
+  該步驟並轉明確失敗訊息，不再永遠轉圈）——診斷同步卡點就靠這行狀態字。
 - **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
   各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
 - **長章渲染＋記住位置**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）。
@@ -195,14 +199,15 @@ flutter test
 **五、個人信仰整理**：✅ 經文筆記、三欄模板、標籤、收藏、螢光多色**可命名**、筆記匯出（Markdown＋HTML 可存 PDF/用 Word 開）、讀經紀錄/進度、首頁筆記預覽、**主日證道筆記**、統計小卡、**我的信仰地圖**　⬜ 私密/公開（部分＝公開投稿已做，私密即本地筆記）
 **六、疑問 Q&A**（雲，**全人工無 AI**）：✅ 提問、分類（神學/生活/爭議/其他）、問題搜尋、管理者親自回答、回答引用經文（可跳轉）＋標籤、精選置頂、回答編輯、回答更新紀錄、問題審核、問題收藏、追蹤（有新回答的未讀提示）　⬜ 真推播通知（需 FCM，目前是 App 內未讀提示）、登入實測
 **七、交叉與知識架構**（框架已建，內容⛔使用者親寫）：✅ 平行經文對照、預表/應驗、聖經時間軸/事件線、人物生平＋重大事件、人物關係（可跳轉關係鏈）——格式＋UI＋空狀態就緒（`knowledge.json`）；相關經文推薦沿用既有 crossRefs　⬜ 內容填寫（容）、畫布式人物關係圖（目前是關係鏈導覽，非節點圖）
-**八、帳號與技術**（雲）：✅ 自動儲存、雲端同步、**同步刪除（tombstone）**　⬜ 登入實測（onrender.com 本環境連不到，需使用者週四手機/桌機測）、Apple 登入實測
+**八、帳號與技術**（雲）：✅ 自動儲存、雲端同步、**同步刪除（tombstone）**、**登入實測通過**（Google，桌機 Chrome＋手機，含雲端寫入 `users/{uid}` 與跨裝置/刪除同步）　⬜ Apple 登入實測、Mac Safari 同步相容（Firestore 長連線在 Mac Safari 會卡，暫以 Chrome 為準）
 **九、120堂課程學習區**（容）：⬜ 白板上還是空的（無內容）
 **資料整理卡**：✅ 語音朗讀（TTS）、離線優先　⬜ 向量化知識庫（AI 問答，需後端/API）、混合快取
 **新想法**：⬜ 共讀小組（雲）、代禱連結（雲）
 
 ## 待辦
 
-- [ ] 登入實測與修復（環境連不到 onrender.com，Claude 無法盲測；已加 GIS client_id meta）
+- [x] 登入實測與修復（已通）：修法＝render.yaml COOP 改 `same-origin-allow-popups`＋Firestore 強制 long-polling＋同步進度/逾時顯示。已知限制：Mac Safari 同步會卡（用 Chrome）、iOS Safari 需關「防止跨網站追蹤」。
+- [ ] Mac Safari Firestore 同步相容（要不要專門修，待定；目前 Chrome/手機皆正常）
 - [ ] **補齊註解內容**（目前只有創1 範例，格式已定，後台或編輯 annotations.json；⛔ 使用者親寫）
 - [ ] 主題導讀文字、主題式讀經計畫選經（⛔ 使用者親寫；欄位/UI/排程框架已就緒）
 - [ ] 交叉引用資料集（OpenBible cross-refs）→ 動前先確認內容邊界
