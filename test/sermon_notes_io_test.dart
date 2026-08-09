@@ -55,17 +55,24 @@ void main() {
       expect(parsed.map((e) => e.title), ['A', 'B']);
     });
 
-    test('分類為自填，任何文字都保留', () {
-      const text = '''
+    test('分類為自填，任何文字都保留（並相容舊「位格」標籤）', () {
+      const withNew = '''
 #### 主題
 測試
-#### 位格
+#### 分類
 牧師的話
 ---
 ''';
-      final parsed = parseSermonNotes(text);
-      expect(parsed, hasLength(1));
-      expect(parsed.first.trinityWho, '牧師的話');
+      expect(parseSermonNotes(withNew).first.trinityWho, '牧師的話');
+
+      const withOld = '''
+#### 主題
+測試
+#### 位格
+會友的話
+---
+''';
+      expect(parseSermonNotes(withOld).first.trinityWho, '會友的話');
     });
 
     test('認不出格式回空陣列', () {

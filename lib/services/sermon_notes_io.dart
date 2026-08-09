@@ -7,11 +7,12 @@ import '../models/models.dart';
 /// 使用者可自己在檔案裡照這格式打好再匯入；匯出的檔案也能原樣匯回。
 /// ⛔ 這裡只做「格式轉換」，不生成任何筆記內容。
 
-/// 小標中文名 → SermonNote 欄位。
+/// 小標中文名 → SermonNote 欄位。（'位格' 是舊標籤，仍相容匯入。）
 const _labelToField = {
   '主題': 'title',
   '日期': 'date',
   '經文': 'scripture',
+  '分類': 'who',
   '位格': 'who',
   '筆記': 'content',
   '祂的話': 'word',
@@ -54,7 +55,7 @@ String sermonNotesToText(List<SermonNote> notes) {
       ..writeln('#### 經文')
       ..writeln(n.scripture)
       ..writeln()
-      ..writeln('#### 位格')
+      ..writeln('#### 分類')
       ..writeln(n.trinityWho)
       ..writeln()
       ..writeln('#### 筆記')
