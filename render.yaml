@@ -8,8 +8,12 @@ services:
     branch: claude/bible-app-setup-xi8bvd
     buildCommand: ./render-build.sh
     staticPublishPath: build/web
-    # 注意：不要加 COOP/COEP headers——same-origin 會擋 Firebase 登入；
-    # sqflite 的 WASM 實測不需要這些 header（走 IndexedDB）。
+    # Render 預設的 COOP: same-origin 會阻斷 Google 登入 popup 回傳結果。
+    # 保留 COOP，但允許 popup 與母視窗通訊；不要設定 COEP。
+    headers:
+      - path: /*
+        name: Cross-Origin-Opener-Policy
+        value: same-origin-allow-popups
     # 登入採 GIS token 流程，不需要 __/auth 代理路由。
 
   # 內容後台 app（管理者專用，獨立進入點 lib/main_admin.dart）
