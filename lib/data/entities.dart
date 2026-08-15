@@ -33,6 +33,7 @@ const List<BibleEntity> entities = [
   BibleEntity('大衛', EntityType.person),
   BibleEntity('所羅門', EntityType.person),
   BibleEntity('以利亞', EntityType.person),
+  BibleEntity('以利亞撒', EntityType.person), // Eleazar，勿與「以利亞」混（最長匹配靠它）
   BibleEntity('以利沙', EntityType.person),
   BibleEntity('以賽亞', EntityType.person),
   BibleEntity('耶利米', EntityType.person),
@@ -93,6 +94,72 @@ List<BibleEntity> searchEntities(String query) {
           q.contains(e.name) ||
           e.aka.any((a) => a.contains(q) || q.contains(a)))
       .toList();
+}
+
+// ────────────────────────────────────────────────────────────────
+// 專有名詞（人名＋地名，含別名）：供「私名號」標記與最長匹配用。
+// 事件不算專名。名字未收進索引者不會被標記或斷界——增補這裡即可擴大覆蓋。
+
+class ProperName {
+  final String text;
+  final EntityType type; // person / place
+  const ProperName(this.text, this.type);
+}
+
+/// 依長度由長到短排序，讓最長匹配（「以利亞撒」勝過「以利亞」）優先命中。
+final List<ProperName> properNames = () {
+  final list = <ProperName>[];
+  for (final e in entities) {
+    if (e.type == EntityType.event) continue;
+    list.add(ProperName(e.name, e.type));
+    for (final a in e.aka) {
+      list.add(ProperName(a, e.type));
+    }
+  }
+  list.sort((a, b) => b.text.length.compareTo(a.text.length));
+  return list;
+}();
+
+typedef NameHit = ({int start, int end, EntityType type});
+
+/// 掃描 [text]，回傳不重疊的專有名詞出現處（最長優先）。
+List<NameHit> properNameMatches(String text) {
+  final out = <NameHit>[];
+  var i = 0;
+  while (i < text.length) {
+    ProperName? hit;
+    for (final p in properNames) {
+      if (p.text.length <= text.length - i && text.startsWith(p.text, i)) {
+        hit = p; // properNames 已按長度排序 → 第一個命中即最長
+        break;
+      }
+    }
+    if (hit != null) {
+      out.add((start: i, end: i + hit.text.length, type: hit.type));
+      i += hit.text.length;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
+/// [query] 在 [text] 中是否「只」以某個更長專名的一部分出現（沒有獨立出現）。
+/// 例：搜「以利亞」而該節只有「以利亞撒」→ true（應濾掉，非本人）。
+bool queryOnlyInsideLongerName(String text, String query) {
+  final q = query.trim();
+  if (q.isEmpty || !text.contains(q)) return false;
+  final names = properNameMatches(text);
+  var idx = text.indexOf(q);
+  while (idx >= 0) {
+    final insideLonger = names.any((m) =>
+        m.start <= idx &&
+        idx + q.length <= m.end &&
+        (m.end - m.start) > q.length);
+    if (!insideLonger) return false; // 有一次獨立出現（或就是該專名本身）
+    idx = text.indexOf(q, idx + 1);
+  }
+  return true;
 }
 
 String entityTypeLabel(EntityType t) {

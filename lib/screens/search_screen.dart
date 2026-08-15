@@ -53,7 +53,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           if (t.name.contains(q.trim()) || q.trim().contains(t.name)) t,
       ];
       _entities = searchEntities(q);
-      _results = ref.read(bibleRepositoryProvider).search(q);
+      // 濾掉「只是更長人名一部分」的誤配（搜「以利亞」不列「以利亞撒」的節）
+      _results = ref
+          .read(bibleRepositoryProvider)
+          .search(q)
+          .where((r) => !queryOnlyInsideLongerName(r.text, q.trim()))
+          .toList();
       _searched = q.trim().isNotEmpty;
     });
   }
@@ -179,13 +184,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
-                      // 只顯示「含關鍵詞的那一句」，不再整節一大串（好好斷句）
+                      // 只顯示「含關鍵詞的那一句」（斷句）＋人名/地名畫私名號
                       title: Text.rich(TextSpan(
-                          children: highlightSpans(
+                          children: properNameSpans(
                               context,
                               sentenceWithMatch(
                                   r.text, _controller.text.trim()),
-                              _controller.text.trim()))),
+                              query: _controller.text.trim()))),
                       subtitle: Text(
                           '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
                       onTap: () => _openChapter(r.bookId, r.chapter),
