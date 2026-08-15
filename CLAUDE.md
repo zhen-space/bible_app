@@ -145,6 +145,12 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   debounce 存 offset，「繼續閱讀」用 initialOffset 還原捲動位置（首屏後 jumpTo）。
   ⚠️ 曾試 `scrollable_positioned_list` 但在 iOS Safari 首屏渲染空白（民數記17 實測），已移除。
 - **語音**：輸入用 `speech_to_text`、輸出用 `flutter_tts`，皆 zh-TW。
+- **私名號（專名號）＋名字最長匹配**：`data/entities.dart` 的 `properNames`（人名＋地名，
+  含別名，事件不算）＋ `properNameMatches`（最長優先，「以利亞撒」不會被「以利亞」切開）。
+  `utils/text_utils.dart` 的 `properNameSpans` 把名字畫底線（讀經頁逐節/段落模式、搜尋結果都套）。
+  搜尋用 `queryOnlyInsideLongerName` 濾掉誤配（搜「以利亞」不列只有「以利亞撒」的節）。
+  **覆蓋＝索引涵蓋的名字**（目前約 40+，未收錄者不標／不斷界）；擴大覆蓋＝增補 `entities`。
+  ⛔ 名字索引屬「資料」（非導讀/註釋內容），AI 可維護，但增補人名地名前仍宜與使用者確認。
 - **證道筆記匯入／匯出**：`services/sermon_notes_io.dart`（`sermonNotesToText`／
   `parseSermonNotes`）＝可來回轉換的 Markdown（每則 `## 標題`＋`#### 主題/日期/
   經文/筆記/祂的話/實踐/感想` 小標，`---` 分隔）。檔案存取走 `download_web`/
