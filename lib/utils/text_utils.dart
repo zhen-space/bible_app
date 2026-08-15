@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../data/entities.dart';
@@ -58,9 +59,11 @@ List<TextSpan> highlightSpans(
 /// 並可另外把 [query] 關鍵詞加粗高亮（搜尋用）。名字邊界走最長匹配
 /// （「以利亞撒」整體標記，不會被「以利亞」切開）。未收進索引的名字不標。
 List<TextSpan> properNameSpans(BuildContext context, String text,
-    {String query = '', TextStyle? style}) {
+    {String query = '', TextStyle? style, GestureRecognizer? recognizer}) {
   final base = style ?? DefaultTextStyle.of(context).style;
-  if (text.isEmpty) return [TextSpan(text: text, style: base)];
+  if (text.isEmpty) {
+    return [TextSpan(text: text, style: base, recognizer: recognizer)];
+  }
   final primary = Theme.of(context).colorScheme.primary;
 
   // 每字元：是否專名、是否關鍵詞命中
@@ -103,7 +106,10 @@ List<TextSpan> properNameSpans(BuildContext context, String text,
   var start = 0;
   for (var i = 1; i <= text.length; i++) {
     if (i == text.length || key(i) != key(start)) {
-      spans.add(TextSpan(text: text.substring(start, i), style: styleAt(start)));
+      spans.add(TextSpan(
+          text: text.substring(start, i),
+          style: styleAt(start),
+          recognizer: recognizer));
       start = i;
     }
   }

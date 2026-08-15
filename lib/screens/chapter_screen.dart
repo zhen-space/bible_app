@@ -10,6 +10,7 @@ import '../providers/providers.dart';
 import '../services/content_service.dart';
 import '../services/tts_service.dart';
 import '../services/verse_locator.dart';
+import '../utils/text_utils.dart';
 import '../theme/app_theme.dart';
 import 'search_screen.dart';
 
@@ -1024,8 +1025,9 @@ class _VerseTile extends StatelessWidget {
                     ),
                   ),
                   TextSpan(
-                    text: text,
-                    style: TextStyle(fontSize: fontSize, height: 1.8),
+                    // 人名/地名畫私名號（底線）
+                    children: properNameSpans(context, text,
+                        style: TextStyle(fontSize: fontSize, height: 1.8)),
                   ),
                   if (hasAnnotation)
                     WidgetSpan(
@@ -1244,8 +1246,10 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
         ));
       }
       final speaking = widget.speakingVerse == verseNo;
-      spans.add(TextSpan(
-        text: widget.verses[i],
+      // 人名/地名畫私名號（底線）；保留原本的高亮底色與點擊
+      spans.addAll(properNameSpans(
+        context,
+        widget.verses[i],
         style: TextStyle(
           fontSize: widget.fontSize,
           height: 1.9,
