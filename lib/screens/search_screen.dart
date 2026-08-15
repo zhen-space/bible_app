@@ -179,9 +179,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
+                      // 只顯示「含關鍵詞的那一句」，不再整節一大串（好好斷句）
                       title: Text.rich(TextSpan(
                           children: highlightSpans(
-                              context, r.text, _controller.text.trim()))),
+                              context,
+                              sentenceWithMatch(
+                                  r.text, _controller.text.trim()),
+                              _controller.text.trim()))),
                       subtitle: Text(
                           '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
                       onTap: () => _openChapter(r.bookId, r.chapter),
