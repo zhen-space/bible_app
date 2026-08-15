@@ -23,11 +23,15 @@ class ChapterScreen extends ConsumerStatefulWidget {
   /// 進來時要還原到的捲動位移（「繼續閱讀」帶上次的 offset；一般進入 0＝章頂）。
   final double initialOffset;
 
+  /// 進來時要「跳到並閃一下」的節（從搜尋、引用、交叉引用等跳進來時帶上）。
+  final int? focusVerse;
+
   const ChapterScreen({
     super.key,
     required this.bookId,
     required this.chapter,
     this.initialOffset = 0,
+    this.focusVerse,
   });
 
   @override
@@ -44,12 +48,25 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   double? _restoreOffset; // 本章要還原到的位移（套用一次後清空）
   Timer? _savePosDebounce;
 
+  // 跳到指定節並閃一下（搜尋/引用跳進來）
+  final GlobalKey _focusKey = GlobalKey();
+  int? _flashVerse; // 目前要閃的節（幾秒後清空）
+  bool _focusPending = false; // 還沒捲到定位
+  Timer? _flashTimer;
+
   @override
   void initState() {
     super.initState();
     _bookId = widget.bookId;
     _chapter = widget.chapter;
-    _restoreOffset = widget.initialOffset > 0 ? widget.initialOffset : null;
+    // 帶了 focusVerse 就以它為準，不還原上次 offset
+    if (widget.focusVerse != null) {
+      _flashVerse = widget.focusVerse;
+      _focusPending = true;
+      _restoreOffset = null;
+    } else {
+      _restoreOffset = widget.initialOffset > 0 ? widget.initialOffset : null;
+    }
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ttsCtrl = ref.read(ttsProvider.notifier);
@@ -59,12 +76,14 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       _logRead();
       // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
       ref.read(bibleRepositoryProvider).loadEnglish();
+      if (_focusPending) _tryFocus();
     });
   }
 
   @override
   void dispose() {
     _savePosDebounce?.cancel();
+    _flashTimer?.cancel();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref）
@@ -89,6 +108,40 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _restoreOffset = null;
     final max = _scroll.position.maxScrollExtent;
     _scroll.jumpTo(target.clamp(0, max));
+  }
+
+  /// 捲到 focusVerse 並閃一下。逐節懶載入時，往下翻直到那節建出來。
+  void _tryFocus() {
+    if (!_focusPending || !mounted) return;
+    final ctx = _focusKey.currentContext;
+    if (ctx != null) {
+      _focusPending = false;
+      Scrollable.ensureVisible(ctx,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut);
+      _startFlash();
+      return;
+    }
+    if (_scroll.hasClients) {
+      final pos = _scroll.position;
+      if (pos.pixels < pos.maxScrollExtent) {
+        _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.85)
+            .clamp(0.0, pos.maxScrollExtent));
+        WidgetsBinding.instance.addPostFrameCallback((_) => _tryFocus());
+      } else {
+        _focusPending = false; // 到底仍沒建出來（罕見）→ 至少閃一下
+        _startFlash();
+      }
+    }
+  }
+
+  /// 閃 2.6 秒後淡出。
+  void _startFlash() {
+    _flashTimer?.cancel();
+    _flashTimer = Timer(const Duration(milliseconds: 2600), () {
+      if (mounted) setState(() => _flashVerse = null);
+    });
   }
 
   Future<void> _logRead() async {
@@ -270,7 +323,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         return _BookSummaryCard(
                             bookName: book.name, text: bookSummary!);
                       }
+                      final isFocus = widget.focusVerse == i + 1;
                       final tile = _VerseTile(
+                        key: isFocus ? _focusKey : null,
                         verseNo: i + 1,
                         text: verses[i],
                         english: en(i + 1),
@@ -280,6 +335,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         hasNote: marks.notes.containsKey(i + 1),
                         hasAnnotation: verseAnns.containsKey(i + 1),
                         speaking: speakingVerse == i + 1,
+                        flashing: _flashVerse == i + 1,
                         onTap: () => _showVerseActions(books, book, i + 1,
                             verses[i], marks, verseAnns[i + 1]),
                       );
@@ -318,6 +374,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         annotated: verseAnns.keys.toSet(),
                         headings: headings,
                         speakingVerse: speakingVerse,
+                        flashVerse: _flashVerse,
+                        focusVerse: widget.focusVerse,
+                        focusKey: _focusKey,
                         onTapVerse: (verseNo) => _showVerseActions(
                             books,
                             book,
@@ -974,9 +1033,11 @@ class _VerseTile extends StatelessWidget {
   final bool hasNote;
   final bool hasAnnotation;
   final bool speaking; // 目前 TTS 正朗讀到這一節
+  final bool flashing; // 從搜尋/引用跳進來，短暫閃一下提示位置
   final VoidCallback onTap;
 
   const _VerseTile({
+    super.key,
     required this.verseNo,
     required this.text,
     required this.english,
@@ -986,6 +1047,7 @@ class _VerseTile extends StatelessWidget {
     required this.hasNote,
     required this.hasAnnotation,
     required this.speaking,
+    this.flashing = false,
     required this.onTap,
   });
 
@@ -993,10 +1055,12 @@ class _VerseTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    // 朗讀中的節：用主色淡底框起來（優先於螢光筆底色的視覺提示）
-    final bg = highlight != null
-        ? AppTheme.highlightColor(highlight!, isDark)
-        : (speaking ? scheme.primary.withValues(alpha: 0.12) : null);
+    // 閃示 > 螢光筆 > 朗讀中，依序決定底色
+    final bg = flashing
+        ? scheme.primary.withValues(alpha: 0.28)
+        : (highlight != null
+            ? AppTheme.highlightColor(highlight!, isDark)
+            : (speaking ? scheme.primary.withValues(alpha: 0.12) : null));
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -1155,6 +1219,9 @@ class _ParagraphChapter extends StatefulWidget {
   final Set<int> annotated;
   final Map<int, String> headings; // 節→段落標題（後台「分段」欄）
   final int? speakingVerse; // 目前 TTS 朗讀到的節
+  final int? flashVerse; // 跳進來要閃的節（給底色）
+  final int? focusVerse; // 要定位的節（放 key 在該段落上）
+  final GlobalKey? focusKey;
   final void Function(int verseNo) onTapVerse;
 
   const _ParagraphChapter({
@@ -1165,6 +1232,9 @@ class _ParagraphChapter extends StatefulWidget {
     required this.annotated,
     required this.headings,
     required this.speakingVerse,
+    this.flashVerse,
+    this.focusVerse,
+    this.focusKey,
     required this.onTapVerse,
   });
 
@@ -1205,6 +1275,10 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
                 text: widget.headings[para.first]!,
                 fontSize: widget.fontSize),
           Padding(
+            // 定位節所在的段落掛上 key，供捲動 ensureVisible
+            key: (widget.focusVerse != null && para.contains(widget.focusVerse))
+                ? widget.focusKey
+                : null,
             padding: const EdgeInsets.only(bottom: 18),
             child: Text.rich(
               TextSpan(children: _paragraphSpans(para, isDark, scheme)),
@@ -1246,6 +1320,7 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
         ));
       }
       final speaking = widget.speakingVerse == verseNo;
+      final flashing = widget.flashVerse == verseNo;
       // 人名/地名畫私名號（底線）；保留原本的高亮底色與點擊
       spans.addAll(properNameSpans(
         context,
@@ -1253,12 +1328,14 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
         style: TextStyle(
           fontSize: widget.fontSize,
           height: 1.9,
-          fontWeight: speaking ? FontWeight.w700 : null,
-          backgroundColor: hl != null
-              ? AppTheme.highlightColor(hl, isDark)
-              : (speaking
-                  ? scheme.primary.withValues(alpha: 0.12)
-                  : null),
+          fontWeight: (speaking || flashing) ? FontWeight.w700 : null,
+          backgroundColor: flashing
+              ? scheme.primary.withValues(alpha: 0.28)
+              : (hl != null
+                  ? AppTheme.highlightColor(hl, isDark)
+                  : (speaking
+                      ? scheme.primary.withValues(alpha: 0.12)
+                      : null)),
         ),
         recognizer: recognizer,
       ));

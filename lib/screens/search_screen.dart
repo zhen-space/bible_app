@@ -74,13 +74,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     return null;
   }
 
-  void _openChapter(int bookId, int chapter) {
+  void _openChapter(int bookId, int chapter, {int? verse}) {
     // 有實際打開結果才記進搜尋歷史
     ref.read(searchHistoryProvider.notifier).add(_controller.text);
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ChapterScreen(bookId: bookId, chapter: chapter),
+        builder: (_) => ChapterScreen(
+            bookId: bookId, chapter: chapter, focusVerse: verse),
       ),
     );
   }
@@ -137,8 +138,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 _JumpTile(
                   jump: _jump!,
                   book: books[_jump!.bookId - 1],
-                  onTap: () =>
-                      _openChapter(_jump!.bookId, _jump!.chapter),
+                  onTap: () => _openChapter(
+                      _jump!.bookId, _jump!.chapter,
+                      verse: _jump!.verse),
                 ),
               // 主題
               if (_topics.isNotEmpty) ...[
@@ -193,7 +195,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                               query: _controller.text.trim()))),
                       subtitle: Text(
                           '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
-                      onTap: () => _openChapter(r.bookId, r.chapter),
+                      onTap: () =>
+                          _openChapter(r.bookId, r.chapter, verse: r.verse),
                     ),
                     const Divider(height: 1),
                   ],

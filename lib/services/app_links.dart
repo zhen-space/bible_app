@@ -27,8 +27,8 @@ class AppLinks {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
+        builder: (_) => ChapterScreen(
+            bookId: loc.bookId, chapter: loc.chapter, focusVerse: loc.verse),
       ),
     );
   }
