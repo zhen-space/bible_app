@@ -76,11 +76,14 @@ class _QaVoiceScreenState extends ConsumerState<QaVoiceScreen> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final query = _text.text.trim();
-    final approved = ref.watch(approvedQuestionsProvider('')).value ?? const [];
+    // 只比對「已發布」的解答（approved≠published）；沒有已發布資料就不回答，
+    // 絕不以未發布內容或任何 AI／網路來源代替。
+    final published =
+        ref.watch(publishedQuestionsProvider('')).value ?? const [];
     // 純關鍵字比對現有解答（無 AI）：問題/回答/標籤 含任一字詞就列出
     final matches = query.isEmpty
         ? const <Question>[]
-        : approved.where((q) {
+        : published.where((q) {
             final hay =
                 '${q.title} ${q.body} ${q.answer?.content ?? ''} ${(q.answer?.tags ?? []).join(' ')}';
             return query
@@ -132,7 +135,7 @@ class _QaVoiceScreenState extends ConsumerState<QaVoiceScreen> {
           ),
           const SizedBox(height: 12),
           if (matches.isNotEmpty) ...[
-            Text('先看看這些現有解答（關鍵字比對，非 AI）',
+            Text('先看看教會已發布的解答（關鍵字比對，非 AI）',
                 style: Theme.of(context)
                     .textTheme
                     .titleSmall
@@ -155,7 +158,7 @@ class _QaVoiceScreenState extends ConsumerState<QaVoiceScreen> {
               ),
             const SizedBox(height: 8),
           ] else if (query.isNotEmpty) ...[
-            Text('沒有找到相符的現有解答。',
+            Text('目前沒有教會已發布的相符解答。可送出問題，等教會親自回答。',
                 style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 8),
           ],
