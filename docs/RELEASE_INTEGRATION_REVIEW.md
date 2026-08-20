@@ -4,6 +4,42 @@ Date: 2026-08-19
 Integration branch: `agent/release-integration-v1`
 Status: **Release review. NOT merged to production. NOT deployed.**
 
+## Runtime browser smoke test (2026-08-20)
+
+Driven with Chromium (Playwright, SwiftShader) against the real web builds
+served locally; DB via `sqlite3.wasm` (fetched through the proxy) so IndexedDB
+persistence is genuinely exercised. Firebase/Firestore/Google Fonts are
+network-blocked in this sandbox (expected) — the app runs guest/offline.
+
+**Student web — PASS.** Verified in the browser:
+- Home (reader-first, guest, no login) → Bible → 選擇書卷與章節 → BooksScreen → Reader (Genesis 1) with text.
+- Bottom nav has the 5 destinations; Reader is a pushed full-screen route so the bottom nav is hidden while reading; back returns to source (Reader→BooksScreen→hub).
+- Verse actions: Bookmark (sheet flips to 移除書籤, icon shows immediately), Highlight (移除螢光筆), Note (typed + saved).
+- **Persistence across a full browser restart** (separate launch, same profile): bookmark + note survived (IndexedDB) — proves reload persistence and old-data read.
+- Search → results show the matching sentence (斷句) → tap opens Reader at that passage; Reader hides bottom nav.
+- Notes hub (note listed), Plans, Me, Prayer, Settings, Sermon Notes all open; light + dark mode both render cleanly; 390px mobile layout has no overflow.
+- Reader proper-name marks (私名號) render correctly (e.g., 挪亞 underlined).
+
+**Bug found & fixed during smoke (commit `9a68f6a`):** search-result and
+note-search snippets rendered as solid gold bars in the CanvasKit web build —
+the gold-colored query-highlight span inside dense `ListTile` titles renders
+broken. Fixed by showing those snippets as clean plain sentences (斷句 kept);
+proper-name underline in the Reader (decoration, not a color span) is unaffected
+and kept. Re-ran analyze (clean) + tests (43 pass) + rebuild (student + admin).
+
+**Admin web — builds and boots; student rebuild did not break it.** AdminGate
+loads and correctly shows "後台需要連上雲端（Firebase）才能使用" (Firebase is
+network-blocked here). The live Q&A publish workflow (approved-but-unpublished
+queue, separate Publish action, student-only-sees-published, insufficient-state,
+no AI/web fallback) requires Firebase Auth + Firestore and could **not** be
+driven in this sandbox; it remains covered by the unit test
+(`test/qa_published_test.dart`), the server rules, and code review.
+
+**Could not be exercised in-sandbox (network policy):** Google sign-in UI/flow
+(account section is hidden when Firebase is unavailable), signed-in cloud sync,
+and online-recovery toggling. Offline/guest reading and graceful Firebase-failure
+degradation were confirmed (no crash).
+
 ## Scope of this integration
 
 Safe integration of the front-end and back-end foundation work, with a
