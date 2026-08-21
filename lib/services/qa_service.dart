@@ -39,6 +39,9 @@ class QaService {
       'body': body,
       'category': category,
       'status': 'pending',
+      // published ≠ approved：核准/回答不等於發布；唯有管理者明確發布，
+      // 學生端才能取得。預設 false。
+      'published': false,
       'featured': false,
       'created_at': now,
       'updated_at': now,
@@ -51,12 +54,17 @@ class QaService {
     return Question.fromDoc(d.id, d.data()!);
   }
 
-  /// 公開（已審核）問題。featured 置頂、其餘依更新時間新到舊。
-  Future<List<Question>> approvedQuestions({String? category}) async {
+  /// **學生端可取得的內容＝只有已發布（published）者。**
+  /// approved/reviewed 不算 published；沒有已發布資料就回空清單（不得回答）。
+  /// 另加 isAnswered 防呆：即使誤設 published，未回答的也不外流。
+  /// featured 置頂、其餘依更新時間新到舊。
+  Future<List<Question>> publishedQuestions({String? category}) async {
     final snap =
-        await _questions.where('status', isEqualTo: 'approved').get();
-    final list =
-        snap.docs.map((d) => Question.fromDoc(d.id, d.data())).toList();
+        await _questions.where('published', isEqualTo: true).get();
+    final list = snap.docs
+        .map((d) => Question.fromDoc(d.id, d.data()))
+        .where((q) => q.isAnswered)
+        .toList();
     final filtered = category == null || category.isEmpty
         ? list
         : list.where((q) => q.category == category).toList();
@@ -65,6 +73,18 @@ class QaService {
       return b.updatedAt.compareTo(a.updatedAt);
     });
     return filtered;
+  }
+
+  /// 管理者用：已回答（approved）但**尚未發布**的佇列，供管理者發布。
+  /// 非學生端可見來源。
+  Future<List<Question>> awaitingPublishQuestions() async {
+    final snap =
+        await _questions.where('status', isEqualTo: 'approved').get();
+    return snap.docs
+        .map((d) => Question.fromDoc(d.id, d.data()))
+        .where((q) => q.isAnswered && !q.published)
+        .toList()
+      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
   }
 
   /// 我提出的問題（含待審／退回，讓提問者看得到狀態）。
@@ -96,8 +116,17 @@ class QaService {
   Future<void> setFeatured(String id, bool featured) =>
       _questions.doc(id).update({'featured': featured});
 
+  /// 發布／取消發布（管理者）。發布後學生端才取得得到；取消發布立即撤下。
+  /// approved/回答不會自動發布——這是刻意分離的獨立動作。
+  Future<void> setPublished(String id, bool published) =>
+      _questions.doc(id).update({
+        'published': published,
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      });
+
   /// 儲存／更新回答。更新時把「舊回答」推進 answer_versions（回答更新紀錄），
-  /// 並把問題設為已審核（回答即公開）。
+  /// 並把問題設為已審核（approved）。**注意：approved ≠ published**——
+  /// 回答不會自動發布給學生端，需管理者另外呼叫 setPublished 才會外流。
   Future<void> saveAnswer({
     required Question question,
     required String content,
@@ -179,7 +208,8 @@ class Question {
   final String title;
   final String body;
   final String category;
-  final String status; // pending / approved / rejected
+  final String status; // pending / approved / rejected（審核狀態）
+  final bool published; // 是否發布給學生端（approved≠published，預設 false）
   final bool featured;
   final int createdAt;
   final int updatedAt;
@@ -194,6 +224,7 @@ class Question {
     required this.body,
     required this.category,
     required this.status,
+    this.published = false,
     required this.featured,
     required this.createdAt,
     required this.updatedAt,
@@ -211,6 +242,7 @@ class Question {
         body: m['body'] as String? ?? '',
         category: m['category'] as String? ?? '其他',
         status: m['status'] as String? ?? 'pending',
+        published: m['published'] as bool? ?? false,
         featured: m['featured'] as bool? ?? false,
         createdAt: m['created_at'] as int? ?? 0,
         updatedAt: m['updated_at'] as int? ?? 0,

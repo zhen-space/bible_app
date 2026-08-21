@@ -23,7 +23,8 @@ class _QaScreenState extends ConsumerState<QaScreen> {
     final ready = ref.watch(firebaseReadyProvider);
     final user = ref.watch(authUserProvider).value;
     final isAdmin = ref.watch(isAdminProvider);
-    final questionsAsync = ref.watch(approvedQuestionsProvider(_category));
+    // 學生端只看已發布內容（approved≠published）
+    final questionsAsync = ref.watch(publishedQuestionsProvider(_category));
 
     return Scaffold(
       appBar: AppBar(
@@ -398,9 +399,27 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
             if (q.status != 'approved')
               OutlinedButton.icon(
                 icon: const Icon(Icons.check),
-                label: const Text('核准公開'),
+                label: const Text('核准'),
                 onPressed: () => _admin(() =>
                     ref.read(qaServiceProvider).approveQuestion(q.id), q.id),
+              ),
+            // 發布是獨立動作：唯有已回答才可發布；發布後學生端才取得得到。
+            if (q.isAnswered)
+              FilledButton.icon(
+                style: q.published
+                    ? FilledButton.styleFrom(
+                        backgroundColor:
+                            Theme.of(context).colorScheme.secondary)
+                    : null,
+                icon: Icon(q.published
+                    ? Icons.public_off
+                    : Icons.publish_outlined),
+                label: Text(q.published ? '取消發布' : '發布給學生端'),
+                onPressed: () => _admin(
+                    () => ref
+                        .read(qaServiceProvider)
+                        .setPublished(q.id, !q.published),
+                    q.id),
               ),
             if (q.status != 'rejected')
               OutlinedButton.icon(
@@ -430,7 +449,8 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
       await op();
       ref.invalidate(questionProvider(id));
       ref.invalidate(pendingQuestionsProvider);
-      ref.invalidate(approvedQuestionsProvider);
+      ref.invalidate(publishedQuestionsProvider);
+      ref.invalidate(awaitingPublishQuestionsProvider);
       m.showSnackBar(const SnackBar(content: Text('已更新')));
     } catch (e) {
       m.showSnackBar(SnackBar(content: Text('操作失敗：$e')));
@@ -684,9 +704,11 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
             tags: tags,
           );
       ref.invalidate(questionProvider(widget.question.id));
-      ref.invalidate(approvedQuestionsProvider);
+      ref.invalidate(publishedQuestionsProvider);
+      ref.invalidate(awaitingPublishQuestionsProvider);
       ref.invalidate(pendingQuestionsProvider);
-      m.showSnackBar(const SnackBar(content: Text('已儲存並公開')));
+      m.showSnackBar(const SnackBar(
+          content: Text('已儲存回答（尚未發布，請於管理區按「發布」才會對學生端顯示）')));
       if (mounted) Navigator.pop(context);
     } catch (e) {
       m.showSnackBar(SnackBar(content: Text('儲存失敗：$e')));
@@ -703,35 +725,93 @@ class QaAdminScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final pendingAsync = ref.watch(pendingQuestionsProvider);
+    final awaitingAsync = ref.watch(awaitingPublishQuestionsProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('問題審核')),
-      body: pendingAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (items) {
-          if (items.isEmpty) {
-            return const Center(child: Text('目前沒有待審問題'));
-          }
-          return ListView.separated(
-            itemCount: items.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final q = items[i];
-              return ListTile(
-                leading: const Icon(Icons.help_outline),
-                title: Text(q.title),
-                subtitle: Text('${q.category}　${q.author}'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (_) => QuestionDetailScreen(id: q.id)),
-                ),
-              );
-            },
-          );
-        },
+      appBar: AppBar(title: const Text('問題審核・發布')),
+      body: ListView(
+        children: [
+          _AdminSectionHeader(
+              '已回答・待發布（發布後學生端才看得到）',
+              Theme.of(context).colorScheme.primary),
+          awaitingAsync.when(
+            loading: () => const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator())),
+            error: (e, _) => Padding(
+                padding: const EdgeInsets.all(16), child: Text('載入失敗：$e')),
+            data: (items) => items.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('沒有待發布的已回答問題'))
+                : Column(
+                    children: [
+                      for (final q in items)
+                        ListTile(
+                          leading: const Icon(Icons.publish_outlined),
+                          title: Text(q.title),
+                          subtitle: Text('${q.category}　${q.author}'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    QuestionDetailScreen(id: q.id)),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+          const Divider(height: 1),
+          _AdminSectionHeader('待審提問', Colors.grey),
+          pendingAsync.when(
+            loading: () => const Padding(
+                padding: EdgeInsets.all(16),
+                child: Center(child: CircularProgressIndicator())),
+            error: (e, _) => Padding(
+                padding: const EdgeInsets.all(16), child: Text('載入失敗：$e')),
+            data: (items) => items.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('目前沒有待審問題'))
+                : Column(
+                    children: [
+                      for (final q in items)
+                        ListTile(
+                          leading: const Icon(Icons.help_outline),
+                          title: Text(q.title),
+                          subtitle: Text('${q.category}　${q.author}'),
+                          trailing: const Icon(Icons.chevron_right),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    QuestionDetailScreen(id: q.id)),
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _AdminSectionHeader extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  const _AdminSectionHeader(this.text, this.color);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+      child: Text(text,
+          style: Theme.of(context)
+              .textTheme
+              .labelLarge
+              ?.copyWith(color: color, fontWeight: FontWeight.bold)),
     );
   }
 }
