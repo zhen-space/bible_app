@@ -186,13 +186,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
-                      // 只顯示「含關鍵詞的那一句」（斷句）＋人名/地名畫私名號
-                      title: Text.rich(TextSpan(
-                          children: properNameSpans(
-                              context,
-                              sentenceWithMatch(
-                                  r.text, _controller.text.trim()),
-                              query: _controller.text.trim()))),
+                      // 只顯示「含關鍵詞的那一句」（斷句），保持乾淨易讀。
+                      // 私名號與關鍵詞強調只在讀經頁呈現；搜尋片段用純文字，
+                      // 避免在密集清單中的 Rich text 造成過重/破圖的呈現。
+                      title: Text(sentenceWithMatch(
+                          r.text, _controller.text.trim())),
                       subtitle: Text(
                           '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
                       onTap: () =>

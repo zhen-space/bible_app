@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Runtime browser smoke-test tooling (Playwright) — not app code
+/node_modules/
+# Local web DB binary; Render fetches it at build via sqflite_common_ffi_web:setup
+/web/sqlite3.wasm

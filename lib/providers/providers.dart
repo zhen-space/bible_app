@@ -479,11 +479,20 @@ final knowledgeProvider = FutureProvider<KnowledgeBase>((ref) async {
 
 final qaServiceProvider = Provider((ref) => QaService());
 
-/// 已審核公開問題（依分類過濾；分類為空＝全部）。
-final approvedQuestionsProvider =
+/// **學生端可見的 Q&A ＝只有已發布（published）者**（依分類過濾；空＝全部）。
+/// approved/reviewed 不算已發布；沒有已發布資料就是空清單（前端據此顯示
+/// 「目前沒有已發布的解答」，不得以未發布內容或任何 AI 回答代替）。
+final publishedQuestionsProvider =
     FutureProvider.family<List<Question>, String>((ref, category) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
-  return ref.watch(qaServiceProvider).approvedQuestions(category: category);
+  return ref.watch(qaServiceProvider).publishedQuestions(category: category);
+});
+
+/// 管理者：已回答但尚未發布的佇列（供發布）。非學生端來源。
+final awaitingPublishQuestionsProvider =
+    FutureProvider<List<Question>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(qaServiceProvider).awaitingPublishQuestions();
 });
 
 /// 我提出的問題（含待審／退回狀態）。

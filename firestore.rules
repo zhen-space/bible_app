@@ -39,13 +39,16 @@ service cloud.firestore {
         && request.auth.token.email == 'zhen20091212@gmail.com';
     }
 
-    // 疑問 Q&A：登入者可提問（進待審）；已核准的、本人的、管理者可讀；
-    // 審核／回答／精選只有管理者能寫。提問者可刪自己的問題。
+    // 疑問 Q&A：登入者可提問（進待審，且不得自行設定 published）；
+    // **只有 published==true 才對外可讀**（approved/reviewed 不算發布）；
+    // 本人可讀自己的、管理者可讀全部；審核／回答／發布／精選只有管理者能寫。
+    // 提問者可刪自己的問題。
     match /questions/{id} {
       allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.status == 'pending';
-      allow read: if resource.data.status == 'approved'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.published == false;
+      allow read: if resource.data.published == true
         || (request.auth != null && resource.data.uid == request.auth.uid)
         || (request.auth != null
             && request.auth.token.email == 'zhen20091212@gmail.com');

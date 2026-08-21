@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -63,16 +64,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 首頁：引導式入口（今日經文 + 四大入口卡）
-    expect(find.text('今日經文'), findsOneWidget);
-    expect(find.text('讀聖經'), findsOneWidget);
-    expect(find.text('主題閱讀'), findsOneWidget);
-
-    // 讀聖經 → 書卷列表 → 展開創世記 → 點第 1 章
-    await tester.tap(find.text('讀聖經'));
+    // 新版學生端主殼：底部導覽切到「聖經」→ 選擇書卷與章節 → 書卷列表
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('聖經')));
     await tester.pumpAndSettle();
-    expect(find.text('創世記'), findsOneWidget);
-    await tester.tap(find.text('創世記'));
+    await tester.tap(find.text('選擇書卷與章節'));
+    await tester.pumpAndSettle();
+    expect(find.text('創世記'), findsWidgets);
+    await tester.tap(find.text('創世記').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('1').first);
     await tester.pumpAndSettle();
@@ -102,16 +101,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 讀聖經 → 展開創世記，章節格前後應各有導讀/統整方格
-    await tester.tap(find.text('讀聖經'));
+    // 聖經 → 選擇書卷與章節 → 展開創世記，章節格前後應各有導讀/統整方格
+    await tester.tap(find.descendant(
+        of: find.byType(NavigationBar), matching: find.text('聖經')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('創世記'));
+    await tester.tap(find.text('選擇書卷與章節'));
     await tester.pumpAndSettle();
-    expect(find.text('導讀'), findsOneWidget);
-    expect(find.text('統整'), findsOneWidget);
+    await tester.tap(find.text('創世記').first);
+    await tester.pumpAndSettle();
+    expect(find.text('導讀'), findsWidgets);
+    expect(find.text('統整'), findsWidgets);
 
     // 點導讀方格 → 卷導讀頁（尚無內容顯示待填）
-    await tester.tap(find.text('導讀'));
+    await tester.tap(find.text('導讀').first);
     await tester.pumpAndSettle();
     expect(find.text('創世記 · 導讀'), findsOneWidget);
     expect(find.textContaining('尚未填寫'), findsOneWidget);

@@ -345,17 +345,9 @@ class _NoteTabState extends ConsumerState<_NoteTab> {
                           : sentenceWithMatch(n.content, q);
                       return ListTile(
                         leading: const Icon(Icons.sticky_note_2_outlined),
-                        title: q.isEmpty
-                            ? Text(display,
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis)
-                            : Text.rich(
-                                TextSpan(
-                                    children: highlightSpans(
-                                        context, display, q)),
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                        // 搜尋時顯示「含關鍵詞的那句話」（斷句），純文字保持乾淨。
+                        title: Text(display,
+                            maxLines: 3, overflow: TextOverflow.ellipsis),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
