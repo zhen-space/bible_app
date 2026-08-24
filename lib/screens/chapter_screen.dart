@@ -240,9 +240,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            // 點標題開「選卷選章」（可切書卷）
+            // 點標題（頂部入口）先開「66 卷書卷目錄」
             title: InkWell(
-              onTap: () => _showBookChapterPicker(books),
+              onTap: () =>
+                  _showBookChapterPicker(books, startInBookList: true),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -291,7 +292,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               IconButton(
                 icon: const Icon(Icons.list),
                 tooltip: '選卷選章',
-                onPressed: () => _showBookChapterPicker(books),
+                onPressed: () =>
+                    _showBookChapterPicker(books, startInBookList: true),
               ),
             ],
           ),
@@ -420,76 +422,155 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     );
   }
 
-  /// 選卷選章：頂端可用 ‹ › 切換書卷（上一卷／下一卷），下面點章跳轉。
-  void _showBookChapterPicker(List<Book> books) {
+  /// 選卷選章。[startInBookList] true＝先顯示 66 卷書卷目錄（**頂部入口**用）；
+  /// false＝直接顯示目前書卷的章格（**底部 selector** 用）。兩種模式可互相切換
+  /// （書卷目錄點書→該卷章格；章格點卷名→回書卷目錄）。點章走 _goTo 跳轉。
+  void _showBookChapterPicker(List<Book> books, {bool startInBookList = false}) {
     var pickBookId = _bookId; // 目前展示哪一卷的章格（可與正在讀的不同）
+    var showingBooks = startInBookList; // true＝書卷目錄；false＝章格
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) {
-          final b = books[pickBookId - 1];
-          return SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 書卷切換列
-                Row(
+          final maxH = MediaQuery.of(ctx).size.height * 0.72;
+
+          // ── 模式一：66 卷書卷目錄（頂部入口的第一個畫面）──
+          if (showingBooks) {
+            Widget bookTile(Book bk) => ListTile(
+                  dense: true,
+                  title: Text(bk.name),
+                  trailing: Text('${bk.chapterCount} 章',
+                      style: Theme.of(ctx).textTheme.bodySmall),
+                  selected: bk.id == _bookId,
+                  onTap: () => setSheet(() {
+                    pickBookId = bk.id;
+                    showingBooks = false; // 選書 → 進該卷章格
+                  }),
+                );
+            return SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxH),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.chevron_left),
-                      tooltip: '上一卷',
-                      onPressed: pickBookId > 1
-                          ? () => setSheet(() => pickBookId -= 1)
-                          : null,
-                    ),
-                    Expanded(
-                      child: Text('${b.name}（${b.chapterCount} 章）',
-                          textAlign: TextAlign.center,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                      child: Text('選擇書卷（共 66 卷）',
                           style: Theme.of(ctx).textTheme.titleMedium),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right),
-                      tooltip: '下一卷',
-                      onPressed: pickBookId < books.length
-                          ? () => setSheet(() => pickBookId += 1)
-                          : null,
+                    const Divider(height: 1),
+                    Flexible(
+                      child: ListView(
+                        children: [
+                          _pickerSectionLabel(ctx, '舊約'),
+                          for (final bk in books.where((x) => x.id <= 39))
+                            bookTile(bk),
+                          _pickerSectionLabel(ctx, '新約'),
+                          for (final bk in books.where((x) => x.id >= 40))
+                            bookTile(bk),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-                const Divider(height: 1),
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(16),
-                    // 注意：用 Wrap，不用 GridView（GridView 放進可捲動父層會出問題）
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (var c = 1; c <= b.chapterCount; c++)
-                          ActionChip(
-                            label: Text('$c'),
-                            backgroundColor:
-                                (b.id == _bookId && c == _chapter)
-                                    ? Theme.of(ctx)
-                                        .colorScheme
-                                        .primaryContainer
-                                    : null,
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _goTo(b.id, c);
-                            },
+              ),
+            );
+          }
+
+          // ── 模式二：目前/選定書卷的章格（底部 selector 的第一個畫面）──
+          final b = books[pickBookId - 1];
+          return SafeArea(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxH),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 書卷切換列：‹ › 切鄰卷；點卷名 → 回 66 卷目錄
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left),
+                        tooltip: '上一卷',
+                        onPressed: pickBookId > 1
+                            ? () => setSheet(() => pickBookId -= 1)
+                            : null,
+                      ),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setSheet(() => showingBooks = true),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Flexible(
+                                  child: Text('${b.name}（${b.chapterCount} 章）',
+                                      textAlign: TextAlign.center,
+                                      style:
+                                          Theme.of(ctx).textTheme.titleMedium),
+                                ),
+                                const Icon(Icons.arrow_drop_down, size: 22),
+                              ],
+                            ),
                           ),
-                      ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: '下一卷',
+                        onPressed: pickBookId < books.length
+                            ? () => setSheet(() => pickBookId += 1)
+                            : null,
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 1),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      // 注意：用 Wrap，不用 GridView（GridView 放進可捲動父層會出問題）
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (var c = 1; c <= b.chapterCount; c++)
+                            ActionChip(
+                              label: Text('$c'),
+                              backgroundColor:
+                                  (b.id == _bookId && c == _chapter)
+                                      ? Theme.of(ctx)
+                                          .colorScheme
+                                          .primaryContainer
+                                      : null,
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _goTo(b.id, c);
+                              },
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
       ),
     );
   }
+
+  Widget _pickerSectionLabel(BuildContext ctx, String text) => Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+          child: Text(text,
+              style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(ctx).colorScheme.primary,
+                  fontWeight: FontWeight.bold)),
+        ),
+      );
 
   void _refreshMarks() {
     ref.invalidate(
