@@ -133,8 +133,11 @@ class ReadingPlanDetailScreen extends ConsumerWidget {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
+                          // Plan Reader context 不覆蓋一般 Reading Position
                           builder: (_) => ChapterScreen(
-                              bookId: c.bookId, chapter: c.chapter),
+                              bookId: c.bookId,
+                              chapter: c.chapter,
+                              updateReadingPosition: false),
                         ),
                       ),
                     ),

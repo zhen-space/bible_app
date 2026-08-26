@@ -26,12 +26,19 @@ class ChapterScreen extends ConsumerStatefulWidget {
   /// 進來時要「跳到並閃一下」的節（從搜尋、引用、交叉引用等跳進來時帶上）。
   final int? focusVerse;
 
+  /// 是否更新「一般 Reading Position / History」。
+  /// 正常閱讀（書卷→章、繼續閱讀）＝true；**臨時瀏覽**（搜尋結果、每日經文、
+  /// 交叉引用、Q&A 引用、知識庫、之後的 Plan Reader）＝false：
+  /// 進入、捲動、換章、換卷都**不**更新一般 Reading Position，也不記閱讀紀錄。
+  final bool updateReadingPosition;
+
   const ChapterScreen({
     super.key,
     required this.bookId,
     required this.chapter,
     this.initialOffset = 0,
     this.focusVerse,
+    this.updateReadingPosition = true,
   });
 
   @override
@@ -70,10 +77,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ttsCtrl = ref.read(ttsProvider.notifier);
-      ref
-          .read(lastReadProvider.notifier)
-          .set(_bookId, _chapter, widget.initialOffset);
-      _logRead();
+      // 臨時瀏覽不更新一般 Reading Position／閱讀紀錄
+      if (widget.updateReadingPosition) {
+        ref
+            .read(lastReadProvider.notifier)
+            .set(_bookId, _chapter, widget.initialOffset);
+        _logRead();
+      }
       // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
       ref.read(bibleRepositoryProvider).loadEnglish();
       if (_focusPending) _tryFocus();
@@ -91,8 +101,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     super.dispose();
   }
 
-  /// 捲動時 debounce 存位移（記住讀到的畫面）。
+  /// 捲動時 debounce 存位移（記住讀到的畫面）。臨時瀏覽不存。
   void _onScroll() {
+    if (!widget.updateReadingPosition) return;
     if (!_scroll.hasClients) return;
     final offset = _scroll.offset;
     _savePosDebounce?.cancel();
@@ -162,8 +173,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       _chapter = chapter;
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    ref.read(lastReadProvider.notifier).set(bookId, chapter);
-    _logRead();
+    // 臨時瀏覽：換章/換卷也不更新一般 Reading Position
+    if (widget.updateReadingPosition) {
+      ref.read(lastReadProvider.notifier).set(bookId, chapter);
+      _logRead();
+    }
   }
 
   /// 上一章／下一章，跨書卷自動接續。

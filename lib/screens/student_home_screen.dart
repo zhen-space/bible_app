@@ -171,7 +171,7 @@ class _DailyVerseCard extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     child: InkWell(
       borderRadius: BorderRadius.circular(18),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChapterScreen(bookId: daily.bookId, chapter: daily.chapter, focusVerse: daily.verse))),
+      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChapterScreen(bookId: daily.bookId, chapter: daily.chapter, focusVerse: daily.verse, updateReadingPosition: false))),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -196,7 +196,7 @@ class _RecentNoteTile extends StatelessWidget {
     title: Text('${book.name} ${note.chapter}:${note.verse}'),
     subtitle: Text(note.content, maxLines: 2, overflow: TextOverflow.ellipsis),
     trailing: const Icon(Icons.chevron_right),
-    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChapterScreen(bookId: note.bookId, chapter: note.chapter, focusVerse: note.verse))),
+    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChapterScreen(bookId: note.bookId, chapter: note.chapter, focusVerse: note.verse, updateReadingPosition: false))),
   );
 }
 

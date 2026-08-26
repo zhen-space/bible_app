@@ -27,8 +27,12 @@ class AppLinks {
     Navigator.push(
       context,
       MaterialPageRoute(
+        // 交叉引用／Q&A 引用／知識庫＝臨時瀏覽，不更新一般 Reading Position
         builder: (_) => ChapterScreen(
-            bookId: loc.bookId, chapter: loc.chapter, focusVerse: loc.verse),
+            bookId: loc.bookId,
+            chapter: loc.chapter,
+            focusVerse: loc.verse,
+            updateReadingPosition: false),
       ),
     );
   }
