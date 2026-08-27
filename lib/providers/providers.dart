@@ -341,16 +341,72 @@ final chapterCompleteProvider =
       .isChapterComplete(args.bookId, args.chapter);
 });
 
-/// 每日經文：依日期從主題經文池中固定挑一節（同一天大家看到同一節）。
+/// 今天的日期字串 YYYY-MM-DD（每日經文 doc id）。
+String _todayYmd() {
+  final n = DateTime.now();
+  return '${n.year.toString().padLeft(4, '0')}-'
+      '${n.month.toString().padLeft(2, '0')}-'
+      '${n.day.toString().padLeft(2, '0')}';
+}
+
+/// 官方每日經文（管理者發佈，Firestore `daily_verses`）。
+/// **正式來源**；抓到就快取；離線退回快取。都沒有回 null（由 dailyVerseProvider 決定退路）。
+final publishedDailyVerseProvider =
+    FutureProvider<({int bookId, int chapter, int verse})?>((ref) async {
+  final ymd = _todayYmd();
+  final cacheKey = 'cache_daily_$ymd';
+  ({int bookId, int chapter, int verse})? parse(Map<String, dynamic> m) {
+    final b = m['book_id'], c = m['chapter'], v = m['verse'];
+    if (b is int && c is int && v is int) {
+      return (bookId: b, chapter: c, verse: v);
+    }
+    return null;
+  }
+
+  if (ref.watch(firebaseReadyProvider)) {
+    try {
+      final m = await ref.read(contentServiceProvider)
+          .fetchPublishedDailyVerse(ymd);
+      if (m != null) {
+        await _writeCache(cacheKey, m);
+        return parse(m);
+      }
+    } catch (_) {/* 離線/失敗 → 退快取 */}
+  }
+  final cached = await _readCache(cacheKey);
+  if (cached != null) return parse(cached);
+  return null;
+});
+
+/// 每日經文：**正式來源＝官方發佈（publishedDailyVerseProvider）**。
+/// 尚無官方發佈或離線無快取時，退回本地經文池（fallback，非正式來源）。
 final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
   final books = await ref.watch(booksProvider.future);
+  VerseRef build(int bookId, int chapter, int verse) => VerseRef(
+      bookId: bookId,
+      chapter: chapter,
+      verse: verse,
+      text: books[bookId - 1].chapters[chapter - 1][verse - 1]);
+
+  final published = await ref.watch(publishedDailyVerseProvider.future);
+  if (published != null) {
+    final b = published.bookId, c = published.chapter, v = published.verse;
+    // 防呆：發佈的節位需落在範圍內，否則退 fallback。
+    if (b >= 1 &&
+        b <= books.length &&
+        c >= 1 &&
+        c <= books[b - 1].chapters.length &&
+        v >= 1 &&
+        v <= books[b - 1].chapters[c - 1].length) {
+      return build(b, c, v);
+    }
+  }
+
+  // Fallback：本地經文池（同一天大家看到同一節）。
   final pool = dailyVersePool();
   final day = DateTime.now().difference(DateTime(2024)).inDays;
   final loc = VerseLocator.parse(pool[day % pool.length], books)!;
-  final text =
-      books[loc.bookId - 1].chapters[loc.chapter - 1][loc.verse! - 1];
-  return VerseRef(
-      bookId: loc.bookId, chapter: loc.chapter, verse: loc.verse!, text: text);
+  return build(loc.bookId, loc.chapter, loc.verse!);
 });
 
 final contentServiceProvider = Provider((ref) => ContentService());

@@ -20,6 +20,14 @@ service cloud.firestore {
         && request.auth.token.email == 'zhen20091212@gmail.com';
     }
 
+    // 每日經文（官方發佈）：所有人可讀（讀經端只讀 published==true），
+    // 只有管理者能寫。doc id = 'YYYY-MM-DD'，欄位 {book_id,chapter,verse,published}。
+    match /daily_verses/{doc} {
+      allow read: if true;
+      allow write: if request.auth != null
+        && request.auth.token.email == 'zhen20091212@gmail.com';
+    }
+
     // 公開註解投稿：登入者可投（進待審），本人與管理者可讀，管理者可審
     match /submissions/{id} {
       allow create: if request.auth != null

@@ -7,6 +7,7 @@ import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'reading_plans_screen.dart';
 import 'search_screen.dart';
+import 'verse_action_sheet.dart';
 
 /// 新版首頁：只回答「今天／接下來要讀什麼」，不再充當功能總表。
 class StudentHomeScreen extends ConsumerWidget {
@@ -79,7 +80,7 @@ class StudentHomeScreen extends ConsumerWidget {
               error: (_, _) => _InlineError(label: '今日經文暫時無法載入', onRetry: () => ref.invalidate(dailyVerseProvider)),
               data: (daily) => booksAsync.value == null
                   ? const _LoadingBlock(height: 150)
-                  : _DailyVerseCard(daily: daily, book: booksAsync.value![daily.bookId - 1]),
+                  : _DailyVerseCard(daily: daily, book: booksAsync.value![daily.bookId - 1], parentRef: ref),
             ),
             const SizedBox(height: 28),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -164,9 +165,10 @@ class _StartReadingCard extends StatelessWidget {
 }
 
 class _DailyVerseCard extends StatelessWidget {
-  const _DailyVerseCard({required this.daily, required this.book});
+  const _DailyVerseCard({required this.daily, required this.book, required this.parentRef});
   final dynamic daily;
   final Book book;
+  final WidgetRef parentRef;
   @override
   Widget build(BuildContext context) => Card(
     child: InkWell(
@@ -178,8 +180,17 @@ class _DailyVerseCard extends StatelessWidget {
           Text(daily.text, style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.8)),
           const SizedBox(height: 12),
           Text('${book.name} ${daily.chapter}:${daily.verse}', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.primary)),
-          const SizedBox(height: 8),
-          const Text('查看上下文 →'),
+          const SizedBox(height: 4),
+          Row(children: [
+            const Text('查看上下文 →'),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.more_horiz),
+              tooltip: '螢光筆／書籤／筆記／分享',
+              onPressed: () => showVerseActionSheet(context, parentRef,
+                  book: book, chapter: daily.chapter, verse: daily.verse, text: daily.text),
+            ),
+          ]),
         ]),
       ),
     ),
