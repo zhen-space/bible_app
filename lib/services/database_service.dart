@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 8;
+  static const _dbVersion = 9;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -81,6 +81,20 @@ class DatabaseService {
     await _createTombstonesTable(db); // v6
     await _createPrayersTable(db); // v7
     await _createTodosTable(db); // v8
+    await _createChapterCompletionsTable(db); // v9
+  }
+
+  /// 章節「完成」紀錄（v9）：**使用者主動確認完成**的章，與「閱讀紀錄／造訪」
+  /// （reading_log）分離——打開章節不等於完成章節。信仰地圖與已讀統計改用此表。
+  Future<void> _createChapterCompletionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE chapter_completions (
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        completed_at INTEGER NOT NULL,
+        PRIMARY KEY(book_id, chapter)
+      )
+    ''');
   }
 
   /// 信仰生活代辦事項（首頁區塊）：分類/內容/完成狀態，使用者自行增刪，**可打勾**。
@@ -209,6 +223,15 @@ class DatabaseService {
     }
     if (oldV < 8) {
       await _createTodosTable(db);
+    }
+    if (oldV < 9) {
+      await _createChapterCompletionsTable(db);
+      // 向後相容：把既有「閱讀紀錄」視為已完成，保留使用者現有的信仰地圖進度。
+      // （舊版打開章節即記 reading_log；升版後只有主動確認才算完成，但既有進度不清空。）
+      await db.execute('''
+        INSERT OR IGNORE INTO chapter_completions (book_id, chapter, completed_at)
+        SELECT book_id, chapter, read_at FROM reading_log
+      ''');
     }
   }
 
@@ -380,8 +403,8 @@ class DatabaseService {
     _mutated();
   }
 
-  /// 已讀章數。
-  Future<int> getReadChapterCount() async {
+  /// 曾造訪過的章數（Reading History）。
+  Future<int> getVisitedChapterCount() async {
     final db = await database;
     final rows =
         await db.rawQuery('SELECT COUNT(*) AS c FROM reading_log');
@@ -393,12 +416,87 @@ class DatabaseService {
     return db.query('reading_log');
   }
 
-  /// 每卷已讀章數（bookId → 已讀章數），信仰地圖用。
+  // ---- 章節完成（Chapter Completion，使用者主動確認）----
+
+  /// 標記某章為「已完成」（主動確認）。
+  Future<void> markChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    await db.insert(
+      'chapter_completions',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'completed_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await _untomb(db, 'completion', _completionRef(bookId, chapter));
+    _mutated();
+  }
+
+  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。
+  Future<void> unmarkChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    await db.delete(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    await _tombstone(db, 'completion', _completionRef(bookId, chapter));
+    _mutated();
+  }
+
+  String _completionRef(int bookId, int chapter) => 'b${bookId}_c$chapter';
+
+  Future<bool> isChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    return rows.isNotEmpty;
+  }
+
+  /// 已完成章數（全聖經 1,189 章）。
+  Future<int> getReadChapterCount() async {
+    final db = await database;
+    final rows =
+        await db.rawQuery('SELECT COUNT(*) AS c FROM chapter_completions');
+    return rows.first['c'] as int;
+  }
+
+  Future<List<Map<String, dynamic>>> getAllChapterCompletions() async {
+    final db = await database;
+    return db.query('chapter_completions');
+  }
+
+  /// 每卷已完成章數（bookId → 已完成章數），信仰地圖用。
   Future<Map<int, int>> getReadCountsByBook() async {
     final db = await database;
     final rows = await db.rawQuery(
-        'SELECT book_id, COUNT(*) AS c FROM reading_log GROUP BY book_id');
+        'SELECT book_id, COUNT(*) AS c FROM chapter_completions GROUP BY book_id');
     return {for (final r in rows) r['book_id'] as int: r['c'] as int};
+  }
+
+  /// 完成紀錄合併（保留較新的 completed_at），雲端同步用。
+  Future<void> upsertChapterCompletion(
+      int bookId, int chapter, int completedAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    if (existing.isNotEmpty &&
+        (existing.first['completed_at'] as int) >= completedAt) {
+      return;
+    }
+    await db.insert(
+      'chapter_completions',
+      {'book_id': bookId, 'chapter': chapter, 'completed_at': completedAt},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   /// 每卷有筆記/書籤/螢光筆的節數合計（信仰地圖「有標記」用）。
@@ -542,7 +640,7 @@ class DatabaseService {
       return r.first['c'] as int;
     }
     return {
-      'read': await count('reading_log'),
+      'read': await count('chapter_completions'),
       'bookmarks': await count('bookmarks'),
       'highlights': await count('highlights'),
       'notes': await count('notes'),
@@ -785,6 +883,18 @@ class DatabaseService {
           'todos',
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
+        );
+      case 'completion':
+        final cm = RegExp(r'^b(\d+)_c(\d+)$').firstMatch(ref);
+        if (cm == null) return 0;
+        removed = await db.delete(
+          'chapter_completions',
+          where: 'book_id = ? AND chapter = ? AND completed_at <= ?',
+          whereArgs: [
+            int.parse(cm.group(1)!),
+            int.parse(cm.group(2)!),
+            deletedAt,
+          ],
         );
     }
     return removed;

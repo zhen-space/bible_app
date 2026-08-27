@@ -155,13 +155,33 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     });
   }
 
+  /// 記錄「造訪」到 Reading History（reading_log）。**不等於完成**——
+  /// 完成是使用者主動按「完成本章」（見 _toggleComplete）。
   Future<void> _logRead() async {
+    await ref
+        .read(databaseServiceProvider)
+        .markChapterRead(_bookId, _chapter);
+  }
+
+  /// 使用者主動確認「完成／取消完成」本章。只在正常閱讀（非臨時瀏覽）出現。
+  Future<void> _toggleComplete(int bookId, int chapter, bool currentlyDone) async {
+    final db = ref.read(databaseServiceProvider);
     try {
-      await ref
-          .read(databaseServiceProvider)
-          .markChapterRead(_bookId, _chapter);
+      if (currentlyDone) {
+        await db.unmarkChapterComplete(bookId, chapter);
+      } else {
+        await db.markChapterComplete(bookId, chapter);
+      }
     } finally {
+      ref.invalidate(chapterCompleteProvider((bookId: bookId, chapter: chapter)));
       ref.invalidate(readChapterCountProvider);
+      ref.invalidate(faithMapProvider);
+      ref.invalidate(statsProvider);
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(currentlyDone ? '已取消本章完成標記' : '已標記本章完成'),
+          duration: const Duration(seconds: 1)));
     }
   }
 
@@ -232,6 +252,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       data: (books) {
         final book = books[_bookId - 1];
         final verses = book.chapters[_chapter - 1];
+        // 「完成本章」只在正常閱讀時提供（臨時瀏覽不記完成）。
+        final isComplete = widget.updateReadingPosition &&
+            (ref
+                    .watch(chapterCompleteProvider(
+                        (bookId: _bookId, chapter: _chapter)))
+                    .value ??
+                false);
         final marks = ref
                 .watch(chapterMarksProvider(
                     (bookId: _bookId, chapter: _chapter)))
@@ -303,6 +330,18 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 onPressed: () =>
                     ref.read(readingModeProvider.notifier).toggle(),
               ),
+              if (widget.updateReadingPosition)
+                IconButton(
+                  icon: Icon(isComplete
+                      ? Icons.check_circle
+                      : Icons.check_circle_outline),
+                  color: isComplete
+                      ? Theme.of(context).colorScheme.secondary
+                      : null,
+                  tooltip: isComplete ? '已完成本章（點擊取消）' : '標記本章完成',
+                  onPressed: () =>
+                      _toggleComplete(_bookId, _chapter, isComplete),
+                ),
               IconButton(
                 icon: const Icon(Icons.list),
                 tooltip: '選卷選章',

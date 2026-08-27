@@ -329,9 +329,17 @@ final searchHistoryProvider =
     NotifierProvider<SearchHistoryNotifier, List<String>>(
         SearchHistoryNotifier.new);
 
-/// 已讀章數（全聖經 1,189 章）。
+/// 已完成章數（Chapter Completion，主動確認；全聖經 1,189 章）。
 final readChapterCountProvider = FutureProvider<int>(
     (ref) => ref.watch(databaseServiceProvider).getReadChapterCount());
+
+/// 某章是否已被使用者主動標記完成（讀經頁「完成本章」按鈕狀態）。
+final chapterCompleteProvider =
+    FutureProvider.family<bool, ({int bookId, int chapter})>((ref, args) {
+  return ref
+      .watch(databaseServiceProvider)
+      .isChapterComplete(args.bookId, args.chapter);
+});
 
 /// 每日經文：依日期從主題經文池中固定挑一節（同一天大家看到同一節）。
 final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {

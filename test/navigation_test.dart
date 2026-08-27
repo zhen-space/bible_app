@@ -31,6 +31,9 @@ class FakeDatabaseService extends DatabaseService {
   Future<int> getReadChapterCount() async => 0;
 
   @override
+  Future<bool> isChapterComplete(int bookId, int chapter) async => false;
+
+  @override
   Future<List<Bookmark>> getAllBookmarks() async => [];
 
   @override

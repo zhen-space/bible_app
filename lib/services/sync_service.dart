@@ -45,6 +45,7 @@ class SyncService {
     final tombS = await db.getTombstoneMap('sermon');
     final tombP = await db.getTombstoneMap('prayer');
     final tombT = await db.getTombstoneMap('todo');
+    final tombC = await db.getTombstoneMap('completion');
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
@@ -95,6 +96,16 @@ class SyncService {
       final m = d.data();
       await db.upsertPlanProgress(
           m['plan_id'] as String, m['day'] as int, m['done_at'] as int);
+      downloaded++;
+    }
+    final cloudCompletions = await _col(uid, 'chapter_completions').get();
+    for (final d in cloudCompletions.docs) {
+      final m = d.data();
+      final completedAt = m['completed_at'] as int;
+      final t = tombC['b${m['book_id']}_c${m['chapter']}'];
+      if (t != null && t >= completedAt) continue;
+      await db.upsertChapterCompletion(
+          m['book_id'] as int, m['chapter'] as int, completedAt);
       downloaded++;
     }
     // 證道筆記：以雲端 doc id 對應本地（較新的 updated_at 為準）
@@ -246,6 +257,19 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    for (final m in await db.getAllChapterCompletions()) {
+      batch.set(
+          _col(uid, 'chapter_completions')
+              .doc('b${m['book_id']}_c${m['chapter']}'),
+          {
+            'book_id': m['book_id'],
+            'chapter': m['chapter'],
+            'completed_at': m['completed_at'],
+          });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
     // 墓碑：上傳墓碑本身，並刪掉雲端對應的資料 doc（本機已無此筆活資料，
     // 因為新增/更新時會清墓碑，不變量保證兩者互斥，不會誤刪活資料）。
     const kindCol = {
@@ -255,6 +279,7 @@ class SyncService {
       'sermon': 'sermon_notes',
       'prayer': 'prayers',
       'todo': 'todos',
+      'completion': 'chapter_completions',
     };
     for (final t in await db.getAllTombstones()) {
       final kind = t['kind'] as String;
