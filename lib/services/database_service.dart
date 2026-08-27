@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 9;
+  static const _dbVersion = 10;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -82,6 +82,23 @@ class DatabaseService {
     await _createPrayersTable(db); // v7
     await _createTodosTable(db); // v8
     await _createChapterCompletionsTable(db); // v9
+    await _createPlanItemProgressTable(db); // v10
+  }
+
+  /// 讀經計畫「單一讀經項目」完成紀錄（v10，Reading Plans v2）。
+  /// 一天含多個 Reading Item（章），每個項目可獨立勾選完成——
+  /// 與舊的 plan_progress（整天為單位）並存，plan_progress 保留給向後相容。
+  Future<void> _createPlanItemProgressTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE plan_item_progress (
+        plan_id TEXT NOT NULL,
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        day INTEGER NOT NULL,
+        done_at INTEGER NOT NULL,
+        PRIMARY KEY(plan_id, book_id, chapter)
+      )
+    ''');
   }
 
   /// 章節「完成」紀錄（v9）：**使用者主動確認完成**的章，與「閱讀紀錄／造訪」
@@ -232,6 +249,9 @@ class DatabaseService {
         INSERT OR IGNORE INTO chapter_completions (book_id, chapter, completed_at)
         SELECT book_id, chapter, read_at FROM reading_log
       ''');
+    }
+    if (oldV < 10) {
+      await _createPlanItemProgressTable(db);
     }
   }
 
@@ -696,7 +716,122 @@ class DatabaseService {
     return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
   }
 
-  /// 勾選/取消某一天。
+  // ---- 讀經計畫 v2：單一讀經項目（章）進度 ----
+
+  /// 某計畫已完成的讀經項目（book_id*1000+chapter 無法保證唯一，改用字串 key）。
+  /// 回傳 {'b{book}_c{chapter}'} 集合。
+  Future<Set<String>> getPlanItemProgress(String planId) async {
+    final db = await database;
+    final rows = await db.query('plan_item_progress',
+        columns: ['book_id', 'chapter'],
+        where: 'plan_id = ?',
+        whereArgs: [planId]);
+    return {
+      for (final r in rows) 'b${r['book_id']}_c${r['chapter']}',
+    };
+  }
+
+  /// 各計畫已完成項目數（planId → 已完成章數），計畫列表進度條用。
+  Future<Map<String, int>> getPlanItemDoneCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+        'SELECT plan_id, COUNT(*) AS c FROM plan_item_progress GROUP BY plan_id');
+    return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
+  }
+
+  /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
+  Future<void> setPlanItemDone(
+      String planId, int day, int bookId, int chapter, bool done) async {
+    final db = await database;
+    if (done) {
+      await db.insert(
+        'plan_item_progress',
+        {
+          'plan_id': planId,
+          'book_id': bookId,
+          'chapter': chapter,
+          'day': day,
+          'done_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await db.delete(
+        'plan_item_progress',
+        where: 'plan_id = ? AND book_id = ? AND chapter = ?',
+        whereArgs: [planId, bookId, chapter],
+      );
+    }
+    _mutated();
+  }
+
+  Future<List<Map<String, dynamic>>> getAllPlanItemProgress() async {
+    final db = await database;
+    return db.query('plan_item_progress');
+  }
+
+  /// 向後相容：把舊版「整天完成」（plan_progress）一次性攤平成 v2 的
+  /// 逐項目完成（plan_item_progress）。只在該計畫尚無任何 v2 項目進度時做，
+  /// 需要外部傳入 day→該天章清單（因排程依賴 books，不能純 SQL 算）。
+  /// [dayItems]：day(1-based) → 該天的 [(bookId, chapter), …]。
+  Future<int> seedPlanItemsFromDays(
+      String planId, Map<int, List<List<int>>> dayItems) async {
+    final db = await database;
+    final already = await db.query('plan_item_progress',
+        where: 'plan_id = ?', whereArgs: [planId], limit: 1);
+    if (already.isNotEmpty) return 0; // 已有 v2 進度，不覆蓋
+    final doneDays = await getPlanProgress(planId);
+    if (doneDays.isEmpty) return 0;
+    var seeded = 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final batch = db.batch();
+    for (final day in doneDays) {
+      for (final item in dayItems[day] ?? const <List<int>>[]) {
+        batch.insert(
+          'plan_item_progress',
+          {
+            'plan_id': planId,
+            'book_id': item[0],
+            'chapter': item[1],
+            'day': day,
+            'done_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        seeded++;
+      }
+    }
+    await batch.commit(noResult: true);
+    if (seeded > 0) _mutated();
+    return seeded;
+  }
+
+  /// 計畫項目進度合併（保留較新的 done_at），雲端同步用。
+  Future<void> upsertPlanItemProgress(
+      String planId, int bookId, int chapter, int day, int doneAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'plan_item_progress',
+      where: 'plan_id = ? AND book_id = ? AND chapter = ?',
+      whereArgs: [planId, bookId, chapter],
+    );
+    if (existing.isNotEmpty && (existing.first['done_at'] as int) >= doneAt) {
+      return;
+    }
+    await db.insert(
+      'plan_item_progress',
+      {
+        'plan_id': planId,
+        'book_id': bookId,
+        'chapter': chapter,
+        'day': day,
+        'done_at': doneAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 勾選/取消某一天（整天為單位；v1 相容保留）。
   Future<void> setPlanDayDone(String planId, int day, bool done) async {
     final db = await database;
     if (done) {

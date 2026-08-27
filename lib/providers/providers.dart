@@ -607,6 +607,16 @@ final planProgressProvider =
   return ref.watch(databaseServiceProvider).getPlanProgress(planId);
 });
 
+/// 讀經計畫 v2：各計畫已完成「讀經項目（章）」數，計畫列表進度條用。
+final planItemDoneCountsProvider = FutureProvider<Map<String, int>>(
+    (ref) => ref.watch(databaseServiceProvider).getPlanItemDoneCounts());
+
+/// 讀經計畫 v2：單一計畫已完成的讀經項目集合（'b{book}_c{chapter}'）。
+final planItemProgressProvider =
+    FutureProvider.family<Set<String>, String>((ref, planId) {
+  return ref.watch(databaseServiceProvider).getPlanItemProgress(planId);
+});
+
 // ---- 帳號與雲端同步（Firebase；未初始化時功能自動隱藏）----
 
 /// Firebase 是否可用（main 裡 init 成功才會有 app）。

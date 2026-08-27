@@ -98,6 +98,17 @@ class SyncService {
           m['plan_id'] as String, m['day'] as int, m['done_at'] as int);
       downloaded++;
     }
+    final cloudPlanItems = await _col(uid, 'plan_item_progress').get();
+    for (final d in cloudPlanItems.docs) {
+      final m = d.data();
+      await db.upsertPlanItemProgress(
+          m['plan_id'] as String,
+          m['book_id'] as int,
+          m['chapter'] as int,
+          m['day'] as int,
+          m['done_at'] as int);
+      downloaded++;
+    }
     final cloudCompletions = await _col(uid, 'chapter_completions').get();
     for (final d in cloudCompletions.docs) {
       final m = d.data();
@@ -250,6 +261,21 @@ class SyncService {
               .doc('${m['plan_id']}_d${m['day']}'),
           {
             'plan_id': m['plan_id'],
+            'day': m['day'],
+            'done_at': m['done_at'],
+          });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
+    for (final m in await db.getAllPlanItemProgress()) {
+      batch.set(
+          _col(uid, 'plan_item_progress')
+              .doc('${m['plan_id']}_b${m['book_id']}_c${m['chapter']}'),
+          {
+            'plan_id': m['plan_id'],
+            'book_id': m['book_id'],
+            'chapter': m['chapter'],
             'day': m['day'],
             'done_at': m['done_at'],
           });
