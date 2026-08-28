@@ -42,16 +42,35 @@ try {
   die("未安裝 firebase-admin。請先在 tools/ 執行 `npm install`。");
 }
 
+import { readFileSync } from 'node:fs';
+
 let credential;
+let projectId;
 try {
-  credential = hasInline
-    ? admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
-    : admin.credential.applicationDefault();
+  if (hasInline) {
+    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    credential = admin.credential.cert(sa);
+    projectId = sa.project_id;
+  } else {
+    // 從 GOOGLE_APPLICATION_CREDENTIALS 的 JSON 取 project_id（明確標示 target）。
+    try {
+      const sa = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, 'utf8'));
+      projectId = sa.project_id;
+    } catch { /* 非 JSON 金鑰檔也允許，改由 SDK 推斷 */ }
+    credential = admin.credential.applicationDefault();
+  }
 } catch (e) {
   die(`無法載入 credentials：${e.message}`);
 }
 
-admin.initializeApp({ credential });
+projectId = projectId || process.env.GOOGLE_CLOUD_PROJECT;
+// 明確標示 production target；若設了 EXPECTED_PROJECT 則必須相符（防打錯專案）。
+if (process.env.EXPECTED_PROJECT && projectId && process.env.EXPECTED_PROJECT !== projectId) {
+  die(`target project '${projectId}' 與 EXPECTED_PROJECT '${process.env.EXPECTED_PROJECT}' 不符——中止（防連錯專案）。`);
+}
+console.error(`[audit] TARGET PROJECT: ${projectId || '(由 SDK 推斷)'} — 唯讀，不寫入。`);
+
+admin.initializeApp(projectId ? { credential, projectId } : { credential });
 const db = admin.firestore();
 // 再次確保不是 emulator（firebase-admin 也會讀 FIRESTORE_EMULATOR_HOST）。
 if (process.env.FIRESTORE_EMULATOR_HOST) die('emulator 環境變數在初始化後出現，中止。');
