@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 13;
+  static const _dbVersion = 14;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -104,9 +104,14 @@ class DatabaseService {
     ''');
   }
 
-  /// 讀經計畫「單一讀經項目」完成紀錄（v10，Reading Plans v2）。
+  /// 讀經計畫「單一讀經項目」完成紀錄（v10，Reading Plans v2；v14 加 item_id）。
   /// 一天含多個 Reading Item（章），每個項目可獨立勾選完成——
   /// 與舊的 plan_progress（整天為單位）並存，plan_progress 保留給向後相容。
+  ///
+  /// **進度身分（identity）**：本機機械計畫用 (plan_id, book_id, chapter)（＝真實
+  /// 章位，**非** display index，換版不會錯位）。官方 Published 計畫的 Reading Item
+  /// 帶 **stable item_id** 時，改以 item_id 為身分（`item_id` 欄，v14 additive），
+  /// 支援 plan version 演進、以及一個項目跨範圍/重複章的情形。
   Future<void> _createPlanItemProgressTable(Database db) async {
     await db.execute('''
       CREATE TABLE plan_item_progress (
@@ -114,6 +119,7 @@ class DatabaseService {
         book_id INTEGER NOT NULL,
         chapter INTEGER NOT NULL,
         day INTEGER NOT NULL,
+        item_id TEXT NOT NULL DEFAULT '',
         done_at INTEGER NOT NULL,
         PRIMARY KEY(plan_id, book_id, chapter)
       )
@@ -308,6 +314,12 @@ class DatabaseService {
           'ALTER TABLE prayers ADD COLUMN answered_at INTEGER NOT NULL DEFAULT 0');
       await db.execute(
           "ALTER TABLE prayers ADD COLUMN answered_reflection TEXT NOT NULL DEFAULT ''");
+    }
+    if (oldV < 14) {
+      // Reading Plans：Published 計畫 Reading Item 的 stable item_id（progress
+      // 身分，取代 display index）。additive，機械計畫 item_id 留空沿用章位身分。
+      await db.execute(
+          "ALTER TABLE plan_item_progress ADD COLUMN item_id TEXT NOT NULL DEFAULT ''");
     }
   }
 
@@ -980,7 +992,8 @@ class DatabaseService {
 
   /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
   Future<void> setPlanItemDone(
-      String planId, int day, int bookId, int chapter, bool done) async {
+      String planId, int day, int bookId, int chapter, bool done,
+      {String itemId = ''}) async {
     final db = await database;
     if (done) {
       await db.insert(
@@ -990,6 +1003,7 @@ class DatabaseService {
           'book_id': bookId,
           'chapter': chapter,
           'day': day,
+          'item_id': itemId,
           'done_at': DateTime.now().millisecondsSinceEpoch,
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -1047,7 +1061,8 @@ class DatabaseService {
 
   /// 計畫項目進度合併（保留較新的 done_at），雲端同步用。
   Future<void> upsertPlanItemProgress(
-      String planId, int bookId, int chapter, int day, int doneAt) async {
+      String planId, int bookId, int chapter, int day, int doneAt,
+      {String itemId = ''}) async {
     final db = await database;
     final existing = await db.query(
       'plan_item_progress',
@@ -1064,6 +1079,7 @@ class DatabaseService {
         'book_id': bookId,
         'chapter': chapter,
         'day': day,
+        'item_id': itemId,
         'done_at': doneAt,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,

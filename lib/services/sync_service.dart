@@ -118,7 +118,8 @@ class SyncService {
           m['book_id'] as int,
           m['chapter'] as int,
           m['day'] as int,
-          m['done_at'] as int);
+          m['done_at'] as int,
+          itemId: (m['item_id'] as String?) ?? '');
       downloaded++;
     }
     final cloudCompletions = await _col(uid, 'chapter_completions').get();
@@ -296,6 +297,7 @@ class SyncService {
             'book_id': m['book_id'],
             'chapter': m['chapter'],
             'day': m['day'],
+            'item_id': m['item_id'] ?? '',
             'done_at': m['done_at'],
           });
       pending++;

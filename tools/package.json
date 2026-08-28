@@ -1,0 +1,21 @@
+{
+  "name": "bible-app-content-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only audit / additive backfill / Firestore rules tests for the Published-content workflow (#8/#9). Not run against production by CI.",
+  "scripts": {
+    "audit": "node audit_published.mjs",
+    "backfill:dryrun": "node backfill_status.mjs",
+    "backfill:apply": "node backfill_status.mjs --apply",
+    "test:rules": "firebase emulators:exec --only firestore \"node rules_test.mjs\""
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4",
+    "firebase": "^10.14.1",
+    "firebase-tools": "^15.28.2"
+  }
+}
