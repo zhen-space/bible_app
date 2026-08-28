@@ -20,10 +20,12 @@ service cloud.firestore {
     function isSignedIn() {
       return request.auth != null;
     }
-    // 管理員 = 使用者本人（單一 email）。之後要多管理員可改成 custom claim。
+    // 管理員授權（backward-compatible）：優先看 custom claim `admin==true`
+    // （未來多管理員／角色的正式路徑），同時保留 legacy 單一 email（不破壞現有登入）。
     function isAdmin() {
       return isSignedIn()
-        && request.auth.token.email == 'zhen20091212@gmail.com';
+        && (request.auth.token.admin == true
+            || request.auth.token.email == 'zhen20091212@gmail.com');
     }
     // 公開可讀＝已發佈。
     function isPublished() {

@@ -59,31 +59,35 @@ class ContentProvenance {
 /// provenance / payload / versions（歷史 Published 快照）。
 class ManagedContent {
   final String contentId; // stable id（不隨 Firestore doc id 改變）
+  final String contentType; // 型別：annotation/book_guide/chapter_guide/verse_commentary/knowledge/daily_verse/public_note/reading_plan
   final ContentStatus status;
   final int version; // 從 1 起；每次發佈 +1
   final int createdAt;
   final String createdBy;
   final int updatedAt;
   final String updatedBy;
-  final String reviewer;
+  final String reviewedBy;
   final int reviewedAt;
-  final String publisher;
+  final String publishedBy;
   final int publishedAt;
+  final int archivedAt; // 封存時間（0＝未封存）
   final ContentProvenance provenance;
   final Map<String, dynamic> payload;
 
   const ManagedContent({
     required this.contentId,
+    this.contentType = '',
     required this.status,
     required this.version,
     required this.createdAt,
     required this.createdBy,
     required this.updatedAt,
     required this.updatedBy,
-    this.reviewer = '',
+    this.reviewedBy = '',
     this.reviewedAt = 0,
-    this.publisher = '',
+    this.publishedBy = '',
     this.publishedAt = 0,
+    this.archivedAt = 0,
     this.provenance = const ContentProvenance(),
     this.payload = const {},
   });
@@ -93,16 +97,21 @@ class ManagedContent {
   factory ManagedContent.fromMap(String docId, Map<String, dynamic> m) =>
       ManagedContent(
         contentId: (m['content_id'] as String?) ?? docId,
+        contentType: (m['content_type'] as String?) ?? '',
         status: ContentStatus.fromName(m['status'] as String?),
         version: (m['version'] as int?) ?? 1,
         createdAt: (m['created_at'] as int?) ?? 0,
         createdBy: (m['created_by'] as String?) ?? '',
         updatedAt: (m['updated_at'] as int?) ?? 0,
         updatedBy: (m['updated_by'] as String?) ?? '',
-        reviewer: (m['reviewer'] as String?) ?? '',
+        // 讀取相容 legacy 舊欄名 reviewer/publisher。
+        reviewedBy:
+            (m['reviewed_by'] as String?) ?? (m['reviewer'] as String?) ?? '',
         reviewedAt: (m['reviewed_at'] as int?) ?? 0,
-        publisher: (m['publisher'] as String?) ?? '',
+        publishedBy:
+            (m['published_by'] as String?) ?? (m['publisher'] as String?) ?? '',
         publishedAt: (m['published_at'] as int?) ?? 0,
+        archivedAt: (m['archived_at'] as int?) ?? 0,
         provenance:
             ContentProvenance.fromMap((m['provenance'] as Map?)?.cast()),
         payload: ((m['payload'] as Map?)?.cast<String, dynamic>()) ?? const {},
@@ -110,37 +119,49 @@ class ManagedContent {
 
   Map<String, dynamic> toMap() => {
         'content_id': contentId,
+        'content_type': contentType,
         'status': status.name,
         'version': version,
         'created_at': createdAt,
         'created_by': createdBy,
         'updated_at': updatedAt,
         'updated_by': updatedBy,
-        'reviewer': reviewer,
+        'reviewed_by': reviewedBy,
         'reviewed_at': reviewedAt,
-        'publisher': publisher,
+        'published_by': publishedBy,
         'published_at': publishedAt,
+        'archived_at': archivedAt,
         'provenance': provenance.toMap(),
         'payload': payload,
       };
 }
 
-/// Q&A 回答引用的內容依據（source content ids + versions）——回答保存它，
-/// 前台可取得「回答依據」。retrieval 只能用 Published approved 內容。
+/// Q&A 回答引用的內容依據（source content ids + **immutable** versions + evidence）。
+/// 回答保存它，前台可取得「回答依據」。retrieval 只能用 Published approved 內容；
+/// version 為回答當下取得之 Published 版本的快照，供追溯（immutable / traceable）。
 class AnswerSource {
   final String contentId;
   final int version;
   final String kind; // 例：'question'、'annotation'、'knowledge'
+  final String evidence; // 檢索命中的片段/理由（provenance evidence，可空）
 
   const AnswerSource(
-      {required this.contentId, required this.version, this.kind = ''});
+      {required this.contentId,
+      required this.version,
+      this.kind = '',
+      this.evidence = ''});
 
   factory AnswerSource.fromMap(Map<String, dynamic> m) => AnswerSource(
         contentId: (m['content_id'] as String?) ?? '',
         version: (m['version'] as int?) ?? 0,
         kind: (m['kind'] as String?) ?? '',
+        evidence: (m['evidence'] as String?) ?? '',
       );
 
-  Map<String, dynamic> toMap() =>
-      {'content_id': contentId, 'version': version, 'kind': kind};
+  Map<String, dynamic> toMap() => {
+        'content_id': contentId,
+        'version': version,
+        'kind': kind,
+        'evidence': evidence,
+      };
 }

@@ -119,7 +119,8 @@ class SyncService {
           m['chapter'] as int,
           m['day'] as int,
           m['done_at'] as int,
-          itemId: (m['item_id'] as String?) ?? '');
+          itemId: (m['item_id'] as String?) ?? '',
+          planVersion: (m['plan_version'] as int?) ?? 1);
       downloaded++;
     }
     final cloudCompletions = await _col(uid, 'chapter_completions').get();
@@ -294,6 +295,7 @@ class SyncService {
               .doc('${m['plan_id']}_b${m['book_id']}_c${m['chapter']}'),
           {
             'plan_id': m['plan_id'],
+            'plan_version': m['plan_version'] ?? 1,
             'book_id': m['book_id'],
             'chapter': m['chapter'],
             'day': m['day'],

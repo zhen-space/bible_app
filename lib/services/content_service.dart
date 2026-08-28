@@ -36,6 +36,7 @@ class ContentService {
   Future<void> _setVersioned(
       DocumentReference<Map<String, dynamic>> doc,
       String contentId,
+      String contentType,
       Map<String, dynamic> data,
       {String publisher = '', String provenanceSource = '管理員親撰'}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -44,11 +45,12 @@ class ContentService {
     final payload = <String, dynamic>{
       ...data,
       'content_id': contentId,
+      'content_type': contentType,
       'status': 'published',
       'version': prevVersion + 1,
       'updated_at': now,
       'updated_by': publisher,
-      'publisher': publisher,
+      'published_by': publisher,
       'published_at': now,
       'provenance': {'source': provenanceSource, 'note': ''},
     };
@@ -70,20 +72,21 @@ class ContentService {
 
   Future<void> saveBook(int bookId, Map<String, dynamic> data,
           {String publisher = ''}) =>
-      _setVersioned(_col.doc('book_$bookId'), 'book_$bookId', data,
+      _setVersioned(
+          _col.doc('book_$bookId'), 'book_$bookId', 'book_guide', data,
           publisher: publisher);
 
   Future<void> saveChapter(int bookId, int chapter, Map<String, dynamic> data,
           {String publisher = ''}) =>
       _setVersioned(_col.doc('chapter_${bookId}_$chapter'),
-          'chapter_${bookId}_$chapter', data,
+          'chapter_${bookId}_$chapter', 'chapter_guide', data,
           publisher: publisher);
 
   Future<void> saveVerse(
           int bookId, int chapter, int verse, Map<String, dynamic> data,
           {String publisher = ''}) =>
       _setVersioned(_col.doc('verse_${bookId}_${chapter}_$verse'),
-          'verse_${bookId}_${chapter}_$verse', data,
+          'verse_${bookId}_${chapter}_$verse', 'verse_commentary', data,
           publisher: publisher);
 
   // ---- 知識架構（時間軸/人物/平行/預表）----
@@ -118,13 +121,14 @@ class ContentService {
     await _knowledgeDoc.set({
       ...data,
       'content_id': 'knowledge_data',
+      'content_type': 'knowledge',
       'status': 'published',
       'version': prevVersion + 1,
       'created_at': existing.data()?['created_at'] ?? now,
       'created_by': existing.data()?['created_by'] ?? publisher,
       'updated_at': now,
       'updated_by': publisher,
-      'publisher': publisher,
+      'published_by': publisher,
       'published_at': now,
       'provenance': {'source': '管理員親撰', 'note': ''},
     });
@@ -208,15 +212,17 @@ class ContentService {
       'loc': '${s.bookId}_${s.chapter}',
       'content': s.content,
       'approved_at': now,
+      'content_id': 'public_note_${s.id}',
+      'content_type': 'public_note',
       'status': 'published',
       'version': 1,
       'created_at': now,
       'created_by': s.author,
       'updated_at': now,
       'updated_by': publisher,
-      'reviewer': publisher,
+      'reviewed_by': publisher,
       'reviewed_at': now,
-      'publisher': publisher,
+      'published_by': publisher,
       'published_at': now,
       'provenance': {'source': '使用者投稿', 'note': 'submission:${s.id}'},
     });

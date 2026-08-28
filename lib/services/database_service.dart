@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 14;
+  static const _dbVersion = 15;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -116,6 +116,7 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE plan_item_progress (
         plan_id TEXT NOT NULL,
+        plan_version INTEGER NOT NULL DEFAULT 1,
         book_id INTEGER NOT NULL,
         chapter INTEGER NOT NULL,
         day INTEGER NOT NULL,
@@ -320,6 +321,12 @@ class DatabaseService {
       // 身分，取代 display index）。additive，機械計畫 item_id 留空沿用章位身分。
       await db.execute(
           "ALTER TABLE plan_item_progress ADD COLUMN item_id TEXT NOT NULL DEFAULT ''");
+    }
+    if (oldV < 15) {
+      // Reading Plans：plan_version——Published 計畫 v1→v2 時進度可辨識版本，
+      // 避免換版錯位。additive，預設 1。
+      await db.execute(
+          'ALTER TABLE plan_item_progress ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1');
     }
   }
 
@@ -993,13 +1000,14 @@ class DatabaseService {
   /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
   Future<void> setPlanItemDone(
       String planId, int day, int bookId, int chapter, bool done,
-      {String itemId = ''}) async {
+      {String itemId = '', int planVersion = 1}) async {
     final db = await database;
     if (done) {
       await db.insert(
         'plan_item_progress',
         {
           'plan_id': planId,
+          'plan_version': planVersion,
           'book_id': bookId,
           'chapter': chapter,
           'day': day,
@@ -1062,7 +1070,7 @@ class DatabaseService {
   /// 計畫項目進度合併（保留較新的 done_at），雲端同步用。
   Future<void> upsertPlanItemProgress(
       String planId, int bookId, int chapter, int day, int doneAt,
-      {String itemId = ''}) async {
+      {String itemId = '', int planVersion = 1}) async {
     final db = await database;
     final existing = await db.query(
       'plan_item_progress',
@@ -1076,6 +1084,7 @@ class DatabaseService {
       'plan_item_progress',
       {
         'plan_id': planId,
+        'plan_version': planVersion,
         'book_id': bookId,
         'chapter': chapter,
         'day': day,

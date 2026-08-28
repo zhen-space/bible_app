@@ -124,7 +124,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 **v14**（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers；v8 todos；**v9 chapter_completions**；**v10 plan_item_progress**；**v11 later**；**v12 notes.title/refs/deleted_at**；**v13 prayers v2 欄位**；**v14 plan_item_progress.item_id**）。升版時：
+`database_service.dart`，目前 **v14**（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers；v8 todos；**v9 chapter_completions**；**v10 plan_item_progress**；**v11 later**；**v12 notes.title/refs/deleted_at**；**v13 prayers v2 欄位**；**v14 plan_item_progress.item_id**；**v15 plan_item_progress.plan_version**）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）

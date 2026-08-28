@@ -26,15 +26,15 @@ class QaService {
 
   // ---- 提問（使用者）----
 
-  Future<void> submitQuestion({
+  Future<String> submitQuestion({
     required String uid,
     required String authorName,
     required String title,
     required String body,
     required String category,
-  }) {
+  }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    return _questions.add({
+    final ref = await _questions.add({
       'uid': uid,
       'author': authorName,
       'title': title,
@@ -42,12 +42,28 @@ class QaService {
       'category': category,
       'status': 'pending',
       // published ≠ approved：核准/回答不等於發布；唯有管理者明確發布，
-      // 學生端才能取得。預設 false。
+      // 學生端才能取得。預設 false。Pending question **本身不是 retrieval source**。
       'published': false,
       'featured': false,
       'created_at': now,
       'updated_at': now,
     });
+    return ref.id;
+  }
+
+  /// #9 統一提問入口，回傳三種結果之一：
+  /// - `answered`：在 Published approved 語料找到相符（回 matches 供顯示回答依據）。
+  /// - `insufficient_approved_content`：找不到，**不得生成一般回答**。
+  /// - `pending_question_created`：使用者選擇送出未回答問題（回 pendingQuestionId）。
+  ///
+  /// 只做檢索（無模型知識／Web／LLM）。呼叫端先 `ask`，若 insufficient 再由使用者
+  /// 決定是否 `submitQuestion` → 之後以回傳 id 包成 pendingQuestionCreated。
+  Future<QaAskResult> ask(String query, {String? category}) async {
+    final r = await retrieveApproved(query, category: category);
+    if (r.insufficientApprovedContent) {
+      return const QaAskResult(QaOutcome.insufficientApprovedContent);
+    }
+    return QaAskResult(QaOutcome.answered, answers: r.matches);
   }
 
   Future<Question?> getQuestion(String id) async {
@@ -238,6 +254,26 @@ class QaRetrievalResult {
   final List<Question> matches;
   const QaRetrievalResult(this.matches);
   bool get insufficientApprovedContent => matches.isEmpty;
+}
+
+/// #9 提問三態結果（trusted backend / service 層 enforce，非只 client）。
+enum QaOutcome { answered, insufficientApprovedContent, pendingQuestionCreated }
+
+class QaAskResult {
+  final QaOutcome outcome;
+
+  /// answered：相符的 Published approved 問答（含 answer、source scriptures/sources）。
+  final List<Question> answers;
+
+  /// pending_question_created：新建的待答問題 id。
+  final String? pendingQuestionId;
+
+  const QaAskResult(this.outcome,
+      {this.answers = const [], this.pendingQuestionId});
+
+  /// 使用者送出未回答問題後的結果。
+  factory QaAskResult.pending(String id) =>
+      QaAskResult(QaOutcome.pendingQuestionCreated, pendingQuestionId: id);
 }
 
 class Question {

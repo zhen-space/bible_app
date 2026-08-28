@@ -53,21 +53,36 @@ const db = admin.firestore();
 const now = Date.now();
 const plan = []; // {collection, id, adds:{...}}
 
+// 由 collection 名 + doc id 推 content_type（annotations 依 id 前綴）。
+function inferContentType(col, id) {
+  if (col === 'annotations') {
+    if (id.startsWith('book_')) return 'book_guide';
+    if (id.startsWith('chapter_')) return 'chapter_guide';
+    if (id.startsWith('verse_')) return 'verse_commentary';
+    return 'annotation';
+  }
+  return { knowledge: 'knowledge', daily_verses: 'daily_verse', public_notes: 'public_note', reading_plans: 'reading_plan' }[col] || col;
+}
+
 // 決定某 legacy doc 需要補哪些 additive 欄位（**只補缺的，不覆蓋既有**）。
-function additiveFields(d) {
+function additiveFields(col, id, d) {
   const adds = {};
   // legacy 直接發佈內容視為 published；daily_verses 舊資料以 published==true 判斷。
   if (!('status' in d)) {
     const looksPublished = d.published === true || d.published === undefined;
     adds.status = looksPublished ? 'published' : 'draft';
   }
+  if (!('content_id' in d)) adds.content_id = id;
+  if (!('content_type' in d)) adds.content_type = inferContentType(col, id);
   if (!('version' in d)) adds.version = 1;
   if (!('provenance' in d)) adds.provenance = { source: 'legacy-backfill', note: '' };
   if (!('created_at' in d)) adds.created_at = d.approved_at || d.updated_at || now;
   if (!('updated_at' in d)) adds.updated_at = d.updated_at || now;
-  if (adds.status === 'published') {
+  const status = 'status' in d ? d.status : adds.status;
+  if (status === 'published') {
     if (!('published_at' in d)) adds.published_at = d.approved_at || d.updated_at || now;
-    if (!('publisher' in d)) adds.publisher = 'legacy-backfill';
+    // 相容：既有可能是舊欄名 publisher；缺 published_by 才補。
+    if (!('published_by' in d)) adds.published_by = d.publisher || 'legacy-backfill';
   }
   return adds;
 }
@@ -75,7 +90,7 @@ function additiveFields(d) {
 for (const col of MIRRORS) {
   const snap = await db.collection(col).get(); // 只讀
   snap.forEach((doc) => {
-    const adds = additiveFields(doc.data());
+    const adds = additiveFields(col, doc.id, doc.data());
     if (Object.keys(adds).length > 0) plan.push({ collection: col, id: doc.id, adds });
   });
 }

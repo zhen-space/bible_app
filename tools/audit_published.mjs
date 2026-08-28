@@ -65,6 +65,8 @@ function checkMeta(col, id, d) {
   if (d.status === 'published') {
     if (typeof d.version !== 'number') problems.push('published but missing/invalid version');
     if (!d.provenance) problems.push('published but missing provenance');
+    if (!d.content_type) problems.push('published but missing content_type');
+    if (!d.content_id) problems.push('published but missing content_id');
   }
   if (problems.length) report.issues.push({ collection: col, id, problems });
   return problems.length === 0;

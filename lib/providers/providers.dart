@@ -500,10 +500,30 @@ final chapterAnnotationProvider = FutureProvider.family<
   return (chapter: chapter, verses: verses);
 });
 
-/// 是否為管理者（後台入口顯示條件）。
+/// 是否為管理者（同步；後台入口顯示條件）。**backward-compatible**：
+/// legacy 單一 email 立即為真（不破壞現有登入）；custom claim 的判斷走
+/// [adminClaimProvider]（非同步取 ID token）＋ [isAdminEffectiveProvider]。
 final isAdminProvider = Provider<bool>((ref) {
   final user = ref.watch(authUserProvider).value;
   return user?.email == kAdminEmail;
+});
+
+/// custom claim `admin==true`（多管理員／角色的正式路徑）。取 ID token claims。
+final adminClaimProvider = FutureProvider<bool>((ref) async {
+  final user = ref.watch(authUserProvider).value;
+  if (user == null) return false;
+  try {
+    final token = await user.getIdTokenResult();
+    return token.claims?['admin'] == true;
+  } catch (_) {
+    return false;
+  }
+});
+
+/// 有效管理者 = legacy email 或 custom claim。UI/後台入口可用此判斷。
+final isAdminEffectiveProvider = FutureProvider<bool>((ref) async {
+  if (ref.watch(isAdminProvider)) return true;
+  return ref.watch(adminClaimProvider.future);
 });
 
 /// 某章已通過的公開註解（verse → 多則）。Firebase 不可用或離線時為空。

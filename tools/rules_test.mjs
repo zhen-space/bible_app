@@ -20,9 +20,7 @@ import {
   doc,
   getDoc,
   setDoc,
-  collection,
-  query,
-  where,
+  collectionGroup,
   getDocs,
 } from 'firebase/firestore';
 
@@ -38,8 +36,11 @@ const env = await initializeTestEnvironment({
 // 以繞過規則的方式植入種子資料。
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
-  await setDoc(doc(db, 'annotations/book_1'), { status: 'published', version: 1, payload: 'x' });
+  await setDoc(doc(db, 'annotations/book_1'), { status: 'published', version: 1, content_type: 'book_guide', content_id: 'book_1' });
   await setDoc(doc(db, 'annotations/book_2_draft'), { status: 'draft', version: 0 });
+  await setDoc(doc(db, 'annotations/book_3_review'), { status: 'review', version: 0 });
+  await setDoc(doc(db, 'annotations/book_4_rejected'), { status: 'rejected', version: 0 });
+  await setDoc(doc(db, 'annotations/book_5_archived'), { status: 'archived', version: 1 });
   await setDoc(doc(db, 'annotations_workspace/book_1'), { status: 'draft' });
   await setDoc(doc(db, 'daily_verses/2026-01-01'), { status: 'published', book_id: 1, chapter: 1, verse: 1 });
   await setDoc(doc(db, 'daily_verses/2026-01-02'), { status: 'draft', book_id: 1, chapter: 1, verse: 2 });
@@ -51,6 +52,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
 const guest = env.unauthenticatedContext().firestore();
 const student = env.authenticatedContext('student1', { email: 'student@example.com' }).firestore();
 const admin = env.authenticatedContext('admin1', { email: ADMIN }).firestore();
+// 以 custom claim admin==true 授權（email 非 legacy）——backward-compatible role path。
+const claimAdmin = env.authenticatedContext('admin2', { email: 'other@example.com', admin: true }).firestore();
 
 let passed = 0;
 async function ok(label, p) {
@@ -61,19 +64,32 @@ async function ok(label, p) {
 
 console.log('Firestore rules 測試：');
 
-// 公開讀：只有 Published。
+// 公開讀：只有 Published。Draft/Review/Rejected/Archived 全 deny。
 await ok('guest 可讀 Published annotation', assertSucceeds(getDoc(doc(guest, 'annotations/book_1'))));
 await ok('guest 不可讀 Draft annotation', assertFails(getDoc(doc(guest, 'annotations/book_2_draft'))));
+await ok('guest 不可讀 Review annotation', assertFails(getDoc(doc(guest, 'annotations/book_3_review'))));
+await ok('guest 不可讀 Rejected annotation', assertFails(getDoc(doc(guest, 'annotations/book_4_rejected'))));
+await ok('guest 不可讀 Archived annotation', assertFails(getDoc(doc(guest, 'annotations/book_5_archived'))));
 await ok('student 不可讀 Draft annotation', assertFails(getDoc(doc(student, 'annotations/book_2_draft'))));
+await ok('student 不可讀 Review annotation', assertFails(getDoc(doc(student, 'annotations/book_3_review'))));
+await ok('student 不可讀 Rejected annotation', assertFails(getDoc(doc(student, 'annotations/book_4_rejected'))));
+await ok('student 不可讀 Archived annotation', assertFails(getDoc(doc(student, 'annotations/book_5_archived'))));
 
-// workspace：學生端完全讀不到；admin 可讀。
+// workspace：學生端完全讀不到；admin（含 custom-claim admin）可讀。
 await ok('guest 不可讀 annotations_workspace', assertFails(getDoc(doc(guest, 'annotations_workspace/book_1'))));
 await ok('student 不可讀 annotations_workspace', assertFails(getDoc(doc(student, 'annotations_workspace/book_1'))));
-await ok('admin 可讀 annotations_workspace', assertSucceeds(getDoc(doc(admin, 'annotations_workspace/book_1'))));
+await ok('admin(email) 可讀 annotations_workspace', assertSucceeds(getDoc(doc(admin, 'annotations_workspace/book_1'))));
+await ok('admin(claim) 可讀 annotations_workspace', assertSucceeds(getDoc(doc(claimAdmin, 'annotations_workspace/book_1'))));
+// collection-group 不能繞過（學生端對 workspace 的 group query 被拒）。
+await ok('student collectionGroup(annotations_workspace) 被拒',
+  assertFails(getDocs(collectionGroup(student, 'annotations_workspace'))));
 
-// 寫入：只有 admin。
+// 寫入：只有 admin（email 或 custom claim）。
 await ok('student 不可寫 annotations', assertFails(setDoc(doc(student, 'annotations/book_1'), { status: 'published' })));
-await ok('admin 可寫 annotations', assertSucceeds(setDoc(doc(admin, 'annotations/book_9'), { status: 'published', version: 1 })));
+await ok('admin(email) 可寫 annotations', assertSucceeds(setDoc(doc(admin, 'annotations/book_9'), { status: 'published', version: 1 })));
+await ok('admin(claim) 可寫 annotations', assertSucceeds(setDoc(doc(claimAdmin, 'annotations/book_10'), { status: 'published', version: 1 })));
+await ok('admin(claim) 可寫 workspace（review transition）',
+  assertSucceeds(setDoc(doc(claimAdmin, 'annotations_workspace/book_10'), { status: 'review' })));
 
 // daily_verses：Published 可讀、Draft 不可讀。
 await ok('guest 可讀 Published daily verse', assertSucceeds(getDoc(doc(guest, 'daily_verses/2026-01-01'))));
@@ -96,6 +112,12 @@ await ok('student 不可建立 published==true 的問題',
 await ok('student 不可自設 status=approved',
   assertFails(setDoc(doc(student, 'questions/q_bad2'),
     { uid: 'student1', status: 'approved', published: false })));
+// student 不能 update 既有問題把它發佈/塞 answer（只有 admin 可 update）。
+await ok('student 不可 update 既有問題（自我發佈）',
+  assertFails(setDoc(doc(student, 'questions/q_draft'),
+    { published: true }, { merge: true })));
+await ok('admin 可發佈問題', assertSucceeds(setDoc(doc(admin, 'questions/q_draft'),
+    { published: true }, { merge: true })));
 
 // 私有資料：本人可讀寫、他人不可。
 await ok('student 可寫自己的 users/{uid}',

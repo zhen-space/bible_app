@@ -20,17 +20,21 @@
 每個受管理文件（published mirror 與 workspace 皆同）頂層欄位：
 
 ```
-content_id : string     # stable id
-status     : 'draft'|'review'|'published'|'rejected'|'archived'
-version    : int         # 從 1；每次發佈 +1
+content_id   : string     # stable id
+content_type : string     # book_guide/chapter_guide/verse_commentary/knowledge/daily_verse/public_note/reading_plan
+status       : 'draft'|'review'|'published'|'rejected'|'archived'
+version      : int         # 從 1；每次發佈 +1
 created_at, created_by
 updated_at, updated_by
-reviewer,   reviewed_at
-publisher,  published_at
-provenance : { source, note }
-versions   : [ 舊 Published 快照… ]   # 只在 published mirror
-<payload>  : 內容本身的欄位（與 meta 並存於頂層）
+reviewed_by, reviewed_at
+published_by, published_at
+archived_at              # 0＝未封存
+provenance   : { source, note }
+versions     : [ 舊 Published 快照… ]   # 只在 published mirror
+<payload>    : 內容本身的欄位（與 meta 並存於頂層）
 ```
+
+（讀取相容 legacy 舊欄名 `reviewer`/`publisher`；新寫入一律用 `reviewed_by`/`published_by`。）
 
 - **published mirror** = 既有公開 collection（`annotations` / `knowledge` / `daily_verses` /
   `public_notes` / `reading_plans`）：**只放 Published**，學生端讀這裡。
@@ -75,11 +79,15 @@ Dart：`lib/models/managed_content.dart`（`ManagedContent` / `ContentStatus` / 
 
 ## 5. Q&A safety enforcement（#9）
 
-- `QaService.retrieveApproved(query)`：語料 = **只有 Published（且已回答）** 的問答，純關鍵字比對。
-  無模型知識／Web Search／LLM。pending/rejected/未發布**永不進語料**。
-- 不足 → `QaRetrievalResult.insufficientApprovedContent`（前端顯示、可送 Pending Question）。
-- 回答保存 `sources`（`AnswerSource` = content_id + version + kind）→ 前台可取得回答依據。
-- Pending Question 只是提問佇列，**本身不是 knowledge source**；管理員後續內容仍走 Draft→Review→Published。
+- **三態結果**（`QaService.ask` / `QaAskResult` / `QaOutcome`）：
+  - `answered`：在 **Published approved** 語料以純關鍵字命中（回 matches：answer＋source scriptures/sources）。
+  - `insufficient_approved_content`：找不到，**不得生成一般回答**（無模型知識／Web／LLM fallback）。
+  - `pending_question_created`：使用者送出未回答問題（`submitQuestion` 回 id → `QaAskResult.pending`）。
+- 語料 = **只有 Published（且已回答）**；pending/rejected/draft/review/未發布**永不進語料**。
+  archive/unpublish 後即時退出（每次 `retrieveApproved` 直接查 `published==true` live，無 stale index）。
+- 回答保存 `sources`（`AnswerSource` = content_id + **immutable** version + kind + evidence）→ 前台可取得回答依據與版本追溯。
+- **Pending Question 本身不是 retrieval source**；管理員處理＝Pending → 建立內容 Draft → Review → Published，Published 後才可成為未來語料。
+- 強制點在 service/API 層（`ask`/`retrieveApproved` 只查 Published），非只 client UI；Firestore rules 另擋直接讀未發布 question。
 
 ## 6. Cache / fail-closed（#10）
 
@@ -92,13 +100,23 @@ Dart：`lib/models/managed_content.dart`（`ManagedContent` / `ContentStatus` / 
 
 ## 7. Authorization audit
 
-- Guest/student：只能讀 Published public content（rules 證明；workspace 讀不到）。
-- authenticated user：只能讀寫自己的 `users/{uid}` 私有資料。
-- Admin（kAdminEmail）：才能 create/review/publish/archive。
-- client 自改 status/reviewer/publisher：**不可能**（受管理 collection 非 admin 不可寫；
-  submissions/questions create 限定欄位）。
+- Guest/student：只能讀 Published public content（rules 證明；Draft/Review/Rejected/Archived、workspace 皆讀不到）。
+- authenticated user：只能讀寫自己的 `users/{uid}` 私有資料（他人 deny）。
+- Admin：才能 create/review/publish/archive。
+- **Admin 授權 backward-compatible**：rules `isAdmin()` = custom claim `admin==true` **或** legacy 單一 email
+  （不破壞現有登入，多管理員走 claim）。client：`isAdminProvider`（email，同步）＋`adminClaimProvider`
+  （ID token claim）＋`isAdminEffectiveProvider`（兩者取或）。設定 claim 由後端 Admin SDK（未做，屬部署步驟）。
+- client 自改 status/reviewed_by/published_by：**不可能**（受管理 collection 非 admin 不可寫；
+  submissions/questions create 限定欄位；student 不可 update 既有 question 發佈）。
 - collection group / 直接讀 bypass：workspace 為 top-level collection，rules 逐一 admin-only，
-  未匹配 default-deny；`public_notes` 查詢帶 status 讓 rules 可證明只回 Published。
+  collection-group query（學生端）被拒（測試涵蓋）；未匹配 default-deny；`public_notes` 查詢帶 status
+  讓 rules 可證明只回 Published。
+
+### Reading Plans identity（#2 audit 結論）
+`plan_item_progress` 身分 = `(plan_id, book_id, chapter)`（真實章位，**非** day/list display index，
+換版不錯位）；另有 `item_id`（v14，Published 計畫 stable Reading Item id）與 `plan_version`（v15）
+可辨識 v1→v2。機械計畫 item_id 空、plan_version=1。**不依賴 day display index / list index /
+scripture position 順序**。
 
 ## 8. Migration / Backfill plan（`tools/`，本輪不執行）
 
@@ -113,8 +131,8 @@ Dart：`lib/models/managed_content.dart`（`ManagedContent` / `ContentStatus` / 
 ## 9. Tests / build（本輪實跑）
 
 - `flutter analyze`：clean（tools/ 已排除於 Dart 分析）。
-- `flutter test`：43/43。
-- Firestore rules 測試：18/18（emulator）。
+- `flutter test`：51/51（含 8 個 #8/#9 契約 unit test：ManagedContent round-trip／legacy 欄名相容／payloadOf／AnswerSource／QA 三態）。
+- Firestore rules 測試：30/30（emulator，含 Draft/Review/Rejected/Archived deny、custom-claim admin、collection-group deny、student 不可自我發佈）。
 - fail-closed 守門：audit/backfill 無憑證與 emulator 情境皆正確中止。
 - Student build ✓、Admin build ✓。
 

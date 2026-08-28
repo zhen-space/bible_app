@@ -25,18 +25,23 @@ class ContentWorkflowService {
   /// meta 保留鍵：其餘頂層鍵視為 payload。
   static const reservedKeys = {
     'content_id',
+    'content_type',
     'status',
     'version',
     'created_at',
     'created_by',
     'updated_at',
     'updated_by',
-    'reviewer',
+    'reviewed_by',
     'reviewed_at',
-    'publisher',
+    'published_by',
     'published_at',
+    'archived_at',
     'provenance',
     'versions',
+    // legacy 舊欄名（讀取相容；新寫入不再產生）
+    'reviewer',
+    'publisher',
   };
 
   CollectionReference<Map<String, dynamic>> _published(String type) =>
@@ -52,16 +57,18 @@ class ContentWorkflowService {
   Map<String, dynamic> _flat(ManagedContent c) => {
         ...c.payload,
         'content_id': c.contentId,
+        'content_type': c.contentType,
         'status': c.status.name,
         'version': c.version,
         'created_at': c.createdAt,
         'created_by': c.createdBy,
         'updated_at': c.updatedAt,
         'updated_by': c.updatedBy,
-        'reviewer': c.reviewer,
+        'reviewed_by': c.reviewedBy,
         'reviewed_at': c.reviewedAt,
-        'publisher': c.publisher,
+        'published_by': c.publishedBy,
         'published_at': c.publishedAt,
+        'archived_at': c.archivedAt,
         'provenance': c.provenance.toMap(),
       };
 
@@ -89,6 +96,7 @@ class ContentWorkflowService {
   Future<void> saveDraft(
     String type,
     String contentId, {
+    required String contentType,
     required Map<String, dynamic> payload,
     required String editorEmail,
     ContentProvenance provenance = const ContentProvenance(),
@@ -100,15 +108,16 @@ class ContentWorkflowService {
         ((published.data()?['version'] as int?) ?? 0);
     final c = ManagedContent(
       contentId: contentId,
+      contentType: contentType,
       status: ContentStatus.draft,
       version: baseVersion,
       createdAt: existing?.createdAt ?? now,
       createdBy: existing?.createdBy ?? editorEmail,
       updatedAt: now,
       updatedBy: editorEmail,
-      reviewer: existing?.reviewer ?? '',
+      reviewedBy: existing?.reviewedBy ?? '',
       reviewedAt: existing?.reviewedAt ?? 0,
-      publisher: existing?.publisher ?? '',
+      publishedBy: existing?.publishedBy ?? '',
       publishedAt: existing?.publishedAt ?? 0,
       provenance: provenance,
       payload: payload,
@@ -130,7 +139,7 @@ class ContentWorkflowService {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _workspace(type).doc(contentId).update({
       'status': ContentStatus.rejected.name,
-      'reviewer': reviewerEmail,
+      'reviewed_by': reviewerEmail,
       'reviewed_at': now,
       'updated_at': now,
       'updated_by': reviewerEmail,
@@ -156,15 +165,16 @@ class ContentWorkflowService {
 
     final publishedDoc = _flat(ManagedContent(
       contentId: contentId,
+      contentType: ws.contentType,
       status: ContentStatus.published,
       version: newVersion,
       createdAt: ws.createdAt,
       createdBy: ws.createdBy,
       updatedAt: now,
       updatedBy: publisherEmail,
-      reviewer: ws.reviewer,
+      reviewedBy: ws.reviewedBy,
       reviewedAt: ws.reviewedAt,
-      publisher: publisherEmail,
+      publishedBy: publisherEmail,
       publishedAt: now,
       provenance: ws.provenance,
       payload: ws.payload,
@@ -183,7 +193,7 @@ class ContentWorkflowService {
     await _workspace(type).doc(contentId).update({
       'status': ContentStatus.published.name,
       'version': newVersion,
-      'publisher': publisherEmail,
+      'published_by': publisherEmail,
       'published_at': now,
       'updated_at': now,
       'updated_by': publisherEmail,
@@ -199,6 +209,7 @@ class ContentWorkflowService {
     if ((await pubRef.get()).exists) {
       await pubRef.update({
         'status': ContentStatus.archived.name,
+        'archived_at': now,
         'updated_at': now,
         'updated_by': publisherEmail,
       });
@@ -207,6 +218,7 @@ class ContentWorkflowService {
     if ((await wsRef.get()).exists) {
       await wsRef.update({
         'status': ContentStatus.archived.name,
+        'archived_at': now,
         'updated_at': now,
         'updated_by': publisherEmail,
       });
