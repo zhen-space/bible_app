@@ -277,21 +277,28 @@ final chapterMarksProvider = FutureProvider.family<ChapterMarks,
   final bookmarks = await db.getBookmarkedVerses(args.bookId, args.chapter);
   final highlights = await db.getChapterHighlights(args.bookId, args.chapter);
   final notes = await db.getChapterNotes(args.bookId, args.chapter);
+  final later = await db.getLaterVerses(args.bookId, args.chapter);
   return ChapterMarks(
-      bookmarks: bookmarks, highlights: highlights, notes: notes);
+      bookmarks: bookmarks, highlights: highlights, notes: notes, later: later);
 });
 
 class ChapterMarks {
   final Set<int> bookmarks;
   final Map<int, HighlightColor> highlights;
   final Map<int, Note> notes;
+  final Set<int> later;
 
   const ChapterMarks({
     required this.bookmarks,
     required this.highlights,
     required this.notes,
+    this.later = const {},
   });
 }
+
+/// 全部「稍後閱讀」項目。
+final allLaterProvider = FutureProvider<List<Bookmark>>(
+    (ref) => ref.watch(databaseServiceProvider).getAllLater());
 
 /// 搜尋歷史（最多 20 筆，持久化）。
 class SearchHistoryNotifier extends Notifier<List<String>> {

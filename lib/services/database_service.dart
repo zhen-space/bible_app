@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 10;
+  static const _dbVersion = 11;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -83,6 +83,22 @@ class DatabaseService {
     await _createTodosTable(db); // v8
     await _createChapterCompletionsTable(db); // v9
     await _createPlanItemProgressTable(db); // v10
+    await _createLaterTable(db); // v11
+  }
+
+  /// 稍後閱讀（Later，v11）：使用者標記「待讀」的節，與書籤分開（書籤＝收藏、
+  /// Later＝待讀清單）。結構同書籤。
+  Future<void> _createLaterTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE later (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        verse INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(book_id, chapter, verse)
+      )
+    ''');
   }
 
   /// 讀經計畫「單一讀經項目」完成紀錄（v10，Reading Plans v2）。
@@ -253,6 +269,9 @@ class DatabaseService {
     if (oldV < 10) {
       await _createPlanItemProgressTable(db);
     }
+    if (oldV < 11) {
+      await _createLaterTable(db);
+    }
   }
 
   // ---- Bookmarks ----
@@ -294,6 +313,92 @@ class DatabaseService {
       whereArgs: [bookId, chapter],
     );
     return rows.map((r) => r['verse'] as int).toSet();
+  }
+
+  // ---- 稍後閱讀（Later）----
+
+  /// 加入 / 移除「稍後閱讀」（切換）。
+  Future<void> toggleLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final deleted = await db.delete(
+      'later',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    if (deleted == 0) {
+      await db.insert('later', {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      await _untomb(db, 'later', ref);
+    } else {
+      await _tombstone(db, 'later', ref);
+    }
+    _mutated();
+  }
+
+  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。
+  Future<void> addLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    await db.insert(
+      'later',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    await _untomb(db, 'later', _rowRef(bookId, chapter, verse));
+    _mutated();
+  }
+
+  Future<void> removeLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    await db.delete(
+      'later',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    await _tombstone(db, 'later', _rowRef(bookId, chapter, verse));
+    _mutated();
+  }
+
+  Future<List<Bookmark>> getAllLater() async {
+    final db = await database;
+    final rows = await db.query('later', orderBy: 'created_at DESC');
+    return rows.map(Bookmark.fromMap).toList();
+  }
+
+  Future<Set<int>> getLaterVerses(int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'later',
+      columns: ['verse'],
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    return rows.map((r) => r['verse'] as int).toSet();
+  }
+
+  /// 雲端同步 upsert（已存在略過）。
+  Future<void> upsertLater(
+      int bookId, int chapter, int verse, int createdAt) async {
+    final db = await database;
+    await db.insert(
+      'later',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': createdAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 
   // ---- Highlights ----
@@ -978,12 +1083,15 @@ class DatabaseService {
     var removed = 0;
     switch (kind) {
       case 'bookmark':
+      case 'later':
       case 'highlight':
       case 'note':
         if (parts == null) return 0;
         final table = kind == 'bookmark'
             ? 'bookmarks'
-            : (kind == 'highlight' ? 'highlights' : 'notes');
+            : (kind == 'later'
+                ? 'later'
+                : (kind == 'highlight' ? 'highlights' : 'notes'));
         final tsCol = kind == 'note' ? 'updated_at' : 'created_at';
         removed = await db.delete(
           table,

@@ -26,10 +26,12 @@ Future<void> showVerseActionSheet(
   final highlights = await db.getChapterHighlights(bookId, chapter);
   final bookmarks = await db.getBookmarkedVerses(bookId, chapter);
   final notes = await db.getChapterNotes(bookId, chapter);
+  final later = await db.getLaterVerses(bookId, chapter);
   if (!context.mounted) return;
 
   final currentColor = highlights[verse];
   final isBookmarked = bookmarks.contains(verse);
+  final isLater = later.contains(verse);
   final existingNote = notes[verse];
   final citation = verseCitation(book, chapter, verse);
   final labels = ref.read(highlightLabelsProvider);
@@ -39,6 +41,7 @@ Future<void> showVerseActionSheet(
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(allHighlightsProvider);
     ref.invalidate(allNotesProvider);
+    ref.invalidate(allLaterProvider);
   }
 
   await showModalBottomSheet(
@@ -133,6 +136,14 @@ Future<void> showVerseActionSheet(
                     Navigator.pop(ctx);
                     _showNoteEditor(context, ref, book, chapter, verse,
                         existingNote, refresh);
+                  }),
+                  _act(
+                      ctx,
+                      isLater ? Icons.watch_later : Icons.watch_later_outlined,
+                      isLater ? '移除待讀' : '稍後讀', () async {
+                    Navigator.pop(ctx);
+                    await db.toggleLater(bookId, chapter, verse);
+                    refresh();
                   }),
                   _act(ctx, Icons.copy, '複製', () {
                     Navigator.pop(ctx);

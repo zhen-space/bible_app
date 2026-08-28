@@ -46,6 +46,7 @@ class SyncService {
     final tombP = await db.getTombstoneMap('prayer');
     final tombT = await db.getTombstoneMap('todo');
     final tombC = await db.getTombstoneMap('completion');
+    final tombL = await db.getTombstoneMap('later');
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
@@ -57,6 +58,15 @@ class SyncService {
       final t = tombB[rref(m)];
       if (t != null && t >= (m['created_at'] as int)) continue;
       await db.upsertBookmark(m['book_id'] as int, m['chapter'] as int,
+          m['verse'] as int, m['created_at'] as int);
+      downloaded++;
+    }
+    final cloudLater = await _col(uid, 'later').get();
+    for (final d in cloudLater.docs) {
+      final m = d.data();
+      final t = tombL[rref(m)];
+      if (t != null && t >= (m['created_at'] as int)) continue;
+      await db.upsertLater(m['book_id'] as int, m['chapter'] as int,
           m['verse'] as int, m['created_at'] as int);
       downloaded++;
     }
@@ -206,6 +216,13 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    for (final b in await db.getAllLater()) {
+      final m = b.toMap()..remove('id');
+      batch.set(_col(uid, 'later').doc(_refId(m)), m);
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
     for (final h in await db.getAllHighlights()) {
       final m = h.toMap()..remove('id');
       batch.set(_col(uid, 'highlights').doc(_refId(m)), m);
@@ -300,6 +317,7 @@ class SyncService {
     // 因為新增/更新時會清墓碑，不變量保證兩者互斥，不會誤刪活資料）。
     const kindCol = {
       'bookmark': 'bookmarks',
+      'later': 'later',
       'highlight': 'highlights',
       'note': 'notes',
       'sermon': 'sermon_notes',
