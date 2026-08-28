@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
-import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'reading_plans_screen.dart';
 import 'notes_screen.dart';

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'bible_hub_screen.dart';
-import 'notes_hub_screen.dart';
+import 'my_content_screen.dart';
 import 'reading_plans_screen.dart';
 import 'search_screen.dart';
 import 'student_home_screen.dart';
@@ -25,7 +25,7 @@ class _AppShellState extends State<AppShell> {
     StudentHomeScreen(),
     BibleHubScreen(),
     ReadingPlansScreen(),
-    NotesHubScreen(),
+    MyContentScreen(),
     MeScreen(),
   ];
 
@@ -59,9 +59,9 @@ class _AppShellState extends State<AppShell> {
             label: '計畫',
           ),
           NavigationDestination(
-            icon: Icon(Icons.edit_note_outlined),
-            selectedIcon: Icon(Icons.edit_note),
-            label: '筆記',
+            icon: Icon(Icons.folder_outlined),
+            selectedIcon: Icon(Icons.folder),
+            label: '內容',
           ),
           NavigationDestination(
             icon: Icon(Icons.person_outline),
