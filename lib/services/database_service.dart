@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 12;
+  static const _dbVersion = 13;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -154,7 +154,14 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT NOT NULL DEFAULT '',
         subcategory TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL DEFAULT '',
+        prayer_date INTEGER NOT NULL DEFAULT 0,
+        refs TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'praying',
+        reminder_at INTEGER NOT NULL DEFAULT 0,
+        answered_at INTEGER NOT NULL DEFAULT 0,
+        answered_reflection TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -283,6 +290,24 @@ class DatabaseService {
           "ALTER TABLE notes ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
       await db.execute(
           'ALTER TABLE notes ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+    }
+    if (oldV < 13) {
+      // Prayer v2：標題/日期/引用/狀態/提醒/應允日期/應允回顧。全部 additive，
+      // 舊 category/subcategory/content 保留；既有禱告資料不動。
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN prayer_date INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN status TEXT NOT NULL DEFAULT 'praying'");
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN reminder_at INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN answered_at INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN answered_reflection TEXT NOT NULL DEFAULT ''");
     }
   }
 
