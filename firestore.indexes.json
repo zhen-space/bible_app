@@ -1,0 +1,14 @@
+{
+  "_comment": "Firestore composite indexes. NOT deployed this round (見交接說明). public_notes 依 loc+status 查詢（#8：只讀 Published），需此複合索引，rules 才能證明查詢只回 Published 文件。",
+  "indexes": [
+    {
+      "collectionGroup": "public_notes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "loc", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

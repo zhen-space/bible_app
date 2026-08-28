@@ -146,7 +146,9 @@ class KnowledgeAdminScreen extends ConsumerWidget {
 
 /// 存回雲端整份知識資料並刷新。
 Future<void> _saveKb(WidgetRef ref, KnowledgeBase kb) async {
-  await ref.read(contentServiceProvider).saveKnowledge(kb.toJson());
+  await ref
+      .read(contentServiceProvider)
+      .saveKnowledge(kb.toJson(), publisher: kAdminEmail);
   ref.invalidate(cloudKnowledgeProvider);
 }
 

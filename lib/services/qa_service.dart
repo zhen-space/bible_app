@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/managed_content.dart';
+
 /// 疑問 Q&A（白板「六、疑問 Q&A」）——**全人工，無 AI**。
 ///
 /// 使用者提問 → 進待審 → 管理者（使用者本人）審核 → 親自回答。
@@ -75,6 +77,31 @@ class QaService {
     return filtered;
   }
 
+  /// #9 檢索安全：**只在已發布（Published）approved 內容上做純關鍵字比對。**
+  /// 禁止模型自身知識／Web Search／一般 LLM fallback（本服務不含任何生成路徑）。
+  /// 待審（pending）／退回（rejected）／未發布的問答**永不進入檢索語料**。
+  /// 沒有相符 → 回傳 `insufficientApprovedContent`（呼叫端據此顯示，不得以任何
+  /// 未經核准/未發布內容或 AI 回答代替）。
+  Future<QaRetrievalResult> retrieveApproved(String query,
+      {String? category}) async {
+    final q = query.trim();
+    if (q.isEmpty) return const QaRetrievalResult([]);
+    // 語料 = 只有 Published（且已回答）的問答。
+    final corpus = await publishedQuestions(category: category);
+    final words =
+        q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final matches = corpus.where((question) {
+      final hay = [
+        question.title,
+        question.body,
+        question.answer?.content ?? '',
+        question.answer?.tags.join(' ') ?? '',
+      ].join(' ');
+      return hay.contains(q) || words.any(hay.contains);
+    }).toList();
+    return QaRetrievalResult(matches);
+  }
+
   /// 管理者用：已回答（approved）但**尚未發布**的佇列，供管理者發布。
   /// 非學生端可見來源。
   Future<List<Question>> awaitingPublishQuestions() async {
@@ -132,6 +159,7 @@ class QaService {
     required String content,
     required List<String> scriptures,
     required List<String> tags,
+    List<AnswerSource> sources = const [],
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final old = question.answer;
@@ -142,6 +170,8 @@ class QaService {
         'content': content,
         'scriptures': scriptures,
         'tags': tags,
+        // #9：回答保存所依據的 source content IDs + versions，前台可取得回答依據。
+        'sources': [for (final s in sources) s.toMap()],
         'answered_at': old?.answeredAt ?? now,
         'updated_at': now,
       },
@@ -201,6 +231,15 @@ class QaService {
 /// Q&A 分類（爭議＝有不同立場、需謹慎的題目）。
 const List<String> kQaCategories = ['神學', '生活', '爭議', '其他'];
 
+/// #9 檢索結果。[matches] 只含 Published approved 內容；空＝
+/// **insufficient_approved_content**（呼叫端顯示「目前沒有已核准的解答」，
+/// 並可讓使用者送出 Pending Question；不得以任何未發布內容/AI 代替）。
+class QaRetrievalResult {
+  final List<Question> matches;
+  const QaRetrievalResult(this.matches);
+  bool get insufficientApprovedContent => matches.isEmpty;
+}
+
 class Question {
   final String id;
   final String uid;
@@ -259,6 +298,7 @@ class QaAnswer {
   final String content;
   final List<String> scriptures; // 引用經文（節位字串，可跳轉）
   final List<String> tags;
+  final List<AnswerSource> sources; // #9：回答依據（content id + version）
   final int answeredAt;
   final int updatedAt;
 
@@ -266,6 +306,7 @@ class QaAnswer {
     required this.content,
     required this.scriptures,
     required this.tags,
+    this.sources = const [],
     required this.answeredAt,
     required this.updatedAt,
   });
@@ -277,6 +318,9 @@ class QaAnswer {
             .toList(),
         tags: ((m['tags'] as List?) ?? const [])
             .map((e) => e.toString())
+            .toList(),
+        sources: ((m['sources'] as List?) ?? const [])
+            .map((e) => AnswerSource.fromMap((e as Map).cast<String, dynamic>()))
             .toList(),
         answeredAt: m['answered_at'] as int? ?? m['edited_at'] as int? ?? 0,
         updatedAt: m['updated_at'] as int? ?? m['edited_at'] as int? ?? 0,

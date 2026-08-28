@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -8,17 +9,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../data/topics.dart';
 import '../models/models.dart';
 import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
+import '../services/content_workflow_service.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
 import '../services/knowledge_repository.dart';
 import '../services/qa_service.dart';
 import '../services/sync_service.dart';
-import '../services/verse_locator.dart';
 
 /// 管理者帳號（後台入口只對這個 Google 帳號顯示；
 /// Firestore 規則端也用同一個 email 把關）。
@@ -385,38 +385,44 @@ final publishedDailyVerseProvider =
   return null;
 });
 
-/// 每日經文：**正式來源＝官方發佈（publishedDailyVerseProvider）**。
-/// 尚無官方發佈或離線無快取時，退回本地經文池（fallback，非正式來源）。
-final dailyVerseProvider = FutureProvider<VerseRef>((ref) async {
+/// 每日經文：**正式且唯一來源＝官方發佈（publishedDailyVerseProvider）**。
+/// 沒有 Published 每日經文（或節位無效）時回 `null`＝「今日尚無經文」，
+/// **不得 fallback 到本地經文池／隨機／AI**（#7 硬性要求，fail-closed）。
+final dailyVerseProvider = FutureProvider<VerseRef?>((ref) async {
   final books = await ref.watch(booksProvider.future);
-  VerseRef build(int bookId, int chapter, int verse) => VerseRef(
-      bookId: bookId,
-      chapter: chapter,
-      verse: verse,
-      text: books[bookId - 1].chapters[chapter - 1][verse - 1]);
-
   final published = await ref.watch(publishedDailyVerseProvider.future);
-  if (published != null) {
-    final b = published.bookId, c = published.chapter, v = published.verse;
-    // 防呆：發佈的節位需落在範圍內，否則退 fallback。
-    if (b >= 1 &&
-        b <= books.length &&
-        c >= 1 &&
-        c <= books[b - 1].chapters.length &&
-        v >= 1 &&
-        v <= books[b - 1].chapters[c - 1].length) {
-      return build(b, c, v);
-    }
+  if (published == null) return null;
+  final b = published.bookId, c = published.chapter, v = published.verse;
+  // 防呆：發佈的節位需落在範圍內，否則視為無效內容（回 null，不 fallback）。
+  if (b >= 1 &&
+      b <= books.length &&
+      c >= 1 &&
+      c <= books[b - 1].chapters.length &&
+      v >= 1 &&
+      v <= books[b - 1].chapters[c - 1].length) {
+    return VerseRef(
+        bookId: b,
+        chapter: c,
+        verse: v,
+        text: books[b - 1].chapters[c - 1][v - 1]);
   }
-
-  // Fallback：本地經文池（同一天大家看到同一節）。
-  final pool = dailyVersePool();
-  final day = DateTime.now().difference(DateTime(2024)).inDays;
-  final loc = VerseLocator.parse(pool[day % pool.length], books)!;
-  return build(loc.bookId, loc.chapter, loc.verse!);
+  return null;
 });
 
 final contentServiceProvider = Provider((ref) => ContentService());
+
+/// 受管理內容發佈工作流（Draft→Review→Published→Rejected/Archived）。管理後台用。
+final contentWorkflowServiceProvider = Provider(
+    (ref) => ContentWorkflowService(FirebaseFirestore.instance));
+
+/// #9 檢索：只在 Published approved 內容上比對；不足→insufficientApprovedContent。
+final qaRetrievalProvider = FutureProvider.family<QaRetrievalResult,
+    ({String query, String category})>((ref, args) async {
+  if (!ref.watch(firebaseReadyProvider)) return const QaRetrievalResult([]);
+  return ref
+      .watch(qaServiceProvider)
+      .retrieveApproved(args.query, category: args.category);
+});
 
 /// 混合式快取：雲端內容抓到就存 SharedPreferences；離線或抓取失敗時
 /// 用上次快取（經文永遠在本地 asset，這裡只快取「雲端撰寫層」）。
@@ -438,18 +444,19 @@ Future<void> _writeCache(String key, Map<String, dynamic> data) async {
   } catch (_) {} // 快取失敗不影響功能
 }
 
-/// 雲端內容層：annotations collection 全部 doc。
-/// 線上抓最新並更新快取；離線/失敗退回上次快取；都沒有才回空（用 asset）。
+/// 雲端內容層：annotations collection 的 **Published** doc（#8/#10 fail-closed）。
+/// 線上只抓 `status=='published'`，抓到就把「已確認 Published 的版本」寫入快取；
+/// 離線退回上次的 Published 快取；都沒有 → 空（**不得退回未驗證的 asset/草稿**）。
 final cloudAnnotationsProvider =
     FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
-  const cacheKey = 'cache_annotations';
+  const cacheKey = 'cache_annotations_published';
   if (ref.watch(firebaseReadyProvider)) {
     try {
-      final fresh = await ref.watch(contentServiceProvider).fetchAll();
-      await _writeCache(cacheKey, fresh);
+      final fresh = await ref.watch(contentServiceProvider).fetchAllPublished();
+      await _writeCache(cacheKey, fresh); // 只快取 Published
       return fresh;
     } catch (_) {
-      // 落到下方快取
+      // 落到下方 Published 快取
     }
   }
   final cached = await _readCache(cacheKey);
@@ -458,33 +465,36 @@ final cloudAnnotationsProvider =
       MapEntry(k, (v as Map).cast<String, dynamic>()));
 });
 
-/// 整卷書的導讀＋統整（獨立標籤方格用）。雲端優先、asset 為底。
+/// 整卷書的導讀＋統整（獨立標籤方格用）。**只用雲端 Published**；
+/// 沒有就回 null（頁面顯示待填空白），**不退回 asset**（fail-closed）。
 final bookAnnotationProvider =
     FutureProvider.family<BookAnnotation?, int>((ref, bookId) async {
   final cloud = await ref.watch(cloudAnnotationsProvider.future);
   final doc = cloud['book_$bookId'];
-  if (doc != null) return BookAnnotation.fromJson(doc);
-  return ref.watch(annotationRepositoryProvider).book(bookId);
+  if (doc == null) return null;
+  return BookAnnotation.fromJson(ContentWorkflowService.payloadOf(doc));
 });
 
-/// 章導讀 + 該章的節註解（白板「二、註解內容模組」）。雲端優先、asset 為底。
+/// 章導讀 + 該章的節註解。**只用雲端 Published**；沒有就空（fail-closed，不退回 asset）。
 final chapterAnnotationProvider = FutureProvider.family<
     ({ChapterAnnotation? chapter, Map<int, VerseAnnotation> verses}),
     ({int bookId, int chapter})>((ref, args) async {
-  final repo = ref.watch(annotationRepositoryProvider);
   final cloud = await ref.watch(cloudAnnotationsProvider.future);
 
   final cloudChapter = cloud['chapter_${args.bookId}_${args.chapter}'];
   final chapter = cloudChapter != null
-      ? ChapterAnnotation.fromJson(cloudChapter)
-      : await repo.chapter(args.bookId, args.chapter);
+      ? ChapterAnnotation.fromJson(ContentWorkflowService.payloadOf(cloudChapter))
+      : null;
 
-  final verses = await repo.versesIn(args.bookId, args.chapter);
+  final verses = <int, VerseAnnotation>{};
   final prefix = 'verse_${args.bookId}_${args.chapter}_';
   cloud.forEach((k, v) {
     if (k.startsWith(prefix)) {
       final verseNo = int.tryParse(k.substring(prefix.length));
-      if (verseNo != null) verses[verseNo] = VerseAnnotation.fromJson(v);
+      if (verseNo != null) {
+        verses[verseNo] =
+            VerseAnnotation.fromJson(ContentWorkflowService.payloadOf(v));
+      }
     }
   });
   return (chapter: chapter, verses: verses);
@@ -521,29 +531,30 @@ final pendingSubmissionsProvider =
 final knowledgeRepositoryProvider =
     Provider((ref) => KnowledgeRepository());
 
-/// 雲端知識資料（後台編輯的成果）。線上抓最新並更新快取；
-/// 離線退回上次快取；都沒有回 null（用 asset）。
+/// 雲端知識資料（**只用 Published**，#8/#10 fail-closed）。線上只在 knowledge/data
+/// 為 Published 時抓，抓到就快取「已確認 Published 的版本」；離線退回上次 Published 快取；
+/// 都沒有回 null（**不退回 asset**）。
 final cloudKnowledgeProvider =
     FutureProvider<Map<String, dynamic>?>((ref) async {
-  const cacheKey = 'cache_knowledge';
+  const cacheKey = 'cache_knowledge_published';
   if (ref.watch(firebaseReadyProvider)) {
     try {
       final fresh =
-          await ref.watch(contentServiceProvider).fetchKnowledge();
-      if (fresh != null) await _writeCache(cacheKey, fresh);
+          await ref.watch(contentServiceProvider).fetchPublishedKnowledge();
+      if (fresh != null) await _writeCache(cacheKey, fresh); // 只快取 Published
       return fresh;
     } catch (_) {
-      // 落到下方快取
+      // 落到下方 Published 快取
     }
   }
   return _readCache(cacheKey);
 });
 
-/// 知識架構：**雲端優先、asset 為底**。後台存檔後 invalidate 即刷新。
+/// 知識架構：**只用雲端 Published**；沒有就回空（fail-closed，不退回 asset）。
 final knowledgeProvider = FutureProvider<KnowledgeBase>((ref) async {
   final cloud = await ref.watch(cloudKnowledgeProvider.future);
-  if (cloud != null) return KnowledgeBase.fromJson(cloud);
-  return ref.watch(knowledgeRepositoryProvider).load();
+  if (cloud == null) return KnowledgeBase.empty;
+  return KnowledgeBase.fromJson(ContentWorkflowService.payloadOf(cloud));
 });
 
 // ---- 疑問 Q&A（全人工，無 AI）----

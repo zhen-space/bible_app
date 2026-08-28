@@ -86,8 +86,9 @@ void main() {
     expect(find.textContaining('起初', findRichText: true), findsWidgets);
     expect(find.text('創世記 第 1 章'), findsOneWidget);
 
-    // 段落標題：來自章導讀「分段」欄（創1 範例第一行「1-2 起初：…」）
-    expect(find.textContaining('起初：神創造天地'), findsWidgets);
+    // 註：段落標題來自「章導讀分段」欄，屬受管理內容。#8/#10 fail-closed 後，
+    // 註解只從雲端 Published 取得、不再退回 asset，因此測試環境（無 Firebase）
+    // 不會有段落標題——經文本體仍正常顯示（上面兩個斷言已涵蓋）。
   });
 
   testWidgets('章節格最前導讀、最後統整方格 → 開啟卷導讀頁', (tester) async {
