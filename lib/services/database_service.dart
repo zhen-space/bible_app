@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 11;
+  static const _dbVersion = 12;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -67,8 +67,11 @@ class DatabaseService {
         book_id INTEGER NOT NULL,
         chapter INTEGER NOT NULL,
         verse INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL,
         tags TEXT NOT NULL DEFAULT '',
+        refs TEXT NOT NULL DEFAULT '',
+        deleted_at INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -272,6 +275,15 @@ class DatabaseService {
     if (oldV < 11) {
       await _createLaterTable(db);
     }
+    if (oldV < 12) {
+      // Notes v2：可選標題、額外多節引用、軟刪除（最近刪除）。全部 additive。
+      await db.execute(
+          "ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          "ALTER TABLE notes ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          'ALTER TABLE notes ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   // ---- Bookmarks ----
@@ -454,6 +466,8 @@ class DatabaseService {
 
   // ---- Notes ----
 
+  /// 逐節快速筆記（Reader/單節面板用）：以錨點 (book,chapter,verse) upsert。
+  /// **不動** title/refs（保留 v2 欄位不被簡易編輯清掉）；會清軟刪除旗標。
   Future<void> saveNote(int bookId, int chapter, int verse, String content,
       {String tags = ''}) async {
     final db = await database;
@@ -476,7 +490,7 @@ class DatabaseService {
     } else {
       await db.update(
         'notes',
-        {'content': content, 'tags': tags, 'updated_at': now},
+        {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );
@@ -485,20 +499,107 @@ class DatabaseService {
     _mutated();
   }
 
+  /// Notes v2 完整存檔（含標題/額外引用/標籤）。id 為 null＝新增，回傳 id。
+  Future<int> saveNoteFull(Note note) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (note.id == null) {
+      final id = await db.insert('notes', {
+        'book_id': note.bookId,
+        'chapter': note.chapter,
+        'verse': note.verse,
+        'title': note.title,
+        'content': note.content,
+        'tags': note.tags,
+        'refs': note.refs.join(','),
+        'deleted_at': 0,
+        'created_at': now,
+        'updated_at': now,
+      });
+      await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+      _mutated();
+      return id;
+    }
+    await db.update(
+      'notes',
+      {
+        'book_id': note.bookId,
+        'chapter': note.chapter,
+        'verse': note.verse,
+        'title': note.title,
+        'content': note.content,
+        'tags': note.tags,
+        'refs': note.refs.join(','),
+        'deleted_at': 0,
+        'updated_at': now,
+      },
+      where: 'id = ?',
+      whereArgs: [note.id],
+    );
+    await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+    _mutated();
+    return note.id!;
+  }
+
+  /// 軟刪除到「最近刪除」（不寫墓碑；真正刪除走 purgeNote）。
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
     final db = await database;
-    await db.delete(
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
       'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      {'deleted_at': now, 'updated_at': now},
+      where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter, verse],
     );
-    await _tombstone(db, 'note', _rowRef(bookId, chapter, verse));
     _mutated();
   }
 
+  Future<void> softDeleteNoteById(int id) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.update('notes', {'deleted_at': now, 'updated_at': now},
+        where: 'id = ?', whereArgs: [id]);
+    _mutated();
+  }
+
+  Future<void> restoreNote(int id) async {
+    final db = await database;
+    await db.update(
+        'notes',
+        {'deleted_at': 0, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
+    _mutated();
+  }
+
+  /// 從「最近刪除」永久刪除（寫墓碑，同步刪除）。
+  Future<void> purgeNote(int id) async {
+    final db = await database;
+    final rows = await db.query('notes',
+        columns: ['book_id', 'chapter', 'verse'],
+        where: 'id = ?',
+        whereArgs: [id]);
+    await db.delete('notes', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final r = rows.first;
+      await _tombstone(db, 'note',
+          _rowRef(r['book_id'] as int, r['chapter'] as int, r['verse'] as int));
+    }
+    _mutated();
+  }
+
+  /// 全部正常（未軟刪除）筆記。
   Future<List<Note>> getAllNotes() async {
     final db = await database;
-    final rows = await db.query('notes', orderBy: 'updated_at DESC');
+    final rows = await db.query('notes',
+        where: 'deleted_at = 0', orderBy: 'updated_at DESC');
+    return rows.map(Note.fromMap).toList();
+  }
+
+  /// 「最近刪除」的筆記（軟刪除）。
+  Future<List<Note>> getDeletedNotes() async {
+    final db = await database;
+    final rows = await db.query('notes',
+        where: 'deleted_at > 0', orderBy: 'deleted_at DESC');
     return rows.map(Note.fromMap).toList();
   }
 
@@ -506,7 +607,7 @@ class DatabaseService {
     final db = await database;
     final rows = await db.query(
       'notes',
-      where: 'book_id = ? AND chapter = ?',
+      where: 'book_id = ? AND chapter = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter],
     );
     return {for (final r in rows) r['verse'] as int: Note.fromMap(r)};
@@ -686,7 +787,7 @@ class DatabaseService {
   /// 筆記：以 updated_at 較新者為準。
   Future<void> upsertNote(int bookId, int chapter, int verse, String content,
       int createdAt, int updatedAt,
-      {String tags = ''}) async {
+      {String tags = '', String title = '', String refs = ''}) async {
     final db = await database;
     final existing = await db.query(
       'notes',
@@ -698,15 +799,23 @@ class DatabaseService {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
+        'title': title,
         'content': content,
         'tags': tags,
+        'refs': refs,
         'created_at': createdAt,
         'updated_at': updatedAt,
       });
     } else if ((existing.first['updated_at'] as int) < updatedAt) {
       await db.update(
         'notes',
-        {'content': content, 'tags': tags, 'updated_at': updatedAt},
+        {
+          'title': title,
+          'content': content,
+          'tags': tags,
+          'refs': refs,
+          'updated_at': updatedAt
+        },
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );

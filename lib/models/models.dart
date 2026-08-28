@@ -366,14 +366,23 @@ class Highlight {
       };
 }
 
-/// 筆記。[tags] 為空格分隔的標籤字串（例：「信心 禱告」），可空。
+/// 筆記（v2）。[tags] 為空格分隔的標籤字串（例：「信心 禱告」），可空。
+///
+/// v2 新增：可選 [title]、額外多節引用 [refs]（錨點仍是 book/chapter/verse，
+/// refs 為「除錨點外」的其他節位字串 'b_c_v'，CSV 儲存）、以及軟刪除 [deletedAt]
+/// （0＝正常；>0＝在「最近刪除」）。全部向後相容（舊資料缺欄位以預設值帶入）。
 class Note {
   final int? id;
   final int bookId;
   final int chapter;
   final int verse;
+  final String title;
   final String content;
   final String tags;
+
+  /// 額外引用（除錨點外）：每個元素 'b{book}_c{chapter}_v{verse}'。
+  final List<String> refs;
+  final int deletedAt;
   final int createdAt;
   final int updatedAt;
 
@@ -382,22 +391,51 @@ class Note {
     required this.bookId,
     required this.chapter,
     required this.verse,
+    this.title = '',
     required this.content,
     this.tags = '',
+    this.refs = const [],
+    this.deletedAt = 0,
     required this.createdAt,
     required this.updatedAt,
   });
 
+  bool get isDeleted => deletedAt > 0;
+
   List<String> get tagList =>
       tags.split(RegExp(r'[\s,，#]+')).where((t) => t.isNotEmpty).toList();
 
+  /// 全部引用（錨點在最前）。
+  List<({int bookId, int chapter, int verse})> get allRefs {
+    final out = <({int bookId, int chapter, int verse})>[
+      (bookId: bookId, chapter: chapter, verse: verse),
+    ];
+    for (final r in refs) {
+      final m = RegExp(r'^b(\d+)_c(\d+)_v(\d+)$').firstMatch(r);
+      if (m != null) {
+        out.add((
+          bookId: int.parse(m.group(1)!),
+          chapter: int.parse(m.group(2)!),
+          verse: int.parse(m.group(3)!),
+        ));
+      }
+    }
+    return out;
+  }
+
+  static List<String> _parseRefs(String? csv) =>
+      (csv ?? '').split(',').where((s) => s.trim().isNotEmpty).toList();
+
   factory Note.fromMap(Map<String, dynamic> m) => Note(
-        id: m['id'] as int,
+        id: m['id'] as int?,
         bookId: m['book_id'] as int,
         chapter: m['chapter'] as int,
         verse: m['verse'] as int,
+        title: (m['title'] as String?) ?? '',
         content: m['content'] as String,
         tags: (m['tags'] as String?) ?? '',
+        refs: _parseRefs(m['refs'] as String?),
+        deletedAt: (m['deleted_at'] as int?) ?? 0,
         createdAt: m['created_at'] as int,
         updatedAt: m['updated_at'] as int,
       );
@@ -407,8 +445,11 @@ class Note {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
+        'title': title,
         'content': content,
         'tags': tags,
+        'refs': refs.join(','),
+        'deleted_at': deletedAt,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };

@@ -6,6 +6,7 @@ import '../providers/providers.dart';
 import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'reading_plans_screen.dart';
+import 'notes_screen.dart';
 import 'search_screen.dart';
 import 'verse_action_sheet.dart';
 
@@ -86,7 +87,7 @@ class StudentHomeScreen extends ConsumerWidget {
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
               _sectionLabel(context, '最近'),
               TextButton(
-                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const BookmarksScreen(initialTab: 2))),
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const NotesScreen())),
                 child: const Text('查看筆記'),
               ),
             ]),

@@ -607,6 +607,9 @@ final allHighlightsProvider = FutureProvider<List<Highlight>>(
     (ref) => ref.watch(databaseServiceProvider).getAllHighlights());
 final allNotesProvider = FutureProvider<List<Note>>(
     (ref) => ref.watch(databaseServiceProvider).getAllNotes());
+/// 「最近刪除」的筆記（軟刪除）。
+final deletedNotesProvider = FutureProvider<List<Note>>(
+    (ref) => ref.watch(databaseServiceProvider).getDeletedNotes());
 final allSermonNotesProvider = FutureProvider<List<SermonNote>>(
     (ref) => ref.watch(databaseServiceProvider).getSermonNotes());
 final statsProvider = FutureProvider<Map<String, int>>(
