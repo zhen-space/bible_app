@@ -124,7 +124,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 v7（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers 禱告事項；v8 todos 信仰生活代辦）。升版時：
+`database_service.dart`，目前 **v13**（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers；v8 todos；**v9 chapter_completions**；**v10 plan_item_progress**；**v11 later**；**v12 notes.title/refs/deleted_at**；**v13 prayers v2 欄位**）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）
@@ -157,6 +157,19 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   `download_stub` 條件式 import（`downloadTextFile`／`pickTextFile`／`canPickFile`；
   手機無選檔→貼上文字）。⛔ 只做格式轉換，不代寫內容。
   （備註：model 仍留 `trinity_who` 欄位供舊資料相容，但編輯頁與匯入匯出已不再使用。）
+
+## P0 前台改版（本輪 #1b–#7，branch `agent/p0-reading-foundation`）
+
+三種閱讀概念**正式分離**（#1b）：**Reading History**＝`reading_log`（造訪，開章即記，臨時瀏覽不記）；**Reading Position**＝`lastReadProvider`（繼續閱讀，SharedPreferences）；**Chapter Completion**＝`chapter_completions`（v9，使用者主動按讀經頁「完成本章」才算）。**打開章節≠完成章節**。信仰地圖／已讀統計改用 completions（升版時由 reading_log 種入，保留舊進度）。
+
+- **Reading Plans v2**（#2）：`plan_item_progress`（v10）逐「讀經項目（章）」勾選；今日進度（第一個未完成的天）vs 整體進度分離；漏讀保留並標記；舊 `plan_progress`（整天）保留相容，開啟計畫時一次性 lazy 種入 item 進度。官方 Published 計畫內容需後端（未做）。
+- **Daily Verse v2**（#3）：正式來源＝Firestore `daily_verses/{YYYY-MM-DD}`（`published==true`，`ContentService.fetchPublishedDailyVerse`＋`publishedDailyVerseProvider`，快取 SharedPreferences）；`dailyVersePool` 降為 fallback。發佈 UI 需後台（未做）。
+- **Verse Actions v2**（#4）：`later` 表（v11，稍後閱讀）；讀經頁**逐節模式多選**（長按選取、批次螢光筆/書籤/稍後讀/複製/分享）；複製/分享分「純經文／經文＋出處」（`utils/share_utils.dart`）。共用單節面板 `screens/verse_action_sheet.dart`（每日經文等非讀經頁入口用）。
+- **Notes v2**（#5）：`notes` 加 `title`/`refs`/`deleted_at`（v12）；可選標題、多節引用、軟刪除（最近刪除，還原/永久刪除）；`screens/notes_screen.dart`（最近/書卷/標籤/搜尋＋編輯器自動儲存＋引用點開臨時閱讀）。逐節快速筆記 `saveNote` 不動 title/refs。
+- **My Content**（#6）：`screens/my_content_screen.dart` 統一入口（經文筆記/螢光筆/書籤/稍後閱讀/證道筆記/禱告，各自獨立 model）；`LaterScreen` 待讀清單。App shell「筆記」tab 改為「內容」→ MyContentScreen（`notes_hub_screen.dart` 退出導航，未刪）。
+- **Prayer v2**（#7）：`prayers` 加 title/prayer_date/refs/status(praying/answered/ended)/reminder_at/answered_at/answered_reflection（v13）；舊 category/subcategory/content 保留相容。提醒只存時間（真推播需 FCM，未接）。
+- **同步/墓碑**：新增 tombstone kind `completion`、`later`；`chapter_completions`/`plan_item_progress`/`later` 都進 `sync_service`（LWW）。notes 軟刪除是**本地 trash**（purge 才寫墓碑同步刪除）。plan 進度沿用舊慣例（取消＝本地刪除、無墓碑）。
+- **#8（Published-only 授權：annotations/knowledge/public_notes 仍 `allow read: if true`、SharedPreferences/asset fallback）與 #9（Q&A 安全）留給「後端 × Codex」**，本輪未動。`firestore.rules` 已加 `daily_verses` 讀規則（**未 deploy**）。
 
 ## 開發守則（歷史教訓）
 
