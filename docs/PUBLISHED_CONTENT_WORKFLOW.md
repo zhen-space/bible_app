@@ -3,6 +3,15 @@
 本輪在 `agent/p0-backend-published-workflow`（以 PR #3 HEAD 為相容性基準）實作。
 **未 deploy、未 merge、未跑 production migration、未連 production。**
 
+## 0. Production read-only audit 結果（使用者本人執行，target `bible-app-c0eac`）
+所有受管理 collection **皆為空**：annotations / knowledge / daily_verses / public_notes /
+reading_plans total=0；questions publishedTotal=0；issues=[]。
+→ **不需要 legacy backfill／不需要 `--apply`／不需要 production data repair。**
+`users/{uid}` private data **不在 audit scope，完全保留**（不得因 managed=0 假設整庫為空）。
+既然 production 沒有「舊 docs 缺 status」，rules/client **不再維持 legacy `published==true` 相容**，
+一律以 `status=='published'` 為準（fail-closed 更嚴）。本機 asset/cache 舊內容仍 fail-closed（見 §6）。
+（zsh 提醒：`status` 是 zsh 保留變數；抓 exit code 請用 `audit_status=$?` 或 `${PIPESTATUS[0]}`，勿 `status=$?`。）
+
 ## 1. Existing / Reuse / Modify / Missing / Migration
 
 | 內容型別 | Existing | 本輪 Modify | Migration required |
@@ -118,7 +127,20 @@ Dart：`lib/models/managed_content.dart`（`ManagedContent` / `ContentStatus` / 
 可辨識 v1→v2。機械計畫 item_id 空、plan_version=1。**不依賴 day display index / list index /
 scripture position 順序**。
 
-## 8. Migration / Backfill plan（`tools/`，本輪不執行）
+### Reading Plans Published 內容 schema（contract；reader/editor 屬 Missing/後端）
+`reading_plans/{plan_id}`（published mirror，managed envelope）payload：
+```
+plan_id, title, scope, version,
+days: [ { day_index, items: [ { item_id, refs:[節位…], label } ] } ]
+```
+`item_id` = stable Reading Item id；學生端進度以 `(plan_id, plan_version, item_id)` 或機械計畫的
+真實章位為身分（見 §7），**不依賴 display index**。目前無雲端 reading_plans reader/admin editor
+（官方計畫內容 = Missing，⛔ 使用者親撰）；rules 已 gate 此 collection。
+
+## 8. Migration / Backfill plan（`tools/`，**經 audit 判定：目前不需要**）
+
+Production managed collections = 0（見 §0），因此**現在不需要任何 backfill/migration**。
+以下工具保留給「未來有內容後」或其他環境，仍是 additive/read-only/fail-closed：
 
 1.（唯讀）`node tools/audit_published.mjs` — 盤點缺 status/version/provenance 的 legacy 文件。
 2. `node tools/backfill_status.mjs`（dry-run）檢視計畫 → `--apply` 由**使用者本人**在可信環境跑：
@@ -132,7 +154,7 @@ scripture position 順序**。
 
 - `flutter analyze`：clean（tools/ 已排除於 Dart 分析）。
 - `flutter test`：51/51（含 8 個 #8/#9 契約 unit test：ManagedContent round-trip／legacy 欄名相容／payloadOf／AnswerSource／QA 三態）。
-- Firestore rules 測試：30/30（emulator，含 Draft/Review/Rejected/Archived deny、custom-claim admin、collection-group deny、student 不可自我發佈）。
+- Firestore rules 測試：**36/36**（emulator，含 annotations/daily_verses/reading_plans 的 Draft/Review/Rejected/Archived deny、custom-claim admin、collection-group deny、student 不可自我發佈、**Published v1 在 v2 workspace draft 存在時仍服務**）。
 - fail-closed 守門：audit/backfill 無憑證與 emulator 情境皆正確中止。
 - Student build ✓、Admin build ✓。
 

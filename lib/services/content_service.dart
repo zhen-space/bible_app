@@ -143,16 +143,61 @@ class ContentService {
   CollectionReference<Map<String, dynamic>> get _dailyVerses =>
       _fs.collection('daily_verses');
 
-  /// 讀經端：取某日（YYYY-MM-DD）的官方每日經文。**只回 Published**；
+  /// 讀經端：取某日（YYYY-MM-DD）的官方每日經文。**只回 status=='published'**；
   /// 未發佈或不存在回 null（fail-closed，前端顯示「今日尚無經文」，不得 fallback）。
-  /// 相容 legacy 的 `published==true`（backfill 會補 status='published'）。
+  /// （managed collections 經唯讀 audit 確認為空，故不再相容 legacy published==true。）
   Future<Map<String, dynamic>?> fetchPublishedDailyVerse(String ymd) async {
     final d = await _dailyVerses.doc(ymd).get();
     if (!d.exists) return null;
     final m = d.data()!;
-    final isPublished = m['status'] == 'published' || m['published'] == true;
-    if (!isPublished) return null;
+    if (m['status'] != 'published') return null;
     return m;
+  }
+
+  /// 管理者：發佈某日的官方每日經文（直接發佈；stamp managed envelope）。
+  /// 學生端只讀 status=='published'（見 fetchPublishedDailyVerse）。
+  Future<void> publishDailyVerse(
+    String ymd, {
+    required int bookId,
+    required int chapter,
+    required int verse,
+    String publisher = '',
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ref = _dailyVerses.doc(ymd);
+    final existing = await ref.get();
+    final prevVersion = (existing.data()?['version'] as int?) ?? 0;
+    await ref.set({
+      'content_id': 'daily_$ymd',
+      'content_type': 'daily_verse',
+      'date': ymd,
+      'book_id': bookId,
+      'chapter': chapter,
+      'verse': verse,
+      'status': 'published',
+      'version': prevVersion + 1,
+      'created_at': existing.data()?['created_at'] ?? now,
+      'created_by': existing.data()?['created_by'] ?? publisher,
+      'updated_at': now,
+      'updated_by': publisher,
+      'published_by': publisher,
+      'published_at': now,
+      'provenance': {'source': '管理員發佈', 'note': ''},
+    });
+  }
+
+  /// 管理者：撤下某日每日經文（archive；學生端立即讀不到）。
+  Future<void> archiveDailyVerse(String ymd, {String publisher = ''}) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final ref = _dailyVerses.doc(ymd);
+    if ((await ref.get()).exists) {
+      await ref.update({
+        'status': 'archived',
+        'archived_at': now,
+        'updated_at': now,
+        'updated_by': publisher,
+      });
+    }
   }
 
   // ---- 公開註解（使用者投稿 → 管理者審核）----

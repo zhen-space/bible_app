@@ -44,7 +44,12 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'annotations_workspace/book_1'), { status: 'draft' });
   await setDoc(doc(db, 'daily_verses/2026-01-01'), { status: 'published', book_id: 1, chapter: 1, verse: 1 });
   await setDoc(doc(db, 'daily_verses/2026-01-02'), { status: 'draft', book_id: 1, chapter: 1, verse: 2 });
+  await setDoc(doc(db, 'daily_verses/2026-01-03'), { status: 'archived', book_id: 1, chapter: 1, verse: 3 });
   await setDoc(doc(db, 'knowledge/data'), { status: 'published', version: 1 });
+  // reading_plans：Published v1 mirror + v2 workspace draft（驗證 v1 在 v2 草稿時仍服務）
+  await setDoc(doc(db, 'reading_plans/plan1'), { status: 'published', version: 1, content_type: 'reading_plan' });
+  await setDoc(doc(db, 'reading_plans/plan2_draft'), { status: 'draft', version: 0 });
+  await setDoc(doc(db, 'reading_plans_workspace/plan1'), { status: 'draft', version: 1 });
   await setDoc(doc(db, 'questions/q_pub'), { uid: 'someone', status: 'approved', published: true, answer: { content: 'a' } });
   await setDoc(doc(db, 'questions/q_draft'), { uid: 'someone', status: 'approved', published: false });
 });
@@ -91,12 +96,24 @@ await ok('admin(claim) 可寫 annotations', assertSucceeds(setDoc(doc(claimAdmin
 await ok('admin(claim) 可寫 workspace（review transition）',
   assertSucceeds(setDoc(doc(claimAdmin, 'annotations_workspace/book_10'), { status: 'review' })));
 
-// daily_verses：Published 可讀、Draft 不可讀。
+// daily_verses：Published 可讀、Draft/Archived 不可讀。
 await ok('guest 可讀 Published daily verse', assertSucceeds(getDoc(doc(guest, 'daily_verses/2026-01-01'))));
 await ok('guest 不可讀 Draft daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-02'))));
+await ok('guest 不可讀 Archived daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-03'))));
 
 // knowledge：Published 可讀。
 await ok('guest 可讀 Published knowledge', assertSucceeds(getDoc(doc(guest, 'knowledge/data'))));
+
+// reading_plans：Published 可讀、Draft 不可讀、workspace admin-only；
+// **v1 在 v2 workspace draft 存在時仍服務**（student 讀得到 published mirror v1）。
+await ok('guest 可讀 Published reading_plan v1', assertSucceeds(getDoc(doc(guest, 'reading_plans/plan1'))));
+await ok('student 可讀 Published reading_plan v1（v2 草稿存在時仍服務）',
+  assertSucceeds(getDoc(doc(student, 'reading_plans/plan1'))));
+await ok('guest 不可讀 Draft reading_plan', assertFails(getDoc(doc(guest, 'reading_plans/plan2_draft'))));
+await ok('student 不可讀 reading_plans_workspace（v2 草稿）',
+  assertFails(getDoc(doc(student, 'reading_plans_workspace/plan1'))));
+await ok('admin(claim) 可讀/寫 reading_plans_workspace（workflow）',
+  assertSucceeds(setDoc(doc(claimAdmin, 'reading_plans_workspace/plan1'), { status: 'review' }, { merge: true })));
 
 // questions：Published 可讀、未發布不可讀（非本人）。
 await ok('guest 可讀 published question', assertSucceeds(getDoc(doc(guest, 'questions/q_pub'))));

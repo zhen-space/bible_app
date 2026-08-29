@@ -59,9 +59,10 @@ service cloud.firestore {
       allow read: if isPublished() || isAdmin();
       allow write: if isAdmin();
     }
-    // 每日經文：以 status 為準；相容 legacy 的 published==true（backfill 會補 status）。
+    // 每日經文：**只以 status=='published' 為準**（production managed collections 經唯讀
+    // audit 確認為空，無需維持 legacy published==true 的 serving 相容）。
     match /daily_verses/{doc} {
-      allow read: if isPublished() || resource.data.published == true || isAdmin();
+      allow read: if isPublished() || isAdmin();
       allow write: if isAdmin();
     }
 
