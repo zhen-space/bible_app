@@ -10,13 +10,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
-import '../services/annotation_repository.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
 import '../services/content_workflow_service.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
-import '../services/knowledge_repository.dart';
 import '../services/qa_service.dart';
 import '../services/sync_service.dart';
 
@@ -26,7 +24,9 @@ const String kAdminEmail = 'zhen20091212@gmail.com';
 
 final bibleRepositoryProvider = Provider((ref) => BibleRepository());
 final databaseServiceProvider = Provider((ref) => DatabaseService());
-final annotationRepositoryProvider = Provider((ref) => AnnotationRepository());
+// #8/#10 fail-closed：annotations/knowledge 只從雲端 Published 取得，**不再有**
+// asset 倉庫 provider（移除舊的 annotationRepositoryProvider/knowledgeRepositoryProvider，
+// 消除學生端 asset fallback 的殘留再進入點）。asset 檔僅供未來後台 seeding，非執行期讀取。
 
 /// 全部書卷（App 啟動時載入一次）。
 final booksProvider = FutureProvider<List<Book>>((ref) {
@@ -547,9 +547,6 @@ final pendingSubmissionsProvider =
 });
 
 // ---- 聖經知識架構（時間軸/人物/平行對照/預表應驗；內容使用者親寫）----
-
-final knowledgeRepositoryProvider =
-    Provider((ref) => KnowledgeRepository());
 
 /// 雲端知識資料（**只用 Published**，#8/#10 fail-closed）。線上只在 knowledge/data
 /// 為 Published 時抓，抓到就快取「已確認 Published 的版本」；離線退回上次 Published 快取；
