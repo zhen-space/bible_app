@@ -147,8 +147,11 @@ class TopicDetailScreen extends ConsumerWidget {
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
+                    // 主題經文＝臨時瀏覽
                     builder: (_) => ChapterScreen(
-                        bookId: v.bookId, chapter: v.chapter),
+                        bookId: v.bookId,
+                        chapter: v.chapter,
+                        updateReadingPosition: false),
                   ),
                 ),
               );

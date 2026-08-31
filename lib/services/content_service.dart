@@ -70,6 +70,24 @@ class ContentService {
   Future<void> saveKnowledge(Map<String, dynamic> data) =>
       _knowledgeDoc.set(data);
 
+  // ---- 每日經文（官方，管理者發佈）----
+  //
+  // Firestore `daily_verses` collection，doc id = 'YYYY-MM-DD'，
+  // 欄位 `{book_id, chapter, verse, published}`。**只有 published==true 才算數。**
+  // 讀經端只讀不寫；發佈由後台（管理者）處理。內容＝管理者的編輯選擇。
+
+  CollectionReference<Map<String, dynamic>> get _dailyVerses =>
+      _fs.collection('daily_verses');
+
+  /// 讀經端：取某日（YYYY-MM-DD）的官方每日經文。未發佈或不存在回 null。
+  Future<Map<String, dynamic>?> fetchPublishedDailyVerse(String ymd) async {
+    final d = await _dailyVerses.doc(ymd).get();
+    if (!d.exists) return null;
+    final m = d.data()!;
+    if (m['published'] != true) return null;
+    return m;
+  }
+
   // ---- 公開註解（使用者投稿 → 管理者審核）----
   //
   // `submissions`：待審／已審的投稿（只有作者本人與管理者可讀）。

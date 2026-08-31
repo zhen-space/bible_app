@@ -12,7 +12,7 @@ import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dar
 /// 3. `_createAllTables` 同步加上新表/新欄位的建表語句（給全新安裝用）
 class DatabaseService {
   static const _dbName = 'bible_app.db';
-  static const _dbVersion = 8;
+  static const _dbVersion = 13;
 
   /// 資料異動通知（自動備份用）：每次寫入後呼叫。
   /// providers 端掛上 debounce 的雲端同步（登入時筆記即時上傳，換手機不丟）。
@@ -67,8 +67,11 @@ class DatabaseService {
         book_id INTEGER NOT NULL,
         chapter INTEGER NOT NULL,
         verse INTEGER NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL,
         tags TEXT NOT NULL DEFAULT '',
+        refs TEXT NOT NULL DEFAULT '',
+        deleted_at INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -81,6 +84,53 @@ class DatabaseService {
     await _createTombstonesTable(db); // v6
     await _createPrayersTable(db); // v7
     await _createTodosTable(db); // v8
+    await _createChapterCompletionsTable(db); // v9
+    await _createPlanItemProgressTable(db); // v10
+    await _createLaterTable(db); // v11
+  }
+
+  /// 稍後閱讀（Later，v11）：使用者標記「待讀」的節，與書籤分開（書籤＝收藏、
+  /// Later＝待讀清單）。結構同書籤。
+  Future<void> _createLaterTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE later (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        verse INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        UNIQUE(book_id, chapter, verse)
+      )
+    ''');
+  }
+
+  /// 讀經計畫「單一讀經項目」完成紀錄（v10，Reading Plans v2）。
+  /// 一天含多個 Reading Item（章），每個項目可獨立勾選完成——
+  /// 與舊的 plan_progress（整天為單位）並存，plan_progress 保留給向後相容。
+  Future<void> _createPlanItemProgressTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE plan_item_progress (
+        plan_id TEXT NOT NULL,
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        day INTEGER NOT NULL,
+        done_at INTEGER NOT NULL,
+        PRIMARY KEY(plan_id, book_id, chapter)
+      )
+    ''');
+  }
+
+  /// 章節「完成」紀錄（v9）：**使用者主動確認完成**的章，與「閱讀紀錄／造訪」
+  /// （reading_log）分離——打開章節不等於完成章節。信仰地圖與已讀統計改用此表。
+  Future<void> _createChapterCompletionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE chapter_completions (
+        book_id INTEGER NOT NULL,
+        chapter INTEGER NOT NULL,
+        completed_at INTEGER NOT NULL,
+        PRIMARY KEY(book_id, chapter)
+      )
+    ''');
   }
 
   /// 信仰生活代辦事項（首頁區塊）：分類/內容/完成狀態，使用者自行增刪，**可打勾**。
@@ -104,7 +154,14 @@ class DatabaseService {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         category TEXT NOT NULL DEFAULT '',
         subcategory TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
         content TEXT NOT NULL DEFAULT '',
+        prayer_date INTEGER NOT NULL DEFAULT 0,
+        refs TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'praying',
+        reminder_at INTEGER NOT NULL DEFAULT 0,
+        answered_at INTEGER NOT NULL DEFAULT 0,
+        answered_reflection TEXT NOT NULL DEFAULT '',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -210,6 +267,48 @@ class DatabaseService {
     if (oldV < 8) {
       await _createTodosTable(db);
     }
+    if (oldV < 9) {
+      await _createChapterCompletionsTable(db);
+      // 向後相容：把既有「閱讀紀錄」視為已完成，保留使用者現有的信仰地圖進度。
+      // （舊版打開章節即記 reading_log；升版後只有主動確認才算完成，但既有進度不清空。）
+      await db.execute('''
+        INSERT OR IGNORE INTO chapter_completions (book_id, chapter, completed_at)
+        SELECT book_id, chapter, read_at FROM reading_log
+      ''');
+    }
+    if (oldV < 10) {
+      await _createPlanItemProgressTable(db);
+    }
+    if (oldV < 11) {
+      await _createLaterTable(db);
+    }
+    if (oldV < 12) {
+      // Notes v2：可選標題、額外多節引用、軟刪除（最近刪除）。全部 additive。
+      await db.execute(
+          "ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          "ALTER TABLE notes ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          'ALTER TABLE notes ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+    }
+    if (oldV < 13) {
+      // Prayer v2：標題/日期/引用/狀態/提醒/應允日期/應允回顧。全部 additive，
+      // 舊 category/subcategory/content 保留；既有禱告資料不動。
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN title TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN prayer_date INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN status TEXT NOT NULL DEFAULT 'praying'");
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN reminder_at INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          'ALTER TABLE prayers ADD COLUMN answered_at INTEGER NOT NULL DEFAULT 0');
+      await db.execute(
+          "ALTER TABLE prayers ADD COLUMN answered_reflection TEXT NOT NULL DEFAULT ''");
+    }
   }
 
   // ---- Bookmarks ----
@@ -251,6 +350,92 @@ class DatabaseService {
       whereArgs: [bookId, chapter],
     );
     return rows.map((r) => r['verse'] as int).toSet();
+  }
+
+  // ---- 稍後閱讀（Later）----
+
+  /// 加入 / 移除「稍後閱讀」（切換）。
+  Future<void> toggleLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final deleted = await db.delete(
+      'later',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    if (deleted == 0) {
+      await db.insert('later', {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      });
+      await _untomb(db, 'later', ref);
+    } else {
+      await _tombstone(db, 'later', ref);
+    }
+    _mutated();
+  }
+
+  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。
+  Future<void> addLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    await db.insert(
+      'later',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+    await _untomb(db, 'later', _rowRef(bookId, chapter, verse));
+    _mutated();
+  }
+
+  Future<void> removeLater(int bookId, int chapter, int verse) async {
+    final db = await database;
+    await db.delete(
+      'later',
+      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      whereArgs: [bookId, chapter, verse],
+    );
+    await _tombstone(db, 'later', _rowRef(bookId, chapter, verse));
+    _mutated();
+  }
+
+  Future<List<Bookmark>> getAllLater() async {
+    final db = await database;
+    final rows = await db.query('later', orderBy: 'created_at DESC');
+    return rows.map(Bookmark.fromMap).toList();
+  }
+
+  Future<Set<int>> getLaterVerses(int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'later',
+      columns: ['verse'],
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    return rows.map((r) => r['verse'] as int).toSet();
+  }
+
+  /// 雲端同步 upsert（已存在略過）。
+  Future<void> upsertLater(
+      int bookId, int chapter, int verse, int createdAt) async {
+    final db = await database;
+    await db.insert(
+      'later',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'created_at': createdAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
   }
 
   // ---- Highlights ----
@@ -306,6 +491,8 @@ class DatabaseService {
 
   // ---- Notes ----
 
+  /// 逐節快速筆記（Reader/單節面板用）：以錨點 (book,chapter,verse) upsert。
+  /// **不動** title/refs（保留 v2 欄位不被簡易編輯清掉）；會清軟刪除旗標。
   Future<void> saveNote(int bookId, int chapter, int verse, String content,
       {String tags = ''}) async {
     final db = await database;
@@ -328,7 +515,7 @@ class DatabaseService {
     } else {
       await db.update(
         'notes',
-        {'content': content, 'tags': tags, 'updated_at': now},
+        {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );
@@ -337,20 +524,107 @@ class DatabaseService {
     _mutated();
   }
 
+  /// Notes v2 完整存檔（含標題/額外引用/標籤）。id 為 null＝新增，回傳 id。
+  Future<int> saveNoteFull(Note note) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (note.id == null) {
+      final id = await db.insert('notes', {
+        'book_id': note.bookId,
+        'chapter': note.chapter,
+        'verse': note.verse,
+        'title': note.title,
+        'content': note.content,
+        'tags': note.tags,
+        'refs': note.refs.join(','),
+        'deleted_at': 0,
+        'created_at': now,
+        'updated_at': now,
+      });
+      await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+      _mutated();
+      return id;
+    }
+    await db.update(
+      'notes',
+      {
+        'book_id': note.bookId,
+        'chapter': note.chapter,
+        'verse': note.verse,
+        'title': note.title,
+        'content': note.content,
+        'tags': note.tags,
+        'refs': note.refs.join(','),
+        'deleted_at': 0,
+        'updated_at': now,
+      },
+      where: 'id = ?',
+      whereArgs: [note.id],
+    );
+    await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+    _mutated();
+    return note.id!;
+  }
+
+  /// 軟刪除到「最近刪除」（不寫墓碑；真正刪除走 purgeNote）。
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
     final db = await database;
-    await db.delete(
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.update(
       'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
+      {'deleted_at': now, 'updated_at': now},
+      where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter, verse],
     );
-    await _tombstone(db, 'note', _rowRef(bookId, chapter, verse));
     _mutated();
   }
 
+  Future<void> softDeleteNoteById(int id) async {
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await db.update('notes', {'deleted_at': now, 'updated_at': now},
+        where: 'id = ?', whereArgs: [id]);
+    _mutated();
+  }
+
+  Future<void> restoreNote(int id) async {
+    final db = await database;
+    await db.update(
+        'notes',
+        {'deleted_at': 0, 'updated_at': DateTime.now().millisecondsSinceEpoch},
+        where: 'id = ?', whereArgs: [id]);
+    _mutated();
+  }
+
+  /// 從「最近刪除」永久刪除（寫墓碑，同步刪除）。
+  Future<void> purgeNote(int id) async {
+    final db = await database;
+    final rows = await db.query('notes',
+        columns: ['book_id', 'chapter', 'verse'],
+        where: 'id = ?',
+        whereArgs: [id]);
+    await db.delete('notes', where: 'id = ?', whereArgs: [id]);
+    if (rows.isNotEmpty) {
+      final r = rows.first;
+      await _tombstone(db, 'note',
+          _rowRef(r['book_id'] as int, r['chapter'] as int, r['verse'] as int));
+    }
+    _mutated();
+  }
+
+  /// 全部正常（未軟刪除）筆記。
   Future<List<Note>> getAllNotes() async {
     final db = await database;
-    final rows = await db.query('notes', orderBy: 'updated_at DESC');
+    final rows = await db.query('notes',
+        where: 'deleted_at = 0', orderBy: 'updated_at DESC');
+    return rows.map(Note.fromMap).toList();
+  }
+
+  /// 「最近刪除」的筆記（軟刪除）。
+  Future<List<Note>> getDeletedNotes() async {
+    final db = await database;
+    final rows = await db.query('notes',
+        where: 'deleted_at > 0', orderBy: 'deleted_at DESC');
     return rows.map(Note.fromMap).toList();
   }
 
@@ -358,7 +632,7 @@ class DatabaseService {
     final db = await database;
     final rows = await db.query(
       'notes',
-      where: 'book_id = ? AND chapter = ?',
+      where: 'book_id = ? AND chapter = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter],
     );
     return {for (final r in rows) r['verse'] as int: Note.fromMap(r)};
@@ -380,8 +654,8 @@ class DatabaseService {
     _mutated();
   }
 
-  /// 已讀章數。
-  Future<int> getReadChapterCount() async {
+  /// 曾造訪過的章數（Reading History）。
+  Future<int> getVisitedChapterCount() async {
     final db = await database;
     final rows =
         await db.rawQuery('SELECT COUNT(*) AS c FROM reading_log');
@@ -393,12 +667,87 @@ class DatabaseService {
     return db.query('reading_log');
   }
 
-  /// 每卷已讀章數（bookId → 已讀章數），信仰地圖用。
+  // ---- 章節完成（Chapter Completion，使用者主動確認）----
+
+  /// 標記某章為「已完成」（主動確認）。
+  Future<void> markChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    await db.insert(
+      'chapter_completions',
+      {
+        'book_id': bookId,
+        'chapter': chapter,
+        'completed_at': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+    await _untomb(db, 'completion', _completionRef(bookId, chapter));
+    _mutated();
+  }
+
+  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。
+  Future<void> unmarkChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    await db.delete(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    await _tombstone(db, 'completion', _completionRef(bookId, chapter));
+    _mutated();
+  }
+
+  String _completionRef(int bookId, int chapter) => 'b${bookId}_c$chapter';
+
+  Future<bool> isChapterComplete(int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    return rows.isNotEmpty;
+  }
+
+  /// 已完成章數（全聖經 1,189 章）。
+  Future<int> getReadChapterCount() async {
+    final db = await database;
+    final rows =
+        await db.rawQuery('SELECT COUNT(*) AS c FROM chapter_completions');
+    return rows.first['c'] as int;
+  }
+
+  Future<List<Map<String, dynamic>>> getAllChapterCompletions() async {
+    final db = await database;
+    return db.query('chapter_completions');
+  }
+
+  /// 每卷已完成章數（bookId → 已完成章數），信仰地圖用。
   Future<Map<int, int>> getReadCountsByBook() async {
     final db = await database;
     final rows = await db.rawQuery(
-        'SELECT book_id, COUNT(*) AS c FROM reading_log GROUP BY book_id');
+        'SELECT book_id, COUNT(*) AS c FROM chapter_completions GROUP BY book_id');
     return {for (final r in rows) r['book_id'] as int: r['c'] as int};
+  }
+
+  /// 完成紀錄合併（保留較新的 completed_at），雲端同步用。
+  Future<void> upsertChapterCompletion(
+      int bookId, int chapter, int completedAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'chapter_completions',
+      where: 'book_id = ? AND chapter = ?',
+      whereArgs: [bookId, chapter],
+    );
+    if (existing.isNotEmpty &&
+        (existing.first['completed_at'] as int) >= completedAt) {
+      return;
+    }
+    await db.insert(
+      'chapter_completions',
+      {'book_id': bookId, 'chapter': chapter, 'completed_at': completedAt},
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
   }
 
   /// 每卷有筆記/書籤/螢光筆的節數合計（信仰地圖「有標記」用）。
@@ -463,7 +812,7 @@ class DatabaseService {
   /// 筆記：以 updated_at 較新者為準。
   Future<void> upsertNote(int bookId, int chapter, int verse, String content,
       int createdAt, int updatedAt,
-      {String tags = ''}) async {
+      {String tags = '', String title = '', String refs = ''}) async {
     final db = await database;
     final existing = await db.query(
       'notes',
@@ -475,15 +824,23 @@ class DatabaseService {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
+        'title': title,
         'content': content,
         'tags': tags,
+        'refs': refs,
         'created_at': createdAt,
         'updated_at': updatedAt,
       });
     } else if ((existing.first['updated_at'] as int) < updatedAt) {
       await db.update(
         'notes',
-        {'content': content, 'tags': tags, 'updated_at': updatedAt},
+        {
+          'title': title,
+          'content': content,
+          'tags': tags,
+          'refs': refs,
+          'updated_at': updatedAt
+        },
         where: 'id = ?',
         whereArgs: [existing.first['id']],
       );
@@ -542,7 +899,7 @@ class DatabaseService {
       return r.first['c'] as int;
     }
     return {
-      'read': await count('reading_log'),
+      'read': await count('chapter_completions'),
       'bookmarks': await count('bookmarks'),
       'highlights': await count('highlights'),
       'notes': await count('notes'),
@@ -598,7 +955,122 @@ class DatabaseService {
     return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
   }
 
-  /// 勾選/取消某一天。
+  // ---- 讀經計畫 v2：單一讀經項目（章）進度 ----
+
+  /// 某計畫已完成的讀經項目（book_id*1000+chapter 無法保證唯一，改用字串 key）。
+  /// 回傳 {'b{book}_c{chapter}'} 集合。
+  Future<Set<String>> getPlanItemProgress(String planId) async {
+    final db = await database;
+    final rows = await db.query('plan_item_progress',
+        columns: ['book_id', 'chapter'],
+        where: 'plan_id = ?',
+        whereArgs: [planId]);
+    return {
+      for (final r in rows) 'b${r['book_id']}_c${r['chapter']}',
+    };
+  }
+
+  /// 各計畫已完成項目數（planId → 已完成章數），計畫列表進度條用。
+  Future<Map<String, int>> getPlanItemDoneCounts() async {
+    final db = await database;
+    final rows = await db.rawQuery(
+        'SELECT plan_id, COUNT(*) AS c FROM plan_item_progress GROUP BY plan_id');
+    return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
+  }
+
+  /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
+  Future<void> setPlanItemDone(
+      String planId, int day, int bookId, int chapter, bool done) async {
+    final db = await database;
+    if (done) {
+      await db.insert(
+        'plan_item_progress',
+        {
+          'plan_id': planId,
+          'book_id': bookId,
+          'chapter': chapter,
+          'day': day,
+          'done_at': DateTime.now().millisecondsSinceEpoch,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    } else {
+      await db.delete(
+        'plan_item_progress',
+        where: 'plan_id = ? AND book_id = ? AND chapter = ?',
+        whereArgs: [planId, bookId, chapter],
+      );
+    }
+    _mutated();
+  }
+
+  Future<List<Map<String, dynamic>>> getAllPlanItemProgress() async {
+    final db = await database;
+    return db.query('plan_item_progress');
+  }
+
+  /// 向後相容：把舊版「整天完成」（plan_progress）一次性攤平成 v2 的
+  /// 逐項目完成（plan_item_progress）。只在該計畫尚無任何 v2 項目進度時做，
+  /// 需要外部傳入 day→該天章清單（因排程依賴 books，不能純 SQL 算）。
+  /// [dayItems]：day(1-based) → 該天的 [(bookId, chapter), …]。
+  Future<int> seedPlanItemsFromDays(
+      String planId, Map<int, List<List<int>>> dayItems) async {
+    final db = await database;
+    final already = await db.query('plan_item_progress',
+        where: 'plan_id = ?', whereArgs: [planId], limit: 1);
+    if (already.isNotEmpty) return 0; // 已有 v2 進度，不覆蓋
+    final doneDays = await getPlanProgress(planId);
+    if (doneDays.isEmpty) return 0;
+    var seeded = 0;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final batch = db.batch();
+    for (final day in doneDays) {
+      for (final item in dayItems[day] ?? const <List<int>>[]) {
+        batch.insert(
+          'plan_item_progress',
+          {
+            'plan_id': planId,
+            'book_id': item[0],
+            'chapter': item[1],
+            'day': day,
+            'done_at': now,
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+        seeded++;
+      }
+    }
+    await batch.commit(noResult: true);
+    if (seeded > 0) _mutated();
+    return seeded;
+  }
+
+  /// 計畫項目進度合併（保留較新的 done_at），雲端同步用。
+  Future<void> upsertPlanItemProgress(
+      String planId, int bookId, int chapter, int day, int doneAt) async {
+    final db = await database;
+    final existing = await db.query(
+      'plan_item_progress',
+      where: 'plan_id = ? AND book_id = ? AND chapter = ?',
+      whereArgs: [planId, bookId, chapter],
+    );
+    if (existing.isNotEmpty && (existing.first['done_at'] as int) >= doneAt) {
+      return;
+    }
+    await db.insert(
+      'plan_item_progress',
+      {
+        'plan_id': planId,
+        'book_id': bookId,
+        'chapter': chapter,
+        'day': day,
+        'done_at': doneAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// 勾選/取消某一天（整天為單位；v1 相容保留）。
   Future<void> setPlanDayDone(String planId, int day, bool done) async {
     final db = await database;
     if (done) {
@@ -745,12 +1217,15 @@ class DatabaseService {
     var removed = 0;
     switch (kind) {
       case 'bookmark':
+      case 'later':
       case 'highlight':
       case 'note':
         if (parts == null) return 0;
         final table = kind == 'bookmark'
             ? 'bookmarks'
-            : (kind == 'highlight' ? 'highlights' : 'notes');
+            : (kind == 'later'
+                ? 'later'
+                : (kind == 'highlight' ? 'highlights' : 'notes'));
         final tsCol = kind == 'note' ? 'updated_at' : 'created_at';
         removed = await db.delete(
           table,
@@ -785,6 +1260,18 @@ class DatabaseService {
           'todos',
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
+        );
+      case 'completion':
+        final cm = RegExp(r'^b(\d+)_c(\d+)$').firstMatch(ref);
+        if (cm == null) return 0;
+        removed = await db.delete(
+          'chapter_completions',
+          where: 'book_id = ? AND chapter = ? AND completed_at <= ?',
+          whereArgs: [
+            int.parse(cm.group(1)!),
+            int.parse(cm.group(2)!),
+            deletedAt,
+          ],
         );
     }
     return removed;

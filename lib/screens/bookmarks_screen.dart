@@ -395,7 +395,9 @@ void _openChapter(BuildContext context, int bookId, int chapter) {
   Navigator.push(
     context,
     MaterialPageRoute(
-      builder: (_) => ChapterScreen(bookId: bookId, chapter: chapter),
+      // My Content（書籤/螢光/筆記）→ 經文＝臨時瀏覽，返回原清單
+      builder: (_) => ChapterScreen(
+          bookId: bookId, chapter: chapter, updateReadingPosition: false),
     ),
   );
 }

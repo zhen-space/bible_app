@@ -45,6 +45,8 @@ class SyncService {
     final tombS = await db.getTombstoneMap('sermon');
     final tombP = await db.getTombstoneMap('prayer');
     final tombT = await db.getTombstoneMap('todo');
+    final tombC = await db.getTombstoneMap('completion');
+    final tombL = await db.getTombstoneMap('later');
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
@@ -56,6 +58,15 @@ class SyncService {
       final t = tombB[rref(m)];
       if (t != null && t >= (m['created_at'] as int)) continue;
       await db.upsertBookmark(m['book_id'] as int, m['chapter'] as int,
+          m['verse'] as int, m['created_at'] as int);
+      downloaded++;
+    }
+    final cloudLater = await _col(uid, 'later').get();
+    for (final d in cloudLater.docs) {
+      final m = d.data();
+      final t = tombL[rref(m)];
+      if (t != null && t >= (m['created_at'] as int)) continue;
+      await db.upsertLater(m['book_id'] as int, m['chapter'] as int,
           m['verse'] as int, m['created_at'] as int);
       downloaded++;
     }
@@ -80,7 +91,9 @@ class SyncService {
           m['content'] as String,
           m['created_at'] as int,
           m['updated_at'] as int,
-          tags: (m['tags'] as String?) ?? '');
+          tags: (m['tags'] as String?) ?? '',
+          title: (m['title'] as String?) ?? '',
+          refs: (m['refs'] as String?) ?? '');
       downloaded++;
     }
     final cloudLog = await _col(uid, 'reading_log').get();
@@ -95,6 +108,27 @@ class SyncService {
       final m = d.data();
       await db.upsertPlanProgress(
           m['plan_id'] as String, m['day'] as int, m['done_at'] as int);
+      downloaded++;
+    }
+    final cloudPlanItems = await _col(uid, 'plan_item_progress').get();
+    for (final d in cloudPlanItems.docs) {
+      final m = d.data();
+      await db.upsertPlanItemProgress(
+          m['plan_id'] as String,
+          m['book_id'] as int,
+          m['chapter'] as int,
+          m['day'] as int,
+          m['done_at'] as int);
+      downloaded++;
+    }
+    final cloudCompletions = await _col(uid, 'chapter_completions').get();
+    for (final d in cloudCompletions.docs) {
+      final m = d.data();
+      final completedAt = m['completed_at'] as int;
+      final t = tombC['b${m['book_id']}_c${m['chapter']}'];
+      if (t != null && t >= completedAt) continue;
+      await db.upsertChapterCompletion(
+          m['book_id'] as int, m['chapter'] as int, completedAt);
       downloaded++;
     }
     // 證道筆記：以雲端 doc id 對應本地（較新的 updated_at 為準）
@@ -184,6 +218,13 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    for (final b in await db.getAllLater()) {
+      final m = b.toMap()..remove('id');
+      batch.set(_col(uid, 'later').doc(_refId(m)), m);
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
     for (final h in await db.getAllHighlights()) {
       final m = h.toMap()..remove('id');
       batch.set(_col(uid, 'highlights').doc(_refId(m)), m);
@@ -246,15 +287,45 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    for (final m in await db.getAllPlanItemProgress()) {
+      batch.set(
+          _col(uid, 'plan_item_progress')
+              .doc('${m['plan_id']}_b${m['book_id']}_c${m['chapter']}'),
+          {
+            'plan_id': m['plan_id'],
+            'book_id': m['book_id'],
+            'chapter': m['chapter'],
+            'day': m['day'],
+            'done_at': m['done_at'],
+          });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
+    for (final m in await db.getAllChapterCompletions()) {
+      batch.set(
+          _col(uid, 'chapter_completions')
+              .doc('b${m['book_id']}_c${m['chapter']}'),
+          {
+            'book_id': m['book_id'],
+            'chapter': m['chapter'],
+            'completed_at': m['completed_at'],
+          });
+      pending++;
+      uploaded++;
+      await commitIfFull();
+    }
     // 墓碑：上傳墓碑本身，並刪掉雲端對應的資料 doc（本機已無此筆活資料，
     // 因為新增/更新時會清墓碑，不變量保證兩者互斥，不會誤刪活資料）。
     const kindCol = {
       'bookmark': 'bookmarks',
+      'later': 'later',
       'highlight': 'highlights',
       'note': 'notes',
       'sermon': 'sermon_notes',
       'prayer': 'prayers',
       'todo': 'todos',
+      'completion': 'chapter_completions',
     };
     for (final t in await db.getAllTombstones()) {
       final kind = t['kind'] as String;

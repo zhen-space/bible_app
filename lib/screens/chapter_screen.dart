@@ -11,6 +11,7 @@ import '../services/content_service.dart';
 import '../services/tts_service.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
+import '../utils/share_utils.dart';
 import '../theme/app_theme.dart';
 import 'search_screen.dart';
 
@@ -26,12 +27,19 @@ class ChapterScreen extends ConsumerStatefulWidget {
   /// 進來時要「跳到並閃一下」的節（從搜尋、引用、交叉引用等跳進來時帶上）。
   final int? focusVerse;
 
+  /// 是否更新「一般 Reading Position / History」。
+  /// 正常閱讀（書卷→章、繼續閱讀）＝true；**臨時瀏覽**（搜尋結果、每日經文、
+  /// 交叉引用、Q&A 引用、知識庫、之後的 Plan Reader）＝false：
+  /// 進入、捲動、換章、換卷都**不**更新一般 Reading Position，也不記閱讀紀錄。
+  final bool updateReadingPosition;
+
   const ChapterScreen({
     super.key,
     required this.bookId,
     required this.chapter,
     this.initialOffset = 0,
     this.focusVerse,
+    this.updateReadingPosition = true,
   });
 
   @override
@@ -47,6 +55,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   final ScrollController _scroll = ScrollController();
   double? _restoreOffset; // 本章要還原到的位移（套用一次後清空）
   Timer? _savePosDebounce;
+
+  // 多選模式（逐節模式）：選中的節號集合，非空即進入多選。
+  final Set<int> _selected = {};
+  bool get _selectionMode => _selected.isNotEmpty;
 
   // 跳到指定節並閃一下（搜尋/引用跳進來）
   final GlobalKey _focusKey = GlobalKey();
@@ -70,10 +82,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ttsCtrl = ref.read(ttsProvider.notifier);
-      ref
-          .read(lastReadProvider.notifier)
-          .set(_bookId, _chapter, widget.initialOffset);
-      _logRead();
+      // 臨時瀏覽不更新一般 Reading Position／閱讀紀錄
+      if (widget.updateReadingPosition) {
+        ref
+            .read(lastReadProvider.notifier)
+            .set(_bookId, _chapter, widget.initialOffset);
+        _logRead();
+      }
       // 背景載入英文，讓「點開經節看英文」即時可用（載一次，之後常駐）
       ref.read(bibleRepositoryProvider).loadEnglish();
       if (_focusPending) _tryFocus();
@@ -91,8 +106,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     super.dispose();
   }
 
-  /// 捲動時 debounce 存位移（記住讀到的畫面）。
+  /// 捲動時 debounce 存位移（記住讀到的畫面）。臨時瀏覽不存。
   void _onScroll() {
+    if (!widget.updateReadingPosition) return;
     if (!_scroll.hasClients) return;
     final offset = _scroll.offset;
     _savePosDebounce?.cancel();
@@ -144,14 +160,131 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     });
   }
 
+  /// 記錄「造訪」到 Reading History（reading_log）。**不等於完成**——
+  /// 完成是使用者主動按「完成本章」（見 _toggleComplete）。
   Future<void> _logRead() async {
+    await ref
+        .read(databaseServiceProvider)
+        .markChapterRead(_bookId, _chapter);
+  }
+
+  /// 使用者主動確認「完成／取消完成」本章。只在正常閱讀（非臨時瀏覽）出現。
+  Future<void> _toggleComplete(int bookId, int chapter, bool currentlyDone) async {
+    final db = ref.read(databaseServiceProvider);
     try {
-      await ref
-          .read(databaseServiceProvider)
-          .markChapterRead(_bookId, _chapter);
+      if (currentlyDone) {
+        await db.unmarkChapterComplete(bookId, chapter);
+      } else {
+        await db.markChapterComplete(bookId, chapter);
+      }
     } finally {
+      ref.invalidate(chapterCompleteProvider((bookId: bookId, chapter: chapter)));
       ref.invalidate(readChapterCountProvider);
+      ref.invalidate(faithMapProvider);
+      ref.invalidate(statsProvider);
     }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(currentlyDone ? '已取消本章完成標記' : '已標記本章完成'),
+          duration: const Duration(seconds: 1)));
+    }
+  }
+
+  void _toggleSelect(int verseNo) {
+    setState(() {
+      if (!_selected.remove(verseNo)) _selected.add(verseNo);
+    });
+  }
+
+  void _clearSelection() => setState(_selected.clear);
+
+  List<int> get _selectedSorted => _selected.toList()..sort();
+
+  /// 多選批次：對選中的每一節套用螢光筆（null＝移除）。
+  Future<void> _bulkHighlight(HighlightColor? color) async {
+    final db = ref.read(databaseServiceProvider);
+    final verses = _selectedSorted;
+    try {
+      for (final v in verses) {
+        await db.setHighlight(_bookId, _chapter, v, color);
+      }
+    } finally {
+      _refreshMarks();
+    }
+    _clearSelection();
+  }
+
+  /// 多選批次：加入書籤（已有的略過）。
+  Future<void> _bulkBookmark(Set<int> alreadyBookmarked) async {
+    final db = ref.read(databaseServiceProvider);
+    try {
+      for (final v in _selectedSorted) {
+        if (!alreadyBookmarked.contains(v)) {
+          await db.toggleBookmark(_bookId, _chapter, v);
+        }
+      }
+    } finally {
+      _refreshMarks();
+    }
+    _clearSelection();
+  }
+
+  /// 多選批次：加入稍後閱讀。
+  Future<void> _bulkLater() async {
+    final db = ref.read(databaseServiceProvider);
+    try {
+      for (final v in _selectedSorted) {
+        await db.addLater(_bookId, _chapter, v);
+      }
+    } finally {
+      ref.invalidate(allLaterProvider);
+      _refreshMarks();
+    }
+    _clearSelection();
+  }
+
+  /// 多選批次：複製／分享（純經文 / 經文＋出處）。
+  void _bulkCopyShare(Book book, List<String> allVerses, {required bool share}) {
+    final verses = _selectedSorted;
+    final texts = [for (final v in verses) allVerses[v - 1]];
+    final citation = versesCitation(book, _chapter, verses);
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.short_text),
+              title: const Text('純經文'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _copyText(plainVerses(texts), share);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.format_quote),
+              title: const Text('經文＋出處'),
+              subtitle: Text(citation),
+              onTap: () {
+                Navigator.pop(ctx);
+                _copyText(versesWithCitation(texts, citation), share);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyText(String value, bool share) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(share ? '已複製，可貼到任何 App 分享' : '已複製'),
+          duration: const Duration(seconds: 2)));
+    }
+    _clearSelection();
   }
 
   void _goTo(int bookId, int chapter) {
@@ -160,10 +293,14 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     setState(() {
       _bookId = bookId;
       _chapter = chapter;
+      _selected.clear(); // 換章清空多選
     });
     if (_scroll.hasClients) _scroll.jumpTo(0);
-    ref.read(lastReadProvider.notifier).set(bookId, chapter);
-    _logRead();
+    // 臨時瀏覽：換章/換卷也不更新一般 Reading Position
+    if (widget.updateReadingPosition) {
+      ref.read(lastReadProvider.notifier).set(bookId, chapter);
+      _logRead();
+    }
   }
 
   /// 上一章／下一章，跨書卷自動接續。
@@ -218,6 +355,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       data: (books) {
         final book = books[_bookId - 1];
         final verses = book.chapters[_chapter - 1];
+        // 「完成本章」只在正常閱讀時提供（臨時瀏覽不記完成）。
+        final isComplete = widget.updateReadingPosition &&
+            (ref
+                    .watch(chapterCompleteProvider(
+                        (bookId: _bookId, chapter: _chapter)))
+                    .value ??
+                false);
         final marks = ref
                 .watch(chapterMarksProvider(
                     (bookId: _bookId, chapter: _chapter)))
@@ -239,7 +383,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             : null;
 
         return Scaffold(
-          appBar: AppBar(
+          appBar: _selectionMode
+              ? _selectionAppBar(verses.length)
+              : AppBar(
             // 點標題（頂部入口）先開「66 卷書卷目錄」
             title: InkWell(
               onTap: () =>
@@ -289,6 +435,18 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 onPressed: () =>
                     ref.read(readingModeProvider.notifier).toggle(),
               ),
+              if (widget.updateReadingPosition)
+                IconButton(
+                  icon: Icon(isComplete
+                      ? Icons.check_circle
+                      : Icons.check_circle_outline),
+                  color: isComplete
+                      ? Theme.of(context).colorScheme.secondary
+                      : null,
+                  tooltip: isComplete ? '已完成本章（點擊取消）' : '標記本章完成',
+                  onPressed: () =>
+                      _toggleComplete(_bookId, _chapter, isComplete),
+                ),
               IconButton(
                 icon: const Icon(Icons.list),
                 tooltip: '選卷選章',
@@ -326,20 +484,29 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             bookName: book.name, text: bookSummary!);
                       }
                       final isFocus = widget.focusVerse == i + 1;
+                      final verseNo = i + 1;
                       final tile = _VerseTile(
                         key: isFocus ? _focusKey : null,
-                        verseNo: i + 1,
+                        verseNo: verseNo,
                         text: verses[i],
-                        english: en(i + 1),
+                        english: en(verseNo),
                         fontSize: fontSize,
-                        highlight: marks.highlights[i + 1],
-                        bookmarked: marks.bookmarks.contains(i + 1),
-                        hasNote: marks.notes.containsKey(i + 1),
-                        hasAnnotation: verseAnns.containsKey(i + 1),
-                        speaking: speakingVerse == i + 1,
-                        flashing: _flashVerse == i + 1,
-                        onTap: () => _showVerseActions(books, book, i + 1,
-                            verses[i], marks, verseAnns[i + 1]),
+                        highlight: marks.highlights[verseNo],
+                        bookmarked: marks.bookmarks.contains(verseNo),
+                        hasNote: marks.notes.containsKey(verseNo),
+                        hasAnnotation: verseAnns.containsKey(verseNo),
+                        speaking: speakingVerse == verseNo,
+                        flashing: _flashVerse == verseNo,
+                        selected: _selected.contains(verseNo),
+                        onTap: () {
+                          if (_selectionMode) {
+                            _toggleSelect(verseNo);
+                          } else {
+                            _showVerseActions(books, book, verseNo, verses[i],
+                                marks, verseAnns[verseNo]);
+                          }
+                        },
+                        onLongPress: () => _toggleSelect(verseNo),
                       );
                       if (headings[i + 1] == null) return tile;
                       return Column(
@@ -393,7 +560,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     ],
                   ),
           ),
-          bottomNavigationBar: BottomAppBar(
+          bottomNavigationBar: _selectionMode
+              ? _selectionBar(book, verses, marks)
+              : BottomAppBar(
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -419,6 +588,98 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// 多選模式的 AppBar：顯示已選數、清除、全選。
+  AppBar _selectionAppBar(int verseCount) => AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: '取消選取',
+          onPressed: _clearSelection,
+        ),
+        title: Text('已選 ${_selected.length} 節'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.select_all),
+            tooltip: '全選本章',
+            onPressed: () => setState(() {
+              _selected
+                ..clear()
+                ..addAll(List.generate(verseCount, (i) => i + 1));
+            }),
+          ),
+        ],
+      );
+
+  /// 多選模式的底部批次動作列：螢光筆／書籤／稍後讀／複製／分享。
+  Widget _selectionBar(Book book, List<String> verses, ChapterMarks marks) {
+    return BottomAppBar(
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          IconButton(
+            icon: const Icon(Icons.brush_outlined),
+            tooltip: '螢光筆',
+            onPressed: () => _showBulkHighlightMenu(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.bookmark_add_outlined),
+            tooltip: '書籤',
+            onPressed: () => _bulkBookmark(marks.bookmarks),
+          ),
+          IconButton(
+            icon: const Icon(Icons.watch_later_outlined),
+            tooltip: '稍後讀',
+            onPressed: _bulkLater,
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy),
+            tooltip: '複製',
+            onPressed: () => _bulkCopyShare(book, verses, share: false),
+          ),
+          IconButton(
+            icon: const Icon(Icons.ios_share),
+            tooltip: '分享',
+            onPressed: () => _bulkCopyShare(book, verses, share: true),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 多選批次螢光筆選色（含移除）。
+  void _showBulkHighlightMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              for (final c in HighlightColor.values)
+                InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _bulkHighlight(c);
+                  },
+                  child: CircleAvatar(
+                      radius: 18, backgroundColor: AppTheme.highlightSwatch(c)),
+                ),
+              IconButton(
+                icon: const Icon(Icons.format_color_reset),
+                tooltip: '移除螢光筆',
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _bulkHighlight(null);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1115,7 +1376,9 @@ class _VerseTile extends StatelessWidget {
   final bool hasAnnotation;
   final bool speaking; // 目前 TTS 正朗讀到這一節
   final bool flashing; // 從搜尋/引用跳進來，短暫閃一下提示位置
+  final bool selected; // 多選模式選中
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
   const _VerseTile({
     super.key,
@@ -1129,7 +1392,9 @@ class _VerseTile extends StatelessWidget {
     required this.hasAnnotation,
     required this.speaking,
     this.flashing = false,
+    this.selected = false,
     required this.onTap,
+    this.onLongPress,
   });
 
   @override
@@ -1137,22 +1402,27 @@ class _VerseTile extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
     // 閃示 > 螢光筆 > 朗讀中，依序決定底色
-    final bg = flashing
-        ? scheme.primary.withValues(alpha: 0.28)
-        : (highlight != null
-            ? AppTheme.highlightColor(highlight!, isDark)
-            : (speaking ? scheme.primary.withValues(alpha: 0.12) : null));
+    final bg = selected
+        ? scheme.primary.withValues(alpha: 0.18)
+        : (flashing
+            ? scheme.primary.withValues(alpha: 0.28)
+            : (highlight != null
+                ? AppTheme.highlightColor(highlight!, isDark)
+                : (speaking ? scheme.primary.withValues(alpha: 0.12) : null)));
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: (bg != null || speaking)
+        decoration: (bg != null || speaking || selected)
             ? BoxDecoration(
                 color: bg,
                 borderRadius: BorderRadius.circular(4),
-                border: speaking
+                border: selected
                     ? Border.all(color: scheme.primary, width: 1.5)
-                    : null,
+                    : (speaking
+                        ? Border.all(color: scheme.primary, width: 1.5)
+                        : null),
               )
             : null,
         child: Column(

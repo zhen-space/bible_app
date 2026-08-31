@@ -217,8 +217,10 @@ class _DailyVerseCard extends ConsumerWidget {
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) =>
-                ChapterScreen(bookId: daily.bookId, chapter: daily.chapter),
+            builder: (_) => ChapterScreen(
+                bookId: daily.bookId,
+                chapter: daily.chapter,
+                updateReadingPosition: false),
           ),
         ),
         child: Padding(
@@ -365,7 +367,9 @@ class _RecentNotesSection extends ConsumerWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => ChapterScreen(
-                            bookId: n.bookId, chapter: n.chapter),
+                            bookId: n.bookId,
+                            chapter: n.chapter,
+                            updateReadingPosition: false),
                       ),
                     ),
                     child: Padding(

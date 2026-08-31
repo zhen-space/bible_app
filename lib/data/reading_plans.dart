@@ -36,8 +36,8 @@ class ReadingPlan {
     this.scope = 'all',
   });
 
-  /// 依實際卷章數，把範圍內的章平均切成 [days] 天。
-  List<List<ChapterRef>> schedule(List<Book> books) {
+  /// 範圍內所有章的平坦清單（正典順序）。總項目數＝此清單長度。
+  List<ChapterRef> flatChapters(List<Book> books) {
     final flat = <ChapterRef>[];
     for (final b in books) {
       if (scope == 'ot' && b.testament != 'ot') continue;
@@ -46,6 +46,12 @@ class ReadingPlan {
         flat.add(ChapterRef(b.id, c));
       }
     }
+    return flat;
+  }
+
+  /// 依實際卷章數，把範圍內的章平均切成 [days] 天。
+  List<List<ChapterRef>> schedule(List<Book> books) {
+    final flat = flatChapters(books);
     final out = <List<ChapterRef>>[];
     final n = flat.length;
     final base = n ~/ days;

@@ -80,8 +80,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
+        // 搜尋結果＝臨時瀏覽，不更新一般 Reading Position
         builder: (_) => ChapterScreen(
-            bookId: bookId, chapter: chapter, focusVerse: verse),
+            bookId: bookId,
+            chapter: chapter,
+            focusVerse: verse,
+            updateReadingPosition: false),
       ),
     );
   }

@@ -187,11 +187,37 @@ class VerseAnnotation {
 }
 
 /// 禱告事項（首頁區塊）：分類/子分類/內容，使用者自行增刪，不設打勾。
+/// 禱告事項狀態。
+enum PrayerStatus {
+  praying, // 禱告中
+  answered, // 已蒙應允
+  ended; // 已結束（不再禱告，但非應允）
+
+  static PrayerStatus fromName(String? s) => PrayerStatus.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => PrayerStatus.praying);
+
+  String get label => switch (this) {
+        PrayerStatus.praying => '禱告中',
+        PrayerStatus.answered => '已蒙應允',
+        PrayerStatus.ended => '已結束',
+      };
+}
+
+/// 禱告事項（v2）。舊欄位 category/subcategory 保留供既有資料相容；
+/// v2 新增：可選 title、prayer date、多節引用 refs、狀態、提醒、應允日期與回顧。
 class Prayer {
   final int? id;
-  final String category; // 分類（例：家人）
-  final String subcategory; // 子分類（例：爸爸）
+  final String category; // 舊：分類（例：家人）
+  final String subcategory; // 舊：子分類（例：爸爸）
+  final String title; // v2：標題（可空）
   final String content; // 禱告內容
+  final int prayerDate; // v2：禱告日期（ms，0＝未設）
+  final List<String> refs; // v2：相關經文 'b_c_v'
+  final PrayerStatus status; // v2：狀態
+  final int reminderAt; // v2：提醒時間（ms，0＝無）
+  final int answeredAt; // v2：應允/結束日期（ms，0＝無）
+  final String answeredReflection; // v2：應允後回顧
   final int createdAt;
   final int updatedAt;
 
@@ -199,16 +225,59 @@ class Prayer {
     this.id,
     this.category = '',
     this.subcategory = '',
+    this.title = '',
     this.content = '',
+    this.prayerDate = 0,
+    this.refs = const [],
+    this.status = PrayerStatus.praying,
+    this.reminderAt = 0,
+    this.answeredAt = 0,
+    this.answeredReflection = '',
     this.createdAt = 0,
     this.updatedAt = 0,
   });
+
+  Prayer copyWith({
+    String? title,
+    String? content,
+    int? prayerDate,
+    List<String>? refs,
+    PrayerStatus? status,
+    int? reminderAt,
+    int? answeredAt,
+    String? answeredReflection,
+  }) =>
+      Prayer(
+        id: id,
+        category: category,
+        subcategory: subcategory,
+        title: title ?? this.title,
+        content: content ?? this.content,
+        prayerDate: prayerDate ?? this.prayerDate,
+        refs: refs ?? this.refs,
+        status: status ?? this.status,
+        reminderAt: reminderAt ?? this.reminderAt,
+        answeredAt: answeredAt ?? this.answeredAt,
+        answeredReflection: answeredReflection ?? this.answeredReflection,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+      );
+
+  static List<String> _parseRefs(String? csv) =>
+      (csv ?? '').split(',').where((s) => s.trim().isNotEmpty).toList();
 
   factory Prayer.fromMap(Map<String, dynamic> m) => Prayer(
         id: m['id'] as int?,
         category: m['category'] as String? ?? '',
         subcategory: m['subcategory'] as String? ?? '',
+        title: m['title'] as String? ?? '',
         content: m['content'] as String? ?? '',
+        prayerDate: m['prayer_date'] as int? ?? 0,
+        refs: _parseRefs(m['refs'] as String?),
+        status: PrayerStatus.fromName(m['status'] as String?),
+        reminderAt: m['reminder_at'] as int? ?? 0,
+        answeredAt: m['answered_at'] as int? ?? 0,
+        answeredReflection: m['answered_reflection'] as String? ?? '',
         createdAt: m['created_at'] as int? ?? 0,
         updatedAt: m['updated_at'] as int? ?? 0,
       );
@@ -217,7 +286,14 @@ class Prayer {
         if (id != null) 'id': id,
         'category': category,
         'subcategory': subcategory,
+        'title': title,
         'content': content,
+        'prayer_date': prayerDate,
+        'refs': refs.join(','),
+        'status': status.name,
+        'reminder_at': reminderAt,
+        'answered_at': answeredAt,
+        'answered_reflection': answeredReflection,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };
@@ -366,14 +442,23 @@ class Highlight {
       };
 }
 
-/// 筆記。[tags] 為空格分隔的標籤字串（例：「信心 禱告」），可空。
+/// 筆記（v2）。[tags] 為空格分隔的標籤字串（例：「信心 禱告」），可空。
+///
+/// v2 新增：可選 [title]、額外多節引用 [refs]（錨點仍是 book/chapter/verse，
+/// refs 為「除錨點外」的其他節位字串 'b_c_v'，CSV 儲存）、以及軟刪除 [deletedAt]
+/// （0＝正常；>0＝在「最近刪除」）。全部向後相容（舊資料缺欄位以預設值帶入）。
 class Note {
   final int? id;
   final int bookId;
   final int chapter;
   final int verse;
+  final String title;
   final String content;
   final String tags;
+
+  /// 額外引用（除錨點外）：每個元素 'b{book}_c{chapter}_v{verse}'。
+  final List<String> refs;
+  final int deletedAt;
   final int createdAt;
   final int updatedAt;
 
@@ -382,22 +467,51 @@ class Note {
     required this.bookId,
     required this.chapter,
     required this.verse,
+    this.title = '',
     required this.content,
     this.tags = '',
+    this.refs = const [],
+    this.deletedAt = 0,
     required this.createdAt,
     required this.updatedAt,
   });
 
+  bool get isDeleted => deletedAt > 0;
+
   List<String> get tagList =>
       tags.split(RegExp(r'[\s,，#]+')).where((t) => t.isNotEmpty).toList();
 
+  /// 全部引用（錨點在最前）。
+  List<({int bookId, int chapter, int verse})> get allRefs {
+    final out = <({int bookId, int chapter, int verse})>[
+      (bookId: bookId, chapter: chapter, verse: verse),
+    ];
+    for (final r in refs) {
+      final m = RegExp(r'^b(\d+)_c(\d+)_v(\d+)$').firstMatch(r);
+      if (m != null) {
+        out.add((
+          bookId: int.parse(m.group(1)!),
+          chapter: int.parse(m.group(2)!),
+          verse: int.parse(m.group(3)!),
+        ));
+      }
+    }
+    return out;
+  }
+
+  static List<String> _parseRefs(String? csv) =>
+      (csv ?? '').split(',').where((s) => s.trim().isNotEmpty).toList();
+
   factory Note.fromMap(Map<String, dynamic> m) => Note(
-        id: m['id'] as int,
+        id: m['id'] as int?,
         bookId: m['book_id'] as int,
         chapter: m['chapter'] as int,
         verse: m['verse'] as int,
+        title: (m['title'] as String?) ?? '',
         content: m['content'] as String,
         tags: (m['tags'] as String?) ?? '',
+        refs: _parseRefs(m['refs'] as String?),
+        deletedAt: (m['deleted_at'] as int?) ?? 0,
         createdAt: m['created_at'] as int,
         updatedAt: m['updated_at'] as int,
       );
@@ -407,8 +521,11 @@ class Note {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
+        'title': title,
         'content': content,
         'tags': tags,
+        'refs': refs.join(','),
+        'deleted_at': deletedAt,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };
