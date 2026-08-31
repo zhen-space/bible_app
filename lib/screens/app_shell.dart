@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'bible_hub_screen.dart';
 import 'my_content_screen.dart';
 import 'reading_plans_screen.dart';
-import 'search_screen.dart';
 import 'student_home_screen.dart';
 import 'me_screen.dart';
 
@@ -28,12 +27,6 @@ class _AppShellState extends State<AppShell> {
     MyContentScreen(),
     MeScreen(),
   ];
-
-  void _openSearch() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SearchScreen()),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -70,13 +63,6 @@ class _AppShellState extends State<AppShell> {
           ),
         ],
       ),
-      floatingActionButton: _index == 1
-          ? FloatingActionButton.small(
-              tooltip: '搜尋聖經',
-              onPressed: _openSearch,
-              child: const Icon(Icons.search),
-            )
-          : null,
     );
   }
 }

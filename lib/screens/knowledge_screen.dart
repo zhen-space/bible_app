@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/knowledge.dart';
 import '../providers/providers.dart';
 import '../services/app_links.dart';
+import 'topics_screen.dart';
 
 /// 依節位字串跳到讀經頁（統一走 AppLinks 原子化跳轉）。
 void _jumpRef(BuildContext context, WidgetRef ref, String refStr) =>
@@ -24,10 +25,12 @@ class KnowledgeScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final kb = ref.watch(knowledgeProvider).value ?? KnowledgeBase.empty;
     return Scaffold(
-      appBar: AppBar(title: const Text('聖經知識庫')),
+      appBar: AppBar(title: const Text('研讀內容')),
       body: ListView(
         padding: const EdgeInsets.all(12),
         children: [
+          _hub(context, Icons.category_outlined, '主題',
+              '依主題與人生情境探索經文', const TopicsScreen()),
           _hub(context, Icons.timeline, '聖經時間軸',
               '${kb.timeline.length} 個事件・依年代排列', const TimelineScreen()),
           _hub(context, Icons.people_alt_outlined, '人物',

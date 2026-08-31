@@ -330,10 +330,14 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         ]),
         const SizedBox(height: 8),
         Text(a.content, style: const TextStyle(height: 1.8)),
-        if (a.scriptures.isNotEmpty) ...[
+        if (a.scriptures.isNotEmpty || a.sources.isNotEmpty) ...[
           const SizedBox(height: 12),
-          Text('引用經文', style: Theme.of(context).textTheme.labelLarge),
+          Text('回答依據', style: Theme.of(context).textTheme.labelLarge),
+        ],
+        if (a.scriptures.isNotEmpty) ...[
           const SizedBox(height: 6),
+          Text('經文', style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 4),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -343,6 +347,22 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
                   avatar: const Icon(Icons.menu_book, size: 16),
                   label: Text(r),
                   onPressed: () => _jump(context, r),
+                ),
+            ],
+          ),
+        ],
+        if (a.sources.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('已發布內容', style: Theme.of(context).textTheme.labelSmall),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final s in a.sources)
+                Chip(
+                  avatar: const Icon(Icons.article_outlined, size: 16),
+                  label: Text(s.evidence.isNotEmpty ? s.evidence : s.kind),
                 ),
             ],
           ),

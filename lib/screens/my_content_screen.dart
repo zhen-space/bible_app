@@ -7,6 +7,7 @@ import 'chapter_screen.dart';
 import 'notes_screen.dart';
 import 'prayers_screen.dart';
 import 'sermon_notes_screen.dart';
+import 'todos_screen.dart';
 
 /// 我的內容：統一入口，把個人資料的各類集合集中在一個地方，
 /// 但每種資料仍是獨立的 model／畫面（不合併資料）。
@@ -21,6 +22,7 @@ class MyContentScreen extends ConsumerWidget {
     final later = ref.watch(allLaterProvider).value?.length;
     final sermons = ref.watch(allSermonNotesProvider).value?.length;
     final prayers = ref.watch(allPrayersProvider).value?.length;
+    final todos = ref.watch(allTodosProvider).value?.length;
 
     String c(int? n) => n == null ? '' : '$n';
 
@@ -42,6 +44,8 @@ class MyContentScreen extends ConsumerWidget {
               () => const SermonNotesScreen()),
           _tile(context, Icons.volunteer_activism_outlined, '禱告事項', c(prayers),
               '正在禱告的事情', () => const PrayersScreen()),
+          _tile(context, Icons.checklist, '信仰生活代辦', c(todos),
+              '分類代辦，完成可打勾', () => const TodosScreen()),
         ],
       ),
     );
