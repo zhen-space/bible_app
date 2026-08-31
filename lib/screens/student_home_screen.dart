@@ -78,9 +78,11 @@ class StudentHomeScreen extends ConsumerWidget {
             dailyAsync.when(
               loading: () => const _LoadingBlock(height: 150),
               error: (_, _) => _InlineError(label: '今日經文暫時無法載入', onRetry: () => ref.invalidate(dailyVerseProvider)),
-              data: (daily) => booksAsync.value == null
-                  ? const _LoadingBlock(height: 150)
-                  : _DailyVerseCard(daily: daily, book: booksAsync.value![daily.bookId - 1], parentRef: ref),
+              data: (daily) => daily == null
+                  ? const _DailyUnavailableCard()
+                  : booksAsync.value == null
+                      ? const _LoadingBlock(height: 150)
+                      : _DailyVerseCard(daily: daily, book: booksAsync.value![daily.bookId - 1], parentRef: ref),
             ),
             const SizedBox(height: 28),
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
@@ -195,6 +197,27 @@ class _DailyVerseCard extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// 沒有官方發佈每日經文時的狀態卡（fail-closed，不顯示任何未驗證內容）。
+class _DailyUnavailableCard extends StatelessWidget {
+  const _DailyUnavailableCard();
+  @override
+  Widget build(BuildContext context) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Row(children: [
+            Icon(Icons.event_busy_outlined,
+                color: Theme.of(context).colorScheme.outline),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('今日尚無官方發佈的每日經文',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.outline)),
+            ),
+          ]),
+        ),
+      );
 }
 
 class _RecentNoteTile extends StatelessWidget {

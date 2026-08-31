@@ -1,70 +1,118 @@
 rules_version = '2';
+
+// 受管理內容發佈工作流的授權（#8 Published-only authorization / #9 Q&A safety）。
+//
+// 核心不變量：
+//  - **只有 status == 'published' 的文件可被學生端公開讀取。**
+//    Draft / Review / Rejected / Archived 一律讀不到（不是靠 UI 隱藏，是這裡真正擋）。
+//  - **workspace（草稿/送審/退回/封存工作副本）只有管理員可讀寫**；學生端永遠讀不到。
+//  - 一般使用者只能讀寫自己的 private user data。
+//  - 只有管理員能 create/review/publish/archive 受管理內容。
+//  - 一般使用者投稿（submissions / questions）不得自行設定 status / published / reviewer /
+//    publisher（rules 於 create 限制欄位；他們無權更新這些集合，故無法自我發佈）。
+//
+// ⚠️ 部署順序：先跑 tools/backfill_status（把 legacy 文件補上 status='published'
+//    + version + provenance），**再**部署本規則；否則未補 status 的 legacy 內容會
+//    立即對學生端 fail-closed（讀不到）。本輪不部署（見交接說明）。
 service cloud.firestore {
   match /databases/{database}/documents {
-    // 個人資料：只有本人能存取
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    // 管理員授權（backward-compatible）：優先看 custom claim `admin==true`
+    // （未來多管理員／角色的正式路徑），同時保留 legacy 單一 email（不破壞現有登入）。
+    function isAdmin() {
+      return isSignedIn()
+        && (request.auth.token.admin == true
+            || request.auth.token.email == 'zhen20091212@gmail.com');
+    }
+    // 公開可讀＝已發佈。
+    function isPublished() {
+      return resource.data.status == 'published';
+    }
+
+    // ---- 個人私有資料：只有本人能存取（含所有子集合：bookmarks/highlights/
+    //      notes/reading_log/chapter_completions/plan_item_progress/later/
+    //      sermon_notes/plan_progress/prayers/todos/following/saved_questions/
+    //      tombstones …）----
     match /users/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
-    // 註解內容（導讀/章註/節註）：所有人可讀，只有管理者能寫
+    // ---- 受管理內容（published mirror）：Published 才可公開讀，僅管理員可寫 ----
+    // annotations（卷/章導讀、節註解）、knowledge（知識架構）、daily_verses（每日經文）、
+    // reading_plans（讀經計畫）、public_notes（審核通過的公開註解）。
     match /annotations/{doc} {
-      allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
+      allow read: if isPublished() || isAdmin();
+      allow write: if isAdmin();
     }
-
-    // 知識架構（時間軸/人物/平行/預表）：所有人可讀，只有管理者能寫
     match /knowledge/{doc} {
-      allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
+      allow read: if isPublished() || isAdmin();
+      allow write: if isAdmin();
     }
-
-    // 每日經文（官方發佈）：所有人可讀（讀經端只讀 published==true），
-    // 只有管理者能寫。doc id = 'YYYY-MM-DD'，欄位 {book_id,chapter,verse,published}。
+    match /reading_plans/{doc} {
+      allow read: if isPublished() || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /public_notes/{doc} {
+      allow read: if isPublished() || isAdmin();
+      allow write: if isAdmin();
+    }
+    // 每日經文：**只以 status=='published' 為準**（production managed collections 經唯讀
+    // audit 確認為空，無需維持 legacy published==true 的 serving 相容）。
     match /daily_verses/{doc} {
-      allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
+      allow read: if isPublished() || isAdmin();
+      allow write: if isAdmin();
     }
 
-    // 公開註解投稿：登入者可投（進待審），本人與管理者可讀，管理者可審
+    // ---- 受管理內容（workspace）：草稿/送審/退回/封存工作副本，**僅管理員** ----
+    // 命名一律 `<type>_workspace`；學生端讀不到，因此 Draft/Review 不會外流。
+    match /annotations_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+    match /knowledge_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+    match /reading_plans_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+    match /public_notes_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+    match /daily_verses_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- 公開註解投稿（使用者投稿 → 管理員審核）----
+    // 投稿者只能建立 status=='pending' 的自己的投稿；不得自設核准/發佈欄位。
     match /submissions/{id} {
-      allow create: if request.auth != null
+      allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'pending';
-      allow read: if request.auth != null
-        && (resource.data.uid == request.auth.uid
-            || request.auth.token.email == 'zhen20091212@gmail.com');
-      allow update, delete: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
+      allow read: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
     }
 
-    // 審核通過的公開註解：所有人可讀，只有管理者能寫
-    match /public_notes/{id} {
-      allow read: if true;
-      allow write: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
-    }
-
-    // 疑問 Q&A：登入者可提問（進待審，且不得自行設定 published）；
-    // **只有 published==true 才對外可讀**（approved/reviewed 不算發布）；
-    // 本人可讀自己的、管理者可讀全部；審核／回答／發布／精選只有管理者能寫。
-    // 提問者可刪自己的問題。
+    // ---- 疑問 Q&A（#9）----
+    // **只有 published == true 才對外可讀**（approved/reviewed 不算發布，pending/
+    // rejected 永不外流）；本人可讀自己的、管理員可讀全部。
+    // 提問者只能建立 status=='pending' 且 published==false 的自己的問題（不得自我發佈/回答）。
+    // 審核／回答／發布／精選只有管理員能寫。提問者可刪自己的問題。
     match /questions/{id} {
-      allow create: if request.auth != null
+      allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.published == false;
-      allow read: if resource.data.published == true
-        || (request.auth != null && resource.data.uid == request.auth.uid)
-        || (request.auth != null
-            && request.auth.token.email == 'zhen20091212@gmail.com');
-      allow update: if request.auth != null
-        && request.auth.token.email == 'zhen20091212@gmail.com';
-      allow delete: if request.auth != null
-        && (resource.data.uid == request.auth.uid
-            || request.auth.token.email == 'zhen20091212@gmail.com');
+      allow read: if (resource.data.published == true)
+        || (isSignedIn() && resource.data.uid == request.auth.uid)
+        || isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isSignedIn()
+        && (resource.data.uid == request.auth.uid || isAdmin());
     }
+
+    // 其餘一切預設拒絕（Firestore 預設行為；未匹配路徑不可讀寫）。
   }
 }

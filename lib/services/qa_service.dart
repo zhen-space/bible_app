@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/managed_content.dart';
+
 /// 疑問 Q&A（白板「六、疑問 Q&A」）——**全人工，無 AI**。
 ///
 /// 使用者提問 → 進待審 → 管理者（使用者本人）審核 → 親自回答。
@@ -24,15 +26,15 @@ class QaService {
 
   // ---- 提問（使用者）----
 
-  Future<void> submitQuestion({
+  Future<String> submitQuestion({
     required String uid,
     required String authorName,
     required String title,
     required String body,
     required String category,
-  }) {
+  }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    return _questions.add({
+    final ref = await _questions.add({
       'uid': uid,
       'author': authorName,
       'title': title,
@@ -40,12 +42,28 @@ class QaService {
       'category': category,
       'status': 'pending',
       // published ≠ approved：核准/回答不等於發布；唯有管理者明確發布，
-      // 學生端才能取得。預設 false。
+      // 學生端才能取得。預設 false。Pending question **本身不是 retrieval source**。
       'published': false,
       'featured': false,
       'created_at': now,
       'updated_at': now,
     });
+    return ref.id;
+  }
+
+  /// #9 統一提問入口，回傳三種結果之一：
+  /// - `answered`：在 Published approved 語料找到相符（回 matches 供顯示回答依據）。
+  /// - `insufficient_approved_content`：找不到，**不得生成一般回答**。
+  /// - `pending_question_created`：使用者選擇送出未回答問題（回 pendingQuestionId）。
+  ///
+  /// 只做檢索（無模型知識／Web／LLM）。呼叫端先 `ask`，若 insufficient 再由使用者
+  /// 決定是否 `submitQuestion` → 之後以回傳 id 包成 pendingQuestionCreated。
+  Future<QaAskResult> ask(String query, {String? category}) async {
+    final r = await retrieveApproved(query, category: category);
+    if (r.insufficientApprovedContent) {
+      return const QaAskResult(QaOutcome.insufficientApprovedContent);
+    }
+    return QaAskResult(QaOutcome.answered, answers: r.matches);
   }
 
   Future<Question?> getQuestion(String id) async {
@@ -73,6 +91,31 @@ class QaService {
       return b.updatedAt.compareTo(a.updatedAt);
     });
     return filtered;
+  }
+
+  /// #9 檢索安全：**只在已發布（Published）approved 內容上做純關鍵字比對。**
+  /// 禁止模型自身知識／Web Search／一般 LLM fallback（本服務不含任何生成路徑）。
+  /// 待審（pending）／退回（rejected）／未發布的問答**永不進入檢索語料**。
+  /// 沒有相符 → 回傳 `insufficientApprovedContent`（呼叫端據此顯示，不得以任何
+  /// 未經核准/未發布內容或 AI 回答代替）。
+  Future<QaRetrievalResult> retrieveApproved(String query,
+      {String? category}) async {
+    final q = query.trim();
+    if (q.isEmpty) return const QaRetrievalResult([]);
+    // 語料 = 只有 Published（且已回答）的問答。
+    final corpus = await publishedQuestions(category: category);
+    final words =
+        q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final matches = corpus.where((question) {
+      final hay = [
+        question.title,
+        question.body,
+        question.answer?.content ?? '',
+        question.answer?.tags.join(' ') ?? '',
+      ].join(' ');
+      return hay.contains(q) || words.any(hay.contains);
+    }).toList();
+    return QaRetrievalResult(matches);
   }
 
   /// 管理者用：已回答（approved）但**尚未發布**的佇列，供管理者發布。
@@ -132,6 +175,7 @@ class QaService {
     required String content,
     required List<String> scriptures,
     required List<String> tags,
+    List<AnswerSource> sources = const [],
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final old = question.answer;
@@ -142,6 +186,8 @@ class QaService {
         'content': content,
         'scriptures': scriptures,
         'tags': tags,
+        // #9：回答保存所依據的 source content IDs + versions，前台可取得回答依據。
+        'sources': [for (final s in sources) s.toMap()],
         'answered_at': old?.answeredAt ?? now,
         'updated_at': now,
       },
@@ -201,6 +247,35 @@ class QaService {
 /// Q&A 分類（爭議＝有不同立場、需謹慎的題目）。
 const List<String> kQaCategories = ['神學', '生活', '爭議', '其他'];
 
+/// #9 檢索結果。[matches] 只含 Published approved 內容；空＝
+/// **insufficient_approved_content**（呼叫端顯示「目前沒有已核准的解答」，
+/// 並可讓使用者送出 Pending Question；不得以任何未發布內容/AI 代替）。
+class QaRetrievalResult {
+  final List<Question> matches;
+  const QaRetrievalResult(this.matches);
+  bool get insufficientApprovedContent => matches.isEmpty;
+}
+
+/// #9 提問三態結果（trusted backend / service 層 enforce，非只 client）。
+enum QaOutcome { answered, insufficientApprovedContent, pendingQuestionCreated }
+
+class QaAskResult {
+  final QaOutcome outcome;
+
+  /// answered：相符的 Published approved 問答（含 answer、source scriptures/sources）。
+  final List<Question> answers;
+
+  /// pending_question_created：新建的待答問題 id。
+  final String? pendingQuestionId;
+
+  const QaAskResult(this.outcome,
+      {this.answers = const [], this.pendingQuestionId});
+
+  /// 使用者送出未回答問題後的結果。
+  factory QaAskResult.pending(String id) =>
+      QaAskResult(QaOutcome.pendingQuestionCreated, pendingQuestionId: id);
+}
+
 class Question {
   final String id;
   final String uid;
@@ -259,6 +334,7 @@ class QaAnswer {
   final String content;
   final List<String> scriptures; // 引用經文（節位字串，可跳轉）
   final List<String> tags;
+  final List<AnswerSource> sources; // #9：回答依據（content id + version）
   final int answeredAt;
   final int updatedAt;
 
@@ -266,6 +342,7 @@ class QaAnswer {
     required this.content,
     required this.scriptures,
     required this.tags,
+    this.sources = const [],
     required this.answeredAt,
     required this.updatedAt,
   });
@@ -277,6 +354,9 @@ class QaAnswer {
             .toList(),
         tags: ((m['tags'] as List?) ?? const [])
             .map((e) => e.toString())
+            .toList(),
+        sources: ((m['sources'] as List?) ?? const [])
+            .map((e) => AnswerSource.fromMap((e as Map).cast<String, dynamic>()))
             .toList(),
         answeredAt: m['answered_at'] as int? ?? m['edited_at'] as int? ?? 0,
         updatedAt: m['updated_at'] as int? ?? m['edited_at'] as int? ?? 0,

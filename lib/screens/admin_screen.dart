@@ -107,7 +107,7 @@ class AdminReviewScreen extends ConsumerWidget {
                         try {
                           await ref
                               .read(contentServiceProvider)
-                              .approveSubmission(s);
+                              .approveSubmission(s, publisher: kAdminEmail);
                           ref.invalidate(pendingSubmissionsProvider);
                           m.showSnackBar(
                               const SnackBar(content: Text('已通過並公開')));
@@ -462,7 +462,7 @@ class AdminBookEditor extends ConsumerWidget {
         },
         'outline': _splitLines(v['outline']!),
         if (_nn(v['conclusion']!) != null) 'summary': v['conclusion'],
-      }),
+      }, publisher: kAdminEmail),
     );
   }
 }
@@ -516,7 +516,7 @@ class AdminChapterEditor extends ConsumerWidget {
         },
         'outline': _splitLines(v['outline']!),
         if (_nn(v['conclusion']!) != null) 'conclusion': v['conclusion'],
-      }),
+      }, publisher: kAdminEmail),
     );
   }
 }
@@ -591,7 +591,7 @@ class AdminVerseEditor extends ConsumerWidget {
               'text': v['application'],
             },
           if (crossRefs.isNotEmpty) 'crossRefs': crossRefs,
-        });
+        }, publisher: kAdminEmail);
       },
     );
   }

@@ -9,6 +9,12 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  exclude:
+    # Node tooling（Firestore rules 測試／唯讀 audit／backfill）；其 node_modules
+    # 內含第三方 Dart 範本，非本專案程式，排除於 Dart 靜態分析之外。
+    - tools/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

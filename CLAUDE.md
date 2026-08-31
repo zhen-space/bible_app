@@ -124,7 +124,7 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## DB 升版規則（兩邊都要寫！）
 
-`database_service.dart`，目前 **v13**（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers；v8 todos；**v9 chapter_completions**；**v10 plan_item_progress**；**v11 later**；**v12 notes.title/refs/deleted_at**；**v13 prayers v2 欄位**）。升版時：
+`database_service.dart`，目前 **v14**（v2 reading_log；v3 notes.tags；v4 sermon_notes；v5 plan_progress；v6 tombstones；v7 prayers；v8 todos；**v9 chapter_completions**；**v10 plan_item_progress**；**v11 later**；**v12 notes.title/refs/deleted_at**；**v13 prayers v2 欄位**；**v14 plan_item_progress.item_id**；**v15 plan_item_progress.plan_version**）。升版時：
 1. `_dbVersion` +1
 2. `_onUpgrade` 加 `if (oldV < n)` 區塊
 3. `_createAllTables` 同步加建表語句（全新安裝走這裡）
@@ -170,6 +170,27 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **Prayer v2**（#7）：`prayers` 加 title/prayer_date/refs/status(praying/answered/ended)/reminder_at/answered_at/answered_reflection（v13）；舊 category/subcategory/content 保留相容。提醒只存時間（真推播需 FCM，未接）。
 - **同步/墓碑**：新增 tombstone kind `completion`、`later`；`chapter_completions`/`plan_item_progress`/`later` 都進 `sync_service`（LWW）。notes 軟刪除是**本地 trash**（purge 才寫墓碑同步刪除）。plan 進度沿用舊慣例（取消＝本地刪除、無墓碑）。
 - **#8（Published-only 授權：annotations/knowledge/public_notes 仍 `allow read: if true`、SharedPreferences/asset fallback）與 #9（Q&A 安全）留給「後端 × Codex」**，本輪未動。`firestore.rules` 已加 `daily_verses` 讀規則（**未 deploy**）。
+
+## #8/#9 Published-content workflow ＋ Q&A safety（branch `agent/p0-backend-published-workflow`）
+
+受管理內容（annotations/knowledge/daily_verses/public_notes/reading_plans）改為
+**Draft→Review→Published→Rejected/Archived** 工作流：**只有 `status=='published'` 可被學生端取得**，
+`firestore.rules` 真正阻擋（不是 UI 隱藏）；workspace（`<type>_workspace`）僅管理員。
+版本＋溯源（`content_id/status/version/created/updated/reviewer/publisher/provenance`）；
+**新 Draft 不覆蓋 Published version**（草稿寫 workspace，發佈才複製到 mirror＋version+1，
+舊快照入 `versions`）。model＝`models/managed_content.dart`，工作流＝`services/content_workflow_service.dart`。
+
+- **fail-closed client**：annotations/knowledge 只讀雲端 Published、快取只存 Published、**移除 asset fallback**；
+  每日經文只讀 Published、無 → 空卡（**不 fallback pool/random/AI**）。
+- **Q&A**：`retrieveApproved` 只在 Published approved 語料比對，不足→`insufficientApprovedContent`；
+  回答存 `sources`（content id+version）；pending question 非 knowledge source。
+- **admin 直接發佈**路徑（`ContentService.saveBook/Chapter/Verse/Knowledge`、`approveSubmission`）已 stamp
+  `status='published'`＋version＋provenance＋publisher。`public_notes` 依 loc+status 查詢（`firestore.indexes.json` 複合索引）。
+- **工具**（`tools/`，Node，**本輪不對 production 執行**）：`audit_published.mjs`（唯讀、fail-closed）、
+  `backfill_status.mjs`（additive、預設 dry-run）、`rules_test.mjs`（emulator，18/18 通過）。
+  fail-closed＝缺 credentials/偵測 emulator 立即中止，絕不 fallback local。
+- ⚠️ **部署順序**：先 backfill 補 status，**再**部署 `firestore.rules`＋`firestore.indexes.json`（本輪未 deploy）。
+- 完整契約見 `docs/PUBLISHED_CONTENT_WORKFLOW.md`。⛔ 內容仍由使用者親撰，Claude 只維護格式/UI/工作流/工具。
 
 ## 開發守則（歷史教訓）
 
