@@ -52,6 +52,21 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'reading_plans_workspace/plan1'), { status: 'draft', version: 1 });
   await setDoc(doc(db, 'questions/q_pub'), { uid: 'someone', status: 'approved', published: true, answer: { content: 'a' } });
   await setDoc(doc(db, 'questions/q_draft'), { uid: 'someone', status: 'approved', published: false });
+  // Study Content：學生可讀 ⇔ published && visibility==student（兩者缺一不可、fail-closed）。
+  await setDoc(doc(db, 'study_content/sc_pub_student'), { status: 'published', visibility: 'student', content_type: 'parallel', version: 1 });
+  await setDoc(doc(db, 'study_content/sc_pub_internal'), { status: 'published', visibility: 'internal', content_type: 'parallel', version: 1 });
+  await setDoc(doc(db, 'study_content/sc_draft_student'), { status: 'draft', visibility: 'student', version: 0 });
+  await setDoc(doc(db, 'study_content/sc_review_student'), { status: 'review', visibility: 'student', version: 0 });
+  await setDoc(doc(db, 'study_content/sc_rejected_student'), { status: 'rejected', visibility: 'student', version: 0 });
+  await setDoc(doc(db, 'study_content/sc_archived_student'), { status: 'archived', visibility: 'student', version: 1 });
+  await setDoc(doc(db, 'study_content/sc_missing_vis'), { status: 'published', version: 1 }); // 缺 visibility
+  await setDoc(doc(db, 'study_content/sc_missing_status'), { visibility: 'student', version: 1 }); // 缺 status
+  await setDoc(doc(db, 'study_content/sc_pub_student/versions/1'), { status: 'published', visibility: 'student', snapshot_at: 1 });
+  await setDoc(doc(db, 'study_content_workspace/sc_ws'), { status: 'draft', visibility: 'internal' });
+  await setDoc(doc(db, 'study_topics/tp_pub_student'), { status: 'published', visibility: 'student' });
+  await setDoc(doc(db, 'study_topics/tp_pub_internal'), { status: 'published', visibility: 'internal' });
+  await setDoc(doc(db, 'study_topics/tp_draft_student'), { status: 'draft', visibility: 'student' });
+  await setDoc(doc(db, 'study_topics_workspace/tp_ws'), { status: 'draft', visibility: 'internal' });
 });
 
 const guest = env.unauthenticatedContext().firestore();
@@ -141,6 +156,57 @@ await ok('student 可寫自己的 users/{uid}',
   assertSucceeds(setDoc(doc(student, 'users/student1/bookmarks/b1'), { x: 1 })));
 await ok('student 不可讀他人 users/{uid}',
   assertFails(getDoc(doc(student, 'users/other/bookmarks/b1'))));
+
+// ---- Study Content：published && visibility==student 才可讀（Published≠Student-visible）----
+await ok('student 可讀 published+student study_content',
+  assertSucceeds(getDoc(doc(student, 'study_content/sc_pub_student'))));
+await ok('guest 可讀 published+student study_content',
+  assertSucceeds(getDoc(doc(guest, 'study_content/sc_pub_student'))));
+await ok('student 不可讀 published+internal study_content',
+  assertFails(getDoc(doc(student, 'study_content/sc_pub_internal'))));
+await ok('student 不可讀 draft+student study_content',
+  assertFails(getDoc(doc(student, 'study_content/sc_draft_student'))));
+await ok('student 不可讀 review+student study_content',
+  assertFails(getDoc(doc(student, 'study_content/sc_review_student'))));
+await ok('student 不可讀 rejected+student study_content',
+  assertFails(getDoc(doc(student, 'study_content/sc_rejected_student'))));
+await ok('student 不可讀 archived+student study_content',
+  assertFails(getDoc(doc(student, 'study_content/sc_archived_student'))));
+await ok('student 不可讀 缺 visibility 的 study_content（fail-closed）',
+  assertFails(getDoc(doc(student, 'study_content/sc_missing_vis'))));
+await ok('student 不可讀 缺 status 的 study_content（fail-closed）',
+  assertFails(getDoc(doc(student, 'study_content/sc_missing_status'))));
+// admin 可讀 internal / 非 published（後台需要）。
+await ok('admin 可讀 published+internal study_content',
+  assertSucceeds(getDoc(doc(admin, 'study_content/sc_pub_internal'))));
+await ok('admin(claim) 可讀 draft study_content',
+  assertSucceeds(getDoc(doc(claimAdmin, 'study_content/sc_draft_student'))));
+// workspace / versions 子集合：學生完全讀不到；admin 可。
+await ok('student 不可讀 study_content_workspace',
+  assertFails(getDoc(doc(student, 'study_content_workspace/sc_ws'))));
+await ok('admin 可讀 study_content_workspace',
+  assertSucceeds(getDoc(doc(admin, 'study_content_workspace/sc_ws'))));
+await ok('student 不可讀 study_content versions 子集合（不得繞過 visibility）',
+  assertFails(getDoc(doc(student, 'study_content/sc_pub_student/versions/1'))));
+await ok('admin 可讀 study_content versions 子集合',
+  assertSucceeds(getDoc(doc(admin, 'study_content/sc_pub_student/versions/1'))));
+// 學生不可寫 study_content（只有 admin）。
+await ok('student 不可寫 study_content',
+  assertFails(setDoc(doc(student, 'study_content/sc_hack'), { status: 'published', visibility: 'student' })));
+await ok('admin 可寫 study_content',
+  assertSucceeds(setDoc(doc(admin, 'study_content/sc_admin'), { status: 'published', visibility: 'internal', version: 1 })));
+
+// ---- Study Topic：published && student 才可讀 ----
+await ok('student 可讀 published+student topic',
+  assertSucceeds(getDoc(doc(student, 'study_topics/tp_pub_student'))));
+await ok('student 不可讀 published+internal topic',
+  assertFails(getDoc(doc(student, 'study_topics/tp_pub_internal'))));
+await ok('student 不可讀 draft+student topic',
+  assertFails(getDoc(doc(student, 'study_topics/tp_draft_student'))));
+await ok('student 不可讀 study_topics_workspace',
+  assertFails(getDoc(doc(student, 'study_topics_workspace/tp_ws'))));
+await ok('admin 可讀 study_topics_workspace',
+  assertSucceeds(getDoc(doc(admin, 'study_topics_workspace/tp_ws'))));
 
 await env.cleanup();
 console.log(`\n全部 ${passed} 項 rules 測試通過。`);

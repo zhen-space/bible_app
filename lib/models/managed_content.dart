@@ -35,6 +35,34 @@ enum ContentStatus {
       };
 }
 
+/// 內容「可見度」維度——**與 status 完全獨立**（Published ≠ Student-visible）。
+///
+/// 學生端可直接讀取 ⇔ `status == published` **且** `visibility == student`。
+/// 這是 Study Content 的 **required domain field**；**缺失／未知一律 fail-closed**
+/// （[fromName] 回 null，呼叫端與 Firestore rules 皆視為「學生不可見」）。
+/// 不得由 status 或 contentType 推導 visibility；不得新增 studentVisible/isPublic/
+/// audience 等重疊欄位——visibility 是這個維度唯一的 authority。
+enum Visibility {
+  internal, // 僅內部；即使 Published 學生也讀不到
+  student; // 對學生公開（仍需 status==published 才生效）
+
+  /// Firestore 序列化值即 [name]（"internal"/"student"）。
+  /// 未知／缺失 → null（**fail-closed**：不得預設成 student）。
+  static Visibility? fromName(String? s) {
+    for (final v in Visibility.values) {
+      if (v.name == s) return v;
+    }
+    return null;
+  }
+
+  bool get isStudentVisible => this == Visibility.student;
+
+  String get label => switch (this) {
+        Visibility.internal => '內部',
+        Visibility.student => '學生可見',
+      };
+}
+
 /// 內容溯源。
 class ContentProvenance {
   final String source; // 來源說明（例：使用者親撰、公有領域、投稿轉入…）
@@ -72,6 +100,10 @@ class ManagedContent {
   final int publishedAt;
   final int archivedAt; // 封存時間（0＝未封存）
   final ContentProvenance provenance;
+  // 可見度維度（見 [Visibility]）。**null ＝此內容型別不使用 visibility**
+  // （annotations/knowledge/daily_verses… 走 isPublished-only 規則），
+  // 序列化時省略、不污染既有型別。Study Content 一律非 null。
+  final Visibility? visibility;
   final Map<String, dynamic> payload;
 
   const ManagedContent({
@@ -89,6 +121,7 @@ class ManagedContent {
     this.publishedAt = 0,
     this.archivedAt = 0,
     this.provenance = const ContentProvenance(),
+    this.visibility,
     this.payload = const {},
   });
 
@@ -114,6 +147,7 @@ class ManagedContent {
         archivedAt: (m['archived_at'] as int?) ?? 0,
         provenance:
             ContentProvenance.fromMap((m['provenance'] as Map?)?.cast()),
+        visibility: Visibility.fromName(m['visibility'] as String?),
         payload: ((m['payload'] as Map?)?.cast<String, dynamic>()) ?? const {},
       );
 
@@ -132,6 +166,8 @@ class ManagedContent {
         'published_at': publishedAt,
         'archived_at': archivedAt,
         'provenance': provenance.toMap(),
+        // visibility 僅在使用該維度時序列化（null 省略，維持既有型別 doc 形狀）。
+        if (visibility != null) 'visibility': visibility!.name,
         'payload': payload,
       };
 }

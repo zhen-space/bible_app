@@ -38,6 +38,7 @@ class ContentWorkflowService {
     'published_at',
     'archived_at',
     'provenance',
+    'visibility',
     'versions',
     // legacy 舊欄名（讀取相容；新寫入不再產生）
     'reviewer',
@@ -70,6 +71,8 @@ class ContentWorkflowService {
         'published_at': c.publishedAt,
         'archived_at': c.archivedAt,
         'provenance': c.provenance.toMap(),
+        // visibility 僅在使用該維度（Study Content）時寫入，null 省略。
+        if (c.visibility != null) 'visibility': c.visibility!.name,
       };
 
   // ---- 讀取（管理端）----
@@ -100,6 +103,9 @@ class ContentWorkflowService {
     required Map<String, dynamic> payload,
     required String editorEmail,
     ContentProvenance provenance = const ContentProvenance(),
+    // Study Content 使用；其餘型別維持 null（不寫 visibility 欄位）。
+    // 傳入時覆蓋既有；null 時沿用既有草稿的 visibility（新建則保持 null）。
+    Visibility? visibility,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await getWorkspace(type, contentId);
@@ -120,9 +126,46 @@ class ContentWorkflowService {
       publishedBy: existing?.publishedBy ?? '',
       publishedAt: existing?.publishedAt ?? 0,
       provenance: provenance,
+      visibility: visibility ?? existing?.visibility,
       payload: payload,
     );
     await _workspace(type).doc(contentId).set(_flat(c));
+  }
+
+  /// 從目前 Published version 建立新的 workspace 草稿（**不動 Published live 版本**）。
+  /// 用於「編輯已發佈內容」與「改 visibility」——皆須走新草稿 → 審核 → 發佈，
+  /// 不得直接修改 Published（見 spec E3/A8/A14）。複製 payload/contentType/
+  /// **visibility**/provenance；version 沿用 Published 現值（發佈時才 +1）。
+  Future<void> createDraftFromPublished(
+    String type,
+    String contentId, {
+    required String editorEmail,
+  }) async {
+    final pub = await _published(type).doc(contentId).get();
+    if (!pub.exists) {
+      throw StateError('Published 內容不存在，無法建立草稿：$type/$contentId');
+    }
+    final m = pub.data()!;
+    final src = ManagedContent.fromMap(pub.id, {...m, 'payload': payloadOf(m)});
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final draft = ManagedContent(
+      contentId: contentId,
+      contentType: src.contentType,
+      status: ContentStatus.draft,
+      version: src.version, // 發佈時才 +1；草稿沿用目前 Published 版號
+      createdAt: src.createdAt,
+      createdBy: src.createdBy,
+      updatedAt: now,
+      updatedBy: editorEmail,
+      reviewedBy: '',
+      reviewedAt: 0,
+      publishedBy: src.publishedBy,
+      publishedAt: src.publishedAt,
+      provenance: src.provenance,
+      visibility: src.visibility,
+      payload: src.payload,
+    );
+    await _workspace(type).doc(contentId).set(_flat(draft));
   }
 
   Future<void> submitForReview(
@@ -152,6 +195,10 @@ class ContentWorkflowService {
     String type,
     String contentId, {
     required String publisherEmail,
+    // Study Content 傳 true：把舊 Published 快照寫入 `versions/{version}` 子集合
+    // （spec 明列 study_content/{id}/versions/{versionId}）。其餘型別維持既有
+    // `versions` 陣列快照，行為不變。
+    bool snapshotToSubcollection = false,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final ws = await getWorkspace(type, contentId);
@@ -177,15 +224,25 @@ class ContentWorkflowService {
       publishedBy: publisherEmail,
       publishedAt: now,
       provenance: ws.provenance,
+      visibility: ws.visibility,
       payload: ws.payload,
     ));
     // 舊 Published 快照留存
     if (prev.exists &&
         prev.data()?['status'] == ContentStatus.published.name) {
       final old = Map<String, dynamic>.from(prev.data()!)..remove('versions');
-      publishedDoc['versions'] = FieldValue.arrayUnion([
-        {...old, 'snapshot_at': now}
-      ]);
+      if (snapshotToSubcollection) {
+        // 唯讀歷史版本子集合：doc id = 舊版號。rules 設為 admin-only，
+        // 學生不得經此繞過 current visibility。
+        await pubRef
+            .collection('versions')
+            .doc('$prevVersion')
+            .set({...old, 'snapshot_at': now});
+      } else {
+        publishedDoc['versions'] = FieldValue.arrayUnion([
+          {...old, 'snapshot_at': now}
+        ]);
+      }
     }
     await pubRef.set(publishedDoc, SetOptions(merge: true));
 

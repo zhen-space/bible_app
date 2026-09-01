@@ -192,6 +192,19 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - ⚠️ **部署順序**：先 backfill 補 status，**再**部署 `firestore.rules`＋`firestore.indexes.json`（本輪未 deploy）。
 - 完整契約見 `docs/PUBLISHED_CONTENT_WORKFLOW.md`。⛔ 內容仍由使用者親撰，Claude 只維護格式/UI/工作流/工具。
 
+## Study Content 後端契約（新版「研讀內容」，branch `claude/bible-app-setup-xi8bvd`）
+
+**Published 與 Student-visible 完全分離**：學生可直接讀 ⇔ `status=='published'` **且** `visibility=='student'`。Published+Internal 合法；visibility 缺失／未知一律 **fail-closed**（不可見）；不得由 status／contentType 推導 visibility。這一輪只落「後端契約」，**無 Admin/Student UI、無 migration 執行、無 deploy**。
+
+- **collections**：`study_content/{id}`（published mirror）、`study_content_workspace/{id}`（草稿工作副本，admin-only）、`study_content/{id}/versions/{ver}`（唯讀歷史，admin-only）；`study_topics` 同構。Legacy `knowledge/data` **保留、不再是新版正式來源、不刪不改**。
+- **model**：`models/study_content.dart`＝`Visibility`(internal/student，定義於 managed_content.dart，唯一可見度 authority)＋`StudyContentType`(parallel/type/timeline/person/topic_article，未知→null)＋`StudyContentItem`／`StudyTopic`（橋接既有 `ManagedContent` 外殼，新增 `visibility` 欄位；null 時序列化省略、不污染 annotations/knowledge/daily_verses）＋`StudyContentMigration`（legacy→item 確定性映射）。
+- **workflow**：**重用** `ContentWorkflowService`（單一 status truth）。新增 `createDraftFromPublished`（Published 不可直接改，一律建新草稿→審核→發佈；改 visibility 亦然）＋ `approveAndPublish(snapshotToSubcollection:true)`（study 用 versions 子集合）。`saveDraft` 新增可選 `visibility`。新建預設 draft/internal。
+- **repository**：`services/study_content_repository.dart`。Student 讀取每個查詢都主動帶 `status==published && visibility==student`（by-id 也再驗一次），**絕不 fallback knowledge/data**（沒有就空）。providers：`studentStudyContentProvider`／`…ByType`／`…ByTopic`／`studentTopicsProvider`。
+- **rules**（`firestore.rules`）：`isStudentVisible()`＝published&&student 真正阻擋；workspace／versions 子集合 admin-only。**未 deploy**。
+- **indexes**（`firestore.indexes.json`）：study_content 加 (status,visibility)、(status,visibility,content_type)、(status,visibility,topic_ids array-contains)；study_topics 加 (status,visibility)。**未 deploy**。
+- **migration tool**：`tools/migrate_knowledge.mjs`（dry-run 預設、additive、deterministic FNV-1a-64 id、idempotent skip-if-exists、**visibility 永遠 internal**、fail-closed、不刪 knowledge/data）。id 演算法**必須與 study_content.dart 同步**（有 Dart 跨語言向量測試守著："abc"→e71fa2190541574b）。**本輪不對 production 執行**。
+- 測試：`test/study_content_test.dart`（enum fail-closed／visibility 契約／round-trip／migration 確定性）＋ `tools/rules_test.mjs`（study 讀寫全案）。⛔ 內容仍由使用者親撰；Claude 只維護格式/契約/工作流/工具。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

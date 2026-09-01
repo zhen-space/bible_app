@@ -31,6 +31,13 @@ service cloud.firestore {
     function isPublished() {
       return resource.data.status == 'published';
     }
+    // Study Content／Study Topic 的**學生可讀**條件：status==published **且**
+    // visibility==student，兩者缺一不可。任一欄位缺失／非該值即為 false（**fail-closed**）。
+    // Published≠Student-visible：Published+Internal 讀不到；visibility 不由 status 推導。
+    function isStudentVisible() {
+      return resource.data.status == 'published'
+        && resource.data.visibility == 'student';
+    }
 
     // ---- 個人私有資料：只有本人能存取（含所有子集合：bookmarks/highlights/
     //      notes/reading_log/chapter_completions/plan_item_progress/later/
@@ -64,6 +71,32 @@ service cloud.firestore {
     match /daily_verses/{doc} {
       allow read: if isPublished() || isAdmin();
       allow write: if isAdmin();
+    }
+
+    // ---- Study Content（新版研讀內容，per-item workflow + visibility）----
+    // 學生端讀取需 **published 且 visibility==student**（見 isStudentVisible）；
+    // Published+Internal 學生讀不到。歷史版本子集合與 workspace 皆 admin-only，
+    // 學生不得經此繞過 current visibility。
+    match /study_content/{doc} {
+      allow read: if isStudentVisible() || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /study_content/{doc}/versions/{vid} {
+      allow read, write: if isAdmin();
+    }
+    match /study_content_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+    // Study Topic（正式主題 entity；student visibility 與 content 獨立判定）。
+    match /study_topics/{doc} {
+      allow read: if isStudentVisible() || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /study_topics/{doc}/versions/{vid} {
+      allow read, write: if isAdmin();
+    }
+    match /study_topics_workspace/{doc} {
+      allow read, write: if isAdmin();
     }
 
     // ---- 受管理內容（workspace）：草稿/送審/退回/封存工作副本，**僅管理員** ----

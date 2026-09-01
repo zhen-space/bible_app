@@ -13,6 +13,8 @@ import '../models/models.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
 import '../services/content_workflow_service.dart';
+import '../services/study_content_repository.dart';
+import '../models/study_content.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
 import '../services/qa_service.dart';
@@ -414,6 +416,42 @@ final contentServiceProvider = Provider((ref) => ContentService());
 /// 受管理內容發佈工作流（Draft→Review→Published→Rejected/Archived）。管理後台用。
 final contentWorkflowServiceProvider = Provider(
     (ref) => ContentWorkflowService(FirebaseFirestore.instance));
+
+/// Study Content（新版研讀內容）資料存取層。**下一輪 Student/Admin UI 依賴此契約。**
+final studyContentRepositoryProvider = Provider((ref) => StudyContentRepository(
+    FirebaseFirestore.instance, ref.watch(contentWorkflowServiceProvider)));
+
+/// 學生端研讀內容：**只回 published+student**，沒有就空清單（**不 fallback knowledge/data**）。
+final studentStudyContentProvider =
+    FutureProvider<List<StudyContentItem>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(studyContentRepositoryProvider).fetchStudentStudyContent();
+});
+
+/// 學生端研讀內容（依型別）。
+final studentStudyContentByTypeProvider =
+    FutureProvider.family<List<StudyContentItem>, StudyContentType>(
+        (ref, type) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .fetchStudentStudyContentByType(type);
+});
+
+/// 學生端研讀內容（依主題）。
+final studentStudyContentByTopicProvider =
+    FutureProvider.family<List<StudyContentItem>, String>((ref, topicId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .fetchStudentStudyContentByTopic(topicId);
+});
+
+/// 學生端可瀏覽的主題（published+student）。
+final studentTopicsProvider = FutureProvider<List<StudyTopic>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(studyContentRepositoryProvider).fetchStudentTopics();
+});
 
 /// #9 檢索：只在 Published approved 內容上比對；不足→insufficientApprovedContent。
 final qaRetrievalProvider = FutureProvider.family<QaRetrievalResult,

@@ -8,6 +8,8 @@
     "audit": "node audit_published.mjs",
     "backfill:dryrun": "node backfill_status.mjs",
     "backfill:apply": "node backfill_status.mjs --apply",
+    "migrate:knowledge:dryrun": "node migrate_knowledge.mjs",
+    "migrate:knowledge:apply": "node migrate_knowledge.mjs --apply",
     "test:rules": "firebase emulators:exec --only firestore \"node rules_test.mjs\""
   },
   "dependencies": {
