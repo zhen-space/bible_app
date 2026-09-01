@@ -6,7 +6,9 @@ import '../models/study_content.dart';
 import '../providers/providers.dart';
 import '../services/app_links.dart';
 import '../services/qa_service.dart';
+import '../services/verse_locator.dart';
 import 'qa_voice_screen.dart';
+import 'study_content_screen.dart';
 
 /// 疑問 Q&A 首頁：已審核問題列表（精選置頂）＋分類過濾＋搜尋。
 class QaScreen extends ConsumerStatefulWidget {
@@ -332,43 +334,7 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         ]),
         const SizedBox(height: 8),
         Text(a.content, style: const TextStyle(height: 1.8)),
-        if (a.scriptures.isNotEmpty || a.sources.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text('回答依據', style: Theme.of(context).textTheme.labelLarge),
-        ],
-        if (a.scriptures.isNotEmpty) ...[
-          const SizedBox(height: 6),
-          Text('經文', style: Theme.of(context).textTheme.labelSmall),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final r in a.scriptures)
-                ActionChip(
-                  avatar: const Icon(Icons.menu_book, size: 16),
-                  label: Text(r),
-                  onPressed: () => _jump(context, r),
-                ),
-            ],
-          ),
-        ],
-        if (a.sources.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text('已發布內容', style: Theme.of(context).textTheme.labelSmall),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final s in a.sources)
-                Chip(
-                  avatar: const Icon(Icons.article_outlined, size: 16),
-                  label: Text(s.evidence.isNotEmpty ? s.evidence : s.kind),
-                ),
-            ],
-          ),
-        ],
+        ..._sourcesView(context, a),
         if (a.tags.isNotEmpty) ...[
           const SizedBox(height: 12),
           Wrap(
@@ -532,6 +498,86 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
 
   void _jump(BuildContext context, String ref_) =>
       AppLinks.openVerseRef(context, ref, ref_);
+
+  /// 學生端「回答依據」呈現：經文（可點→臨時 Reader）＋已發布內容
+  /// （student 可點開詳情；internal 只顯示 title＋「已審核內容·內部參考」，不可點）。
+  /// **internal source 的 title 取自 answer.sources 的公開快照 evidence，
+  /// 學生端不需要（也不會）去讀 internal study_content 文件。**
+  List<Widget> _sourcesView(BuildContext context, QaAnswer a) {
+    final scriptureSources =
+        a.sources.where((s) => s.kind == 'scripture').toList();
+    final studySources =
+        a.sources.where((s) => s.kind == 'study_content').toList();
+    // 經文依據＝結構化 scripture sources 優先；沒有才退回 legacy scriptures（相容）。
+    final scriptureRefs = scriptureSources.isNotEmpty
+        ? scriptureSources.map((s) => s.ref.isNotEmpty ? s.ref : s.contentId).toList()
+        : a.scriptures;
+    if (scriptureRefs.isEmpty && studySources.isEmpty) return const [];
+    return [
+      const SizedBox(height: 12),
+      Text('回答依據', style: Theme.of(context).textTheme.labelLarge),
+      if (scriptureRefs.isNotEmpty) ...[
+        const SizedBox(height: 6),
+        Text('經文', style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: 4),
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          for (final r in scriptureRefs)
+            ActionChip(
+              avatar: const Icon(Icons.menu_book, size: 16),
+              label: Text(r),
+              onPressed: () => _jump(context, r),
+            ),
+        ]),
+      ],
+      if (studySources.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Text('已發布內容', style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: 4),
+        for (final s in studySources) _studySourceTile(context, s),
+      ],
+    ];
+  }
+
+  Widget _studySourceTile(BuildContext context, AnswerSource s) {
+    final title = s.evidence.isNotEmpty ? s.evidence : s.contentId;
+    if (s.isStudentOpenable) {
+      return Card(
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        child: ListTile(
+          dense: true,
+          leading: const Icon(Icons.article_outlined),
+          title: Text(title),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _openStudyContent(context, s.contentId),
+        ),
+      );
+    }
+    // internal：顯示 title（來自公開快照）＋標示，不可點；不讀 internal 文件。
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      child: ListTile(
+        dense: true,
+        enabled: false,
+        leading: const Icon(Icons.lock_outline),
+        title: Text(title),
+        subtitle: const Text('已審核內容 · 內部參考'),
+      ),
+    );
+  }
+
+  Future<void> _openStudyContent(BuildContext context, String contentId) async {
+    final m = ScaffoldMessenger.of(context);
+    final item = await ref
+        .read(studyContentRepositoryProvider)
+        .fetchStudentStudyContentById(contentId);
+    if (!context.mounted) return;
+    if (item == null) {
+      m.showSnackBar(const SnackBar(content: Text('此內容目前無法瀏覽。')));
+      return;
+    }
+    Navigator.push(context,
+        MaterialPageRoute(builder: (_) => StudentStudyContentDetail(item: item)));
+  }
 }
 
 /// 提問表單。
@@ -657,10 +703,10 @@ class QaAnswerEditor extends ConsumerStatefulWidget {
 
 class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
   late final TextEditingController _content;
-  late final TextEditingController _scriptures;
   late final TextEditingController _tags;
-  // 已發布內容依據（study content sources）；scripture 依據沿用 _scriptures 文字欄。
-  late List<AnswerSource> _sources;
+  // 回答依據：結構化經文 sources（kind='scripture'）＋已發布內容 sources（kind='study_content'）。
+  late List<AnswerSource> _scriptureSources;
+  late List<AnswerSource> _studySources;
   bool _saving = false;
 
   @override
@@ -668,17 +714,22 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
     super.initState();
     final a = widget.question.answer;
     _content = TextEditingController(text: a?.content ?? '');
-    _scriptures =
-        TextEditingController(text: (a?.scriptures ?? []).join(', '));
     _tags = TextEditingController(text: (a?.tags ?? []).join(' '));
-    // 重新開啟時完整載回既有 sources（含 study content 依據）。
-    _sources = [...(a?.sources ?? const <AnswerSource>[])];
+    final all = [...(a?.sources ?? const <AnswerSource>[])];
+    _studySources = all.where((s) => s.kind == 'study_content').toList();
+    _scriptureSources = all.where((s) => s.kind == 'scripture').toList();
+    // 相容：舊回答只有 legacy scriptures → 種入結構化經文 sources 供編輯。
+    if (_scriptureSources.isEmpty && (a?.scriptures.isNotEmpty ?? false)) {
+      _scriptureSources = [
+        for (final r in a!.scriptures)
+          AnswerSource(contentId: r, version: 0, kind: 'scripture', ref: r, evidence: r)
+      ];
+    }
   }
 
   @override
   void dispose() {
     _content.dispose();
-    _scriptures.dispose();
     _tags.dispose();
     super.dispose();
   }
@@ -708,15 +759,6 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
           ),
           const SizedBox(height: 12),
           TextField(
-            controller: _scriptures,
-            decoration: const InputDecoration(
-              labelText: '引用經文（逗號分隔，例：約3:16, 羅5:8）',
-              border: OutlineInputBorder(),
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
             controller: _tags,
             decoration: const InputDecoration(
               labelText: '標籤（空格分隔，例：救恩 恩典）',
@@ -742,10 +784,31 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
     );
   }
 
-  /// 「回答依據」編輯：經文（沿用上方 _scriptures 欄）＋已發布內容（study content sources）。
+  /// 「回答依據」編輯：經文（結構化 scripture sources）＋已發布內容（study content sources）。
   Widget _sourcesSection() {
     final scheme = Theme.of(context).colorScheme;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.menu_book, size: 18, color: scheme.primary),
+        const SizedBox(width: 6),
+        const Text('回答依據 · 經文',
+            style: TextStyle(fontWeight: FontWeight.w700)),
+        const Spacer(),
+        TextButton.icon(
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('新增經文依據'),
+          onPressed: _addScriptureSource,
+        ),
+      ]),
+      if (_scriptureSources.isEmpty)
+        const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('尚未加入經文依據。'))
+      else
+        for (int i = 0; i < _scriptureSources.length; i++)
+          _reorderTile(_scriptureSources, i, Icons.menu_book,
+              _scriptureSources[i].ref, ''),
+      const SizedBox(height: 16),
       Row(children: [
         Icon(Icons.link, size: 18, color: scheme.primary),
         const SizedBox(width: 6),
@@ -758,57 +821,117 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
           onPressed: _pickSource,
         ),
       ]),
-      Text('經文依據請用上方「引用經文」欄。此處加入已發布的研讀內容作依據（順序＝學生端顯示順序）。',
+      Text('順序＝學生端「回答依據」顯示順序。內部內容會標示，學生端不可點開。',
           style: Theme.of(context).textTheme.bodySmall),
       const SizedBox(height: 6),
-      if (_sources.isEmpty)
+      if (_studySources.isEmpty)
         const Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: Text('尚未加入已發布內容依據。'),
-        )
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text('尚未加入已發布內容依據。'))
       else
-        for (int i = 0; i < _sources.length; i++) _sourceTile(i),
+        for (int i = 0; i < _studySources.length; i++)
+          _reorderTile(
+              _studySources,
+              i,
+              Icons.article_outlined,
+              _studySources[i].evidence.isEmpty
+                  ? _studySources[i].contentId
+                  : _studySources[i].evidence,
+              '${_studySources[i].contentId} · v${_studySources[i].version} · ${_studySources[i].access == 'student' ? '學生可見' : '內部'}'),
     ]);
   }
 
-  Widget _sourceTile(int i) {
-    final s = _sources[i];
+  Widget _reorderTile(
+      List<AnswerSource> list, int i, IconData icon, String title, String sub) {
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
       child: ListTile(
         dense: true,
-        leading: const Icon(Icons.article_outlined),
-        title: Text(s.evidence.isEmpty ? s.contentId : s.evidence),
-        subtitle: Text('${s.contentId} · v${s.version}'),
+        leading: Icon(icon),
+        title: Text(title.isEmpty ? '(未命名)' : title),
+        subtitle: sub.isEmpty ? null : Text(sub),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           IconButton(
             icon: const Icon(Icons.arrow_upward, size: 18),
-            tooltip: '上移',
             onPressed: i == 0
                 ? null
                 : () => setState(() {
-                      final x = _sources.removeAt(i);
-                      _sources.insert(i - 1, x);
+                      final x = list.removeAt(i);
+                      list.insert(i - 1, x);
                     }),
           ),
           IconButton(
             icon: const Icon(Icons.arrow_downward, size: 18),
-            tooltip: '下移',
-            onPressed: i == _sources.length - 1
+            onPressed: i == list.length - 1
                 ? null
                 : () => setState(() {
-                      final x = _sources.removeAt(i);
-                      _sources.insert(i + 1, x);
+                      final x = list.removeAt(i);
+                      list.insert(i + 1, x);
                     }),
           ),
           IconButton(
             icon: const Icon(Icons.close, size: 18),
-            tooltip: '移除',
-            onPressed: () => setState(() => _sources.removeAt(i)),
+            onPressed: () => setState(() => list.removeAt(i)),
           ),
         ]),
       ),
     );
+  }
+
+  /// 結構化經文依據：以 VerseLocator 解析節位（正式 reference authority），可帶結束節。
+  Future<void> _addScriptureSource() async {
+    final refC = TextEditingController();
+    final endC = TextEditingController();
+    final added = await showDialog<AnswerSource>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('新增經文依據'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: refC,
+            autofocus: true,
+            decoration: const InputDecoration(
+                labelText: '起始節位（例：約3:16）', isDense: true),
+          ),
+          TextField(
+            controller: endC,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+                labelText: '結束節（選填，同章，例：18）', isDense: true),
+          ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              final books = ref.read(booksProvider).value ?? const [];
+              final parsed = VerseLocator.parse(refC.text.trim(), books);
+              if (parsed == null || parsed.verse == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('無法解析節位（例：約3:16）')));
+                return;
+              }
+              final end = int.tryParse(endC.text.trim());
+              final refStr = end != null && end > parsed.verse!
+                  ? '${refC.text.trim()}-$end'
+                  : refC.text.trim();
+              Navigator.pop(
+                  context,
+                  AnswerSource(
+                      contentId: refStr,
+                      version: 0,
+                      kind: 'scripture',
+                      ref: refStr,
+                      evidence: refStr));
+            },
+            child: const Text('加入'),
+          ),
+        ],
+      ),
+    );
+    if (added != null) setState(() => _scriptureSources.add(added));
   }
 
   /// 只列 **status==published** 的 study content（Draft/Review/Rejected/Archived 不得成為
@@ -857,12 +980,13 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
     );
     if (chosen == null) return;
     setState(() {
-      if (_sources.any((s) => s.contentId == chosen.id)) return;
-      _sources.add(AnswerSource(
+      if (_studySources.any((s) => s.contentId == chosen.id)) return;
+      _studySources.add(AnswerSource(
         contentId: chosen.id,
         version: chosen.version,
         kind: 'study_content',
-        evidence: chosen.title,
+        evidence: chosen.title, // 公開快照 label：學生端不必讀 internal 文件即可顯示
+        access: chosen.visibility == Visibility.student ? 'student' : 'internal',
       ));
     });
   }
@@ -877,22 +1001,22 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
     setState(() => _saving = true);
     final m = ScaffoldMessenger.of(context);
     try {
-      final scriptures = _scriptures.text
-          .split(RegExp(r'[,，、]'))
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList();
       final tags = _tags.text
           .split(RegExp(r'[\s,，#＃]+'))
           .map((e) => e.trim())
           .where((e) => e.isNotEmpty)
           .toList();
+      // 結構化 scripture sources 為 authority；同時鏡射節位字串到 legacy
+      // `scriptures`（向後相容：舊讀者／舊渲染仍可顯示）。
+      final scriptures =
+          _scriptureSources.map((s) => s.ref).where((r) => r.isNotEmpty).toList();
+      final sources = [..._scriptureSources, ..._studySources];
       await ref.read(qaServiceProvider).saveAnswer(
             question: widget.question,
             content: content,
             scriptures: scriptures,
             tags: tags,
-            sources: _sources,
+            sources: sources,
           );
       ref.invalidate(questionProvider(widget.question.id));
       ref.invalidate(publishedQuestionsProvider);

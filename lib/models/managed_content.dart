@@ -178,20 +178,32 @@ class ManagedContent {
 class AnswerSource {
   final String contentId;
   final int version;
-  final String kind; // 例：'question'、'annotation'、'knowledge'
-  final String evidence; // 檢索命中的片段/理由（provenance evidence，可空）
+  final String kind; // 'study_content'、'scripture'、'question'、'annotation'…
+  final String evidence; // 顯示標題／命中片段（**建立當時的公開快照 label**，可空）
+  // 建立當時的存取狀態快照：study_content 為 'student'/'internal'；scripture 為 ''。
+  // **學生端據此決定可否點開，不必去讀 internal 文件即可顯示 title**（見交接 12）。
+  final String access;
+  // scripture source 的節位字串（kind=='scripture' 時；點了跳臨時 Reader）。
+  final String ref;
 
   const AnswerSource(
       {required this.contentId,
       required this.version,
       this.kind = '',
-      this.evidence = ''});
+      this.evidence = '',
+      this.access = '',
+      this.ref = ''});
+
+  bool get isStudentOpenable =>
+      kind == 'scripture' || (kind == 'study_content' && access == 'student');
 
   factory AnswerSource.fromMap(Map<String, dynamic> m) => AnswerSource(
         contentId: (m['content_id'] as String?) ?? '',
         version: (m['version'] as int?) ?? 0,
         kind: (m['kind'] as String?) ?? '',
         evidence: (m['evidence'] as String?) ?? '',
+        access: (m['access'] as String?) ?? '',
+        ref: (m['ref'] as String?) ?? '',
       );
 
   Map<String, dynamic> toMap() => {
@@ -199,5 +211,7 @@ class AnswerSource {
         'version': version,
         'kind': kind,
         'evidence': evidence,
+        'access': access,
+        'ref': ref,
       };
 }

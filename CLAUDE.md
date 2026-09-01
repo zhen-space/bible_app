@@ -217,6 +217,18 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - 服務層：`StudyContentRepository` 新增 admin 讀取（adminListContent/Topics union workspace+mirror、adminContentVersions、adminListPublishedForSources、isPublishedNow…）；`QaService`/`ContentService` 加**可注入 FirebaseFirestore**（測試用 DI，行為不變）。providers：adminStudyContentList/adminTopicList/adminPublishedSources/adminDailyVerseList/adminEmail。
 - 測試：`test/admin_workflow_test.dart`（fake_cloud_firestore，19 案：defaults、visibility、published/internal vs student、Published→新草稿、版本紀錄、Topic、Q&A sources save/load/order、source 失效驗證、daily verse workflow＋one-active-per-date＋fail-closed、Legacy 隔離）。全套 flutter test 88／rules 58／analyze clean／兩 build 通過。dev dep 加 `fake_cloud_firestore`。
 
+## Student Study Content CUTOVER + R1 GAP（branch `claude/bible-app-setup-xi8bvd`）
+
+學生「研讀內容」正式從 legacy `knowledge/data` 切到 `study_content`（**published+student**，無 fallback）。
+
+- **新學生畫面**：`screens/study_content_screen.dart`＝`StudentStudyContentScreen`（依型別分組＋主題入口）／`StudentStudyContentDetail`（依 `StudyContentType` 顯示 typed payload；scriptureRefs／型別內節位一律走 `AppLinks.openVerseRef`＝**臨時 Reader，不覆蓋 Reading Position**）／`StudentTopicsScreen`（`studentTopicsProvider`，依 sortOrder）／`StudentTopicContentScreen`（`studentStudyContentByTopicProvider`）。型別對學生用友善中文（`studyTypeLabel`，不改 wire）。空狀態直接顯示「尚無已發布…」，**絕不 fallback knowledge/data／bundled／random／Q&A／AI**。
+- **入口切換**：`bible_hub_screen.dart` 的「研讀內容」改指 `StudentStudyContentScreen`（不再 import/用 `KnowledgeScreen`）；主題在其內。**Bible→研讀內容 不再依賴 `knowledgeProvider`。** legacy `KnowledgeScreen`／`TopicsScreen`／`data/topics.dart` 保留供舊/其他 consumer（search 人物搜尋、admin、orphaned home），未刪。
+- **Q&A 回答依據 R1 gap 補齊**：
+  - `AnswerSource` 加 `access`（study_content 記 'student'/'internal' 快照）＋`ref`（scripture 節位）＋`isStudentOpenable`。**學生端顯示 internal source 的 title 取自 answer.sources 的公開快照 `evidence`，不讀 internal 文件**；student source 可點→`StudentStudyContentDetail`，internal source 顯示「已審核內容·內部參考」不可點（安全仍靠 rules）。
+  - **結構化 Scripture Source**：Admin 回答編輯器以 `VerseLocator` 解析節位（可帶結束節）建立 `kind:'scripture'` sources（取代逗號字串為 authority）；save 同時鏡射節位到 legacy `answer.scriptures`（相容）。學生端經文依據可點→臨時 Reader。舊回答只有 `scriptures` 仍可顯示、開啟編輯器時種入結構化欄位。
+  - Q&A safety contract 未改（human-curated／Published-only／no LLM／no Web／insufficient／pending 不入語料／發佈前 re-validate source published）。
+- 測試：`test/student_cutover_test.dart`（無 knowledge/data fallback、published+student only、主題→內容過濾、AnswerSource access/ref/isStudentOpenable、Q&A 結構化 sources save/load/order/access、legacy scriptures 相容）。全套 flutter test 95／rules 58／analyze clean／兩 build 通過。**Reader 未動、Daily Verse 未重做、無 migration/deploy。**
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

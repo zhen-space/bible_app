@@ -4,9 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
-import 'knowledge_screen.dart';
 import 'qa_screen.dart';
 import 'search_screen.dart';
+import 'study_content_screen.dart';
 
 /// 「聖經」主頁：閱讀（進 Reader／搜尋）＋理解（問答／研讀內容）。
 /// 只負責把人帶到既有畫面，不重寫任何底層功能。
@@ -72,7 +72,7 @@ class BibleHubScreen extends ConsumerWidget {
           _tile(context, Icons.forum_outlined, '聖經／信仰問答',
               '人工整理的已發布問答', () => const QaScreen()),
           _tile(context, Icons.auto_stories, '研讀內容',
-              '時間軸、人物、平行對照、預表、主題', () => const KnowledgeScreen()),
+              '主題、平行經文、預表、時間軸、人物', () => const StudentStudyContentScreen()),
         ],
       ),
     );
