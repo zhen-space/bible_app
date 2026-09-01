@@ -16,7 +16,8 @@ import 'dart:convert';
 import 'knowledge.dart';
 import 'managed_content.dart';
 
-export 'managed_content.dart' show Visibility, ContentStatus, ContentProvenance;
+export 'managed_content.dart'
+    show Visibility, ContentStatus, ContentProvenance, AnswerSource;
 
 /// Study Content 型別（R1 正式允許值）。Firestore 序列化用 [wire]。
 ///

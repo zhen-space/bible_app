@@ -6,6 +6,8 @@ import '../widgets/google_login_button_stub.dart'
     if (dart.library.js_interop) '../widgets/google_login_button_web.dart';
 import 'admin_screen.dart';
 import 'admin_knowledge_screen.dart';
+import 'admin_study_content_screen.dart';
+import 'admin_daily_verse_screen.dart';
 import 'qa_screen.dart';
 
 /// 獨立後台 app 的進入點畫面：登入 → 只有管理者能進 → 管理儀表板。
@@ -99,13 +101,30 @@ class AdminDashboard extends ConsumerWidget {
             child: Text('管理者：${user?.email ?? ''}',
                 style: Theme.of(context).textTheme.bodySmall),
           ),
-          _tile(context, Icons.auto_stories, '導讀／註解編輯',
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text('內容管理',
+                style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          _tile(context, Icons.auto_stories, '研讀內容',
+              '新版 study_content：逐項工作流＋學生可見度', const AdminStudyContentScreen()),
+          _tile(context, Icons.category_outlined, '主題',
+              '正式 study_topics：分類與學生可見度', const AdminTopicScreen()),
+          _tile(context, Icons.today_outlined, '每日經文',
+              'Draft→Review→Published；每日一則', const AdminDailyVerseScreen()),
+          _tile(context, Icons.forum_outlined, 'Q&A',
+              '審核問題、親自回答、回答依據', const QaAdminScreen(), badge: pendingQs),
+          _tile(context, Icons.inventory_2_outlined, 'Legacy Knowledge',
+              '舊版 knowledge/data aggregate（內部維護，非新版研讀內容入口）',
+              const KnowledgeAdminScreen()),
+          const Divider(height: 24),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text('導讀／註解', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          _tile(context, Icons.menu_book_outlined, '導讀／註解編輯',
               '卷導讀、章導讀、每節註解（含公開註解審核）', const AdminHomeScreen(),
               badge: pendingSubs),
-          _tile(context, Icons.forum_outlined, '疑問 Q&A',
-              '審核問題、親自回答', const QaAdminScreen(), badge: pendingQs),
-          _tile(context, Icons.account_tree_outlined, '知識架構編輯',
-              '時間軸、人物、平行對照、預表應驗', const KnowledgeAdminScreen()),
           const Padding(
             padding: EdgeInsets.all(16),
             child: Text('⛔ 所有內容文字由你親寫；這裡只是編輯器。',

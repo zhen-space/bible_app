@@ -453,6 +453,40 @@ final studentTopicsProvider = FutureProvider<List<StudyTopic>>((ref) async {
   return ref.watch(studyContentRepositoryProvider).fetchStudentTopics();
 });
 
+// ---- Study Content Admin（後台；含未發佈，rules 限管理員）----
+
+/// 目前登入的管理員 email（workflow 動作署名用）。
+final adminEmailProvider = Provider<String>((ref) =>
+    ref.watch(authUserProvider).value?.email ?? '');
+
+final adminStudyContentListProvider =
+    FutureProvider<List<AdminStudyRow>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(studyContentRepositoryProvider).adminListContent();
+});
+
+final adminTopicListProvider =
+    FutureProvider<List<AdminTopicRow>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(studyContentRepositoryProvider).adminListTopics();
+});
+
+/// Q&A「回答依據」picker：只含已發佈 study content（含 internal，UI 標 visibility）。
+final adminPublishedSourcesProvider =
+    FutureProvider<List<StudyContentItem>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .adminListPublishedForSources();
+});
+
+/// 後台每日經文清單（union mirror + workspace，依日期新到舊）。
+final adminDailyVerseListProvider =
+    FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(contentServiceProvider).adminListDailyVerses();
+});
+
 /// #9 檢索：只在 Published approved 內容上比對；不足→insufficientApprovedContent。
 final qaRetrievalProvider = FutureProvider.family<QaRetrievalResult,
     ({String query, String category})>((ref, args) async {

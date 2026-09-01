@@ -10,7 +10,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 /// 讀經端以「雲端優先、asset 為底」合併顯示。
 /// 內容文字一律由管理者（使用者本人）在 App 內撰寫。
 class ContentService {
-  FirebaseFirestore get _fs => FirebaseFirestore.instance;
+  ContentService([FirebaseFirestore? fs])
+      : _fs = fs ?? FirebaseFirestore.instance;
+  final FirebaseFirestore _fs;
 
   CollectionReference<Map<String, dynamic>> get _col =>
       _fs.collection('annotations');
@@ -143,6 +145,12 @@ class ContentService {
   CollectionReference<Map<String, dynamic>> get _dailyVerses =>
       _fs.collection('daily_verses');
 
+  /// 學生端每日經文顯示條件（純函式，可測）：**status==published 且 date==今天**。
+  /// 未來已發布的日期不會提前顯示；今天無 published 一律 fail-closed（不顯示、不 fallback）。
+  static bool dailyVerseVisibleToday(
+          String? status, String date, String todayYmd) =>
+      status == 'published' && date == todayYmd;
+
   /// 讀經端：取某日（YYYY-MM-DD）的官方每日經文。**只回 status=='published'**；
   /// 未發佈或不存在回 null（fail-closed，前端顯示「今日尚無經文」，不得 fallback）。
   /// （managed collections 經唯讀 audit 確認為空，故不再相容 legacy published==true。）
@@ -198,6 +206,28 @@ class ContentService {
         'updated_by': publisher,
       });
     }
+  }
+
+  /// 後台每日經文清單：union published mirror（daily_verses）＋ workspace
+  /// （daily_verses_workspace，草稿/送審）。同日期以 workspace 為編輯真相，
+  /// 另標記 `_has_published`＝該日是否已有對外 published。doc id＝日期，
+  /// 因此**每個日期至多一筆**（one-active-per-date 由 id 結構保證）。
+  Future<List<Map<String, dynamic>>> adminListDailyVerses() async {
+    final ws = await _fs.collection('daily_verses_workspace').get();
+    final pub = await _dailyVerses.get();
+    final published = {for (final d in pub.docs) d.id: d.data()};
+    final byId = {for (final d in ws.docs) d.id: d.data()};
+    final ids = {...byId.keys, ...published.keys};
+    final rows = <Map<String, dynamic>>[];
+    for (final id in ids) {
+      final editorial = Map<String, dynamic>.from(byId[id] ?? published[id]!);
+      editorial['_date'] = id;
+      editorial['_has_published'] = published.containsKey(id);
+      editorial['_published_status'] = published[id]?['status'];
+      rows.add(editorial);
+    }
+    rows.sort((a, b) => (b['_date'] as String).compareTo(a['_date'] as String));
+    return rows;
   }
 
   // ---- 公開註解（使用者投稿 → 管理者審核）----

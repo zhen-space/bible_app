@@ -205,6 +205,18 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **migration tool**：`tools/migrate_knowledge.mjs`（dry-run 預設、additive、deterministic FNV-1a-64 id、idempotent skip-if-exists、**visibility 永遠 internal**、fail-closed、不刪 knowledge/data）。id 演算法**必須與 study_content.dart 同步**（有 Dart 跨語言向量測試守著："abc"→e71fa2190541574b）。**本輪不對 production 執行**。
 - 測試：`test/study_content_test.dart`（enum fail-closed／visibility 契約／round-trip／migration 確定性）＋ `tools/rules_test.mjs`（study 讀寫全案）。⛔ 內容仍由使用者親撰；Claude 只維護格式/契約/工作流/工具。
 
+## Study Content ADMIN R1（後台 UI，branch `claude/bible-app-setup-xi8bvd`）
+
+在 backend 契約上做的**後台管理 UI**（無 Student cutover、無 migration 執行、無 deploy）。Admin IA＝`admin_dashboard_screen.dart` 的「內容管理」：研讀內容／主題／每日經文／Q&A／Legacy Knowledge。
+
+- **Study Content Admin**（`screens/admin_study_content_screen.dart`）：清單（篩選 status／visibility／型別／來源＋搜尋）；**Status 與 Student visibility 永遠分開的 badge**；新增先選正式 `StudyContentType`（禁自由字串）預設 Draft/Internal；typed editor 依型別欄位（parallel/type/timeline/person/topic_article，payload 以 backend model 為準）；Draft→送審（確認顯示 visibility 含意）；Review 唯讀＋退回/發佈；**發佈確認依 visibility 分「發布並開放學生」/「發布為內部內容」兩種文案與按鈕**；**Published 唯讀→「建立新版草稿」(`createDraftFromPublished`)**，無 published visibility 直接 toggle；版本紀錄唯讀（versions 子集合）；主題 multi-select 只選正式 `study_topics`（學生可見/內部分組＋內部主題掛在學生內容時警示）。
+- **Topic Admin**（同檔 `AdminTopicScreen`/`TopicEditor`）：list＋create/edit，slug 建立後不可改，預設 Draft/Internal，同 workflow，Published→新草稿。
+- **Legacy Knowledge reposition**（`admin_knowledge_screen.dart`）：改名「Legacy Knowledge」＋頂部「Legacy / Internal」醒目說明（此區不是新版研讀內容入口、儲存只更新 knowledge/data aggregate、不代表任何項目對學生可見）。**未刪除、未改 production data。**
+- **Q&A Sources Editor**（`qa_screen.dart`）：回答編輯器新增「回答依據·已發布內容」——picker **只列 status==published** 的 study content（含 internal，UI 標 visibility），可排序/移除，`answer.sources` 真正持久化並重開載回；**發佈前重新驗證**每個 study content source 仍為 published，否則阻止發佈。Q&A safety contract 未改（human-curated/Published-only/no LLM/no Web/insufficient/pending 不入語料）。
+- **Daily Verse Admin**（`screens/admin_daily_verse_screen.dart`）：list＋create，走 ContentWorkflowService 型別 `daily_verses`、**contentId=日期** → one-active-per-date 為結構不變量；節位為正式識別（VerseLocator 解析）；Draft→Review→Published＋Archive；替代＝從現行版本建新草稿→發佈（版本+1）；學生顯示＝`ContentService.dailyVerseVisibleToday`（published 且 date==今天，未來不提前、今天無則 fail-closed）。
+- 服務層：`StudyContentRepository` 新增 admin 讀取（adminListContent/Topics union workspace+mirror、adminContentVersions、adminListPublishedForSources、isPublishedNow…）；`QaService`/`ContentService` 加**可注入 FirebaseFirestore**（測試用 DI，行為不變）。providers：adminStudyContentList/adminTopicList/adminPublishedSources/adminDailyVerseList/adminEmail。
+- 測試：`test/admin_workflow_test.dart`（fake_cloud_firestore，19 案：defaults、visibility、published/internal vs student、Published→新草稿、版本紀錄、Topic、Q&A sources save/load/order、source 失效驗證、daily verse workflow＋one-active-per-date＋fail-closed、Legacy 隔離）。全套 flutter test 88／rules 58／analyze clean／兩 build 通過。dev dep 加 `fake_cloud_firestore`。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

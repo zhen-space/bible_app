@@ -13,7 +13,8 @@ import '../models/managed_content.dart';
 /// 為避免 Firestore 複合索引，列表查詢都用單一欄位（status 或 category 之一），
 /// 其餘排序／過濾在用戶端做。內容（問題、回答）一律由人撰寫。
 class QaService {
-  FirebaseFirestore get _fs => FirebaseFirestore.instance;
+  QaService([FirebaseFirestore? fs]) : _fs = fs ?? FirebaseFirestore.instance;
+  final FirebaseFirestore _fs;
 
   CollectionReference<Map<String, dynamic>> get _questions =>
       _fs.collection('questions');

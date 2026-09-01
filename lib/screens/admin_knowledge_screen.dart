@@ -20,7 +20,7 @@ class KnowledgeAdminScreen extends ConsumerWidget {
     final kb = ref.watch(knowledgeProvider).value ?? KnowledgeBase.empty;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('知識架構編輯'),
+        title: const Text('Legacy Knowledge'),
         actions: [
           IconButton(
             icon: const Icon(Icons.ios_share),
@@ -36,6 +36,41 @@ class KnowledgeAdminScreen extends ConsumerWidget {
       ),
       body: ListView(
         children: [
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.warning_amber, size: 18),
+                  const SizedBox(width: 6),
+                  Text('Legacy / Internal',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onErrorContainer)),
+                ]),
+                const SizedBox(height: 6),
+                Text(
+                  '此頁管理舊版 knowledge/data aggregate，不是新版學生「研讀內容」的正式管理入口。'
+                  '此區沒有新版 Study Content 的逐項可見度與逐項審核流程；請勿在此建立新的學生研讀內容——'
+                  '新內容一律從「內容管理 → 研讀內容 → 新增研讀內容」建立。\n'
+                  '在此儲存／匯入只會更新 legacy knowledge/data 的發布狀態，'
+                  '不代表其中任何項目可由新版學生「研讀內容」直接瀏覽。',
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onErrorContainer),
+                ),
+              ],
+            ),
+          ),
           _tile(context, Icons.compare_arrows, '平行經文對照',
               '${kb.parallels.length} 組', const ParallelsEditor()),
           _tile(context, Icons.link, '預表與應驗',

@@ -1,6 +1,8 @@
-import 'package:flutter/material.dart';
+// 隱藏 Flutter 的 Visibility widget（此檔用本專案 Visibility enum，不用該 widget）。
+import 'package:flutter/material.dart' hide Visibility;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/study_content.dart';
 import '../providers/providers.dart';
 import '../services/app_links.dart';
 import '../services/qa_service.dart';
@@ -435,11 +437,13 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
                     ? Icons.public_off
                     : Icons.publish_outlined),
                 label: Text(q.published ? '取消發布' : '發布給學生端'),
-                onPressed: () => _admin(
-                    () => ref
-                        .read(qaServiceProvider)
-                        .setPublished(q.id, !q.published),
-                    q.id),
+                onPressed: () => q.published
+                    ? _admin(
+                        () => ref
+                            .read(qaServiceProvider)
+                            .setPublished(q.id, false),
+                        q.id)
+                    : _publishWithSourceValidation(q),
               ),
             if (q.status != 'rejected')
               OutlinedButton.icon(
@@ -475,6 +479,41 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
     } catch (e) {
       m.showSnackBar(SnackBar(content: Text('操作失敗：$e')));
     }
+  }
+
+  /// 發布前**重新驗證**回答依據：任何 study content source 若已非 published
+  /// （在草稿建立後失效：被退回/封存/改草稿），阻止發布——不得只依賴 picker 當下狀態。
+  Future<void> _publishWithSourceValidation(Question q) async {
+    final m = ScaffoldMessenger.of(context);
+    final repo = ref.read(studyContentRepositoryProvider);
+    final sources =
+        (q.answer?.sources ?? const <AnswerSource>[]).where((s) => s.kind == 'study_content');
+    final invalid = <String>[];
+    for (final s in sources) {
+      if (!await repo.isPublishedNow(s.contentId)) {
+        invalid.add(s.evidence.isEmpty ? s.contentId : s.evidence);
+      }
+    }
+    if (!mounted) return;
+    if (invalid.isNotEmpty) {
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('無法發布：回答依據已失效'),
+          content: Text(
+              '以下「已發布內容」依據目前已不是 Published 狀態，請先在回答編輯器移除或更換後再發布：\n\n'
+              '${invalid.join("\n")}'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('知道了')),
+          ],
+        ),
+      );
+      m.showSnackBar(const SnackBar(content: Text('發布已中止：回答依據需為已發布內容')));
+      return;
+    }
+    await _admin(() => ref.read(qaServiceProvider).setPublished(q.id, true), q.id);
   }
 
   Future<void> _toggleSave(String uid, String id, bool saved) async {
@@ -620,6 +659,8 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
   late final TextEditingController _content;
   late final TextEditingController _scriptures;
   late final TextEditingController _tags;
+  // 已發布內容依據（study content sources）；scripture 依據沿用 _scriptures 文字欄。
+  late List<AnswerSource> _sources;
   bool _saving = false;
 
   @override
@@ -630,6 +671,8 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
     _scriptures =
         TextEditingController(text: (a?.scriptures ?? []).join(', '));
     _tags = TextEditingController(text: (a?.tags ?? []).join(' '));
+    // 重新開啟時完整載回既有 sources（含 study content 依據）。
+    _sources = [...(a?.sources ?? const <AnswerSource>[])];
   }
 
   @override
@@ -681,6 +724,8 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
               isDense: true,
             ),
           ),
+          const SizedBox(height: 20),
+          _sourcesSection(),
           const SizedBox(height: 16),
           FilledButton.icon(
             icon: _saving
@@ -695,6 +740,131 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
         ],
       ),
     );
+  }
+
+  /// 「回答依據」編輯：經文（沿用上方 _scriptures 欄）＋已發布內容（study content sources）。
+  Widget _sourcesSection() {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.link, size: 18, color: scheme.primary),
+        const SizedBox(width: 6),
+        const Text('回答依據 · 已發布內容',
+            style: TextStyle(fontWeight: FontWeight.w700)),
+        const Spacer(),
+        TextButton.icon(
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('新增已發布內容'),
+          onPressed: _pickSource,
+        ),
+      ]),
+      Text('經文依據請用上方「引用經文」欄。此處加入已發布的研讀內容作依據（順序＝學生端顯示順序）。',
+          style: Theme.of(context).textTheme.bodySmall),
+      const SizedBox(height: 6),
+      if (_sources.isEmpty)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Text('尚未加入已發布內容依據。'),
+        )
+      else
+        for (int i = 0; i < _sources.length; i++) _sourceTile(i),
+    ]);
+  }
+
+  Widget _sourceTile(int i) {
+    final s = _sources[i];
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      child: ListTile(
+        dense: true,
+        leading: const Icon(Icons.article_outlined),
+        title: Text(s.evidence.isEmpty ? s.contentId : s.evidence),
+        subtitle: Text('${s.contentId} · v${s.version}'),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          IconButton(
+            icon: const Icon(Icons.arrow_upward, size: 18),
+            tooltip: '上移',
+            onPressed: i == 0
+                ? null
+                : () => setState(() {
+                      final x = _sources.removeAt(i);
+                      _sources.insert(i - 1, x);
+                    }),
+          ),
+          IconButton(
+            icon: const Icon(Icons.arrow_downward, size: 18),
+            tooltip: '下移',
+            onPressed: i == _sources.length - 1
+                ? null
+                : () => setState(() {
+                      final x = _sources.removeAt(i);
+                      _sources.insert(i + 1, x);
+                    }),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            tooltip: '移除',
+            onPressed: () => setState(() => _sources.removeAt(i)),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  /// 只列 **status==published** 的 study content（Draft/Review/Rejected/Archived 不得成為
+  /// source）；含 internal，UI 標示 visibility 讓管理員清楚。
+  Future<void> _pickSource() async {
+    final items = await ref.read(adminPublishedSourcesProvider.future);
+    if (!mounted) return;
+    final chosen = await showModalBottomSheet<StudyContentItem>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        builder: (_, controller) => items.isEmpty
+            ? const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('目前沒有已發布的研讀內容可引用。')))
+            : ListView(
+                controller: controller,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('選擇已發布內容作依據',
+                        style: TextStyle(fontWeight: FontWeight.w700)),
+                  ),
+                  for (final it in items)
+                    ListTile(
+                      title: Text(it.title.isEmpty ? it.id : it.title),
+                      subtitle: Row(children: [
+                        Text('${it.contentType?.label ?? ''} · '),
+                        Text(
+                          it.visibility == Visibility.student
+                              ? 'Published · Student'
+                              : 'Published · Internal',
+                          style: TextStyle(
+                            color: it.visibility == Visibility.student
+                                ? Colors.green.shade700
+                                : Colors.blueGrey,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ]),
+                      onTap: () => Navigator.pop(context, it),
+                    ),
+                ],
+              ),
+      ),
+    );
+    if (chosen == null) return;
+    setState(() {
+      if (_sources.any((s) => s.contentId == chosen.id)) return;
+      _sources.add(AnswerSource(
+        contentId: chosen.id,
+        version: chosen.version,
+        kind: 'study_content',
+        evidence: chosen.title,
+      ));
+    });
   }
 
   Future<void> _save() async {
@@ -722,6 +892,7 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
             content: content,
             scriptures: scriptures,
             tags: tags,
+            sources: _sources,
           );
       ref.invalidate(questionProvider(widget.question.id));
       ref.invalidate(publishedQuestionsProvider);
