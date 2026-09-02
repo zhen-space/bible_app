@@ -36,7 +36,9 @@ const env = await initializeTestEnvironment({
 // 以繞過規則的方式植入種子資料。
 await env.withSecurityRulesDisabled(async (ctx) => {
   const db = ctx.firestore();
-  await setDoc(doc(db, 'annotations/book_1'), { status: 'published', version: 1, content_type: 'book_guide', content_id: 'book_1' });
+  await setDoc(doc(db, 'annotations/book_1'), { status: 'published', audience: 'public', version: 1, content_type: 'book_guide', content_id: 'book_1' });
+  await setDoc(doc(db, 'annotations/ann_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], version: 1 });
+  await setDoc(doc(db, 'annotations/ann_noaud'), { status: 'published', version: 1 }); // 缺 audience → fail-closed
   await setDoc(doc(db, 'annotations/book_2_draft'), { status: 'draft', version: 0 });
   await setDoc(doc(db, 'annotations/book_3_review'), { status: 'review', version: 0 });
   await setDoc(doc(db, 'annotations/book_4_rejected'), { status: 'rejected', version: 0 });
@@ -61,6 +63,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'memberships/sB'), { uid: 'sB', church_id: 'B', status: 'active' });
   await setDoc(doc(db, 'memberships/sP'), { uid: 'sP', church_id: 'A', status: 'pending' });
   await setDoc(doc(db, 'memberships/sR'), { uid: 'sR', church_id: 'A', status: 'revoked' });
+  await setDoc(doc(db, 'memberships/sG'), { uid: 'sG', church_id: 'A', status: 'pending' });
+  await setDoc(doc(db, 'memberships/sRej'), { uid: 'sRej', church_id: 'A', status: 'rejected' });
   await setDoc(doc(db, 'study_content/sc_pub'), { status: 'published', audience: 'public', content_type: 'parallel', version: 1 });
   await setDoc(doc(db, 'study_content/sc_draft_pub'), { status: 'draft', audience: 'public', version: 0 });
   await setDoc(doc(db, 'study_content/sc_internal'), { status: 'published', audience: 'internal', version: 1 });
@@ -223,10 +227,43 @@ await ok('student 可讀自己的 membership', assertSucceeds(getDoc(doc(sA, 'me
 await ok('student 不可讀他人 membership', assertFails(getDoc(doc(sA, 'memberships/sB'))));
 await ok('19 student 可建立自己的 pending（active church）', assertSucceeds(setDoc(doc(sNone, 'memberships/sNone'), { uid: 'sNone', church_id: 'A', status: 'pending', reviewed_by: '' })));
 await ok('19b student 不可建立 active（self-approve）', assertFails(setDoc(doc(guest, 'memberships/guestx'), { uid: 'guestx', church_id: 'A', status: 'active', reviewed_by: '' })));
-await ok('21b student 不可用 inactive church 申請', assertFails(setDoc(doc(sB, 'memberships/sB2'), { uid: 'sB2', church_id: 'X', status: 'pending', reviewed_by: '' })));
+const sInact = env.authenticatedContext('sInact', { email: 'i@e.com' }).firestore();
+await ok('21b student 不可用 inactive church 申請', assertFails(setDoc(doc(sInact, 'memberships/sInact'), { uid: 'sInact', church_id: 'X', status: 'pending', reviewed_by: '' })));
 await ok('20 student(pending) 不可自己改 active', assertFails(setDoc(doc(sP, 'memberships/sP'), { status: 'active' }, { merge: true })));
 await ok('admin 可 approve membership', assertSucceeds(setDoc(doc(admin, 'memberships/sP'), { status: 'active', reviewed_by: ADMIN }, { merge: true })));
 await ok('student 不可寫 membership history', assertFails(setDoc(doc(sA, 'memberships/sA/history/h1'), { x: 1 })));
+
+// ---- Annotation audience 授權 ----
+await ok('annotation public → guest allow', assertSucceeds(getDoc(doc(guest, 'annotations/book_1'))));
+await ok('annotation church A + active A → allow', assertSucceeds(getDoc(doc(sA, 'annotations/ann_chA'))));
+await ok('7 annotation church A + active B → deny', assertFails(getDoc(doc(sB, 'annotations/ann_chA'))));
+await ok('annotation church A + no membership → deny', assertFails(getDoc(doc(sNone, 'annotations/ann_chA'))));
+await ok('annotation 缺 audience → deny（fail-closed）', assertFails(getDoc(doc(sA, 'annotations/ann_noaud'))));
+
+// ---- Membership self-switch bypass 封死（§2 A–H）----
+// D active A → pending B：DENY
+await ok('D active A → pending B: DENY',
+  assertFails(setDoc(doc(sA, 'memberships/sA'), { status: 'pending', church_id: 'B' }, { merge: true })));
+// E active A → pending A：DENY
+await ok('E active A → pending A: DENY',
+  assertFails(setDoc(doc(sA, 'memberships/sA'), { status: 'pending' }, { merge: true })));
+// F active A → change churchId B（維持 active）：DENY
+await ok('F active A → change church B: DENY',
+  assertFails(setDoc(doc(sA, 'memberships/sA'), { church_id: 'B' }, { merge: true })));
+// G pending → active by student：DENY（sP 已被 admin approve；改用 pending 使用者 sG，種子於頂部）
+const sG = env.authenticatedContext('sG', { email: 'g@e.com' }).firestore();
+const sRej = env.authenticatedContext('sRej', { email: 'j@e.com' }).firestore();
+await ok('G pending A → active A by student: DENY',
+  assertFails(setDoc(doc(sG, 'memberships/sG'), { status: 'active' }, { merge: true })));
+// H pending A → pending B by student：DENY（不得繞過 admin 換教會）
+await ok('H pending A → pending B by student: DENY',
+  assertFails(setDoc(doc(sG, 'memberships/sG'), { status: 'pending', church_id: 'B' }, { merge: true })));
+// B rejected A → pending A（legal reapply）：allow
+await ok('B rejected A → pending A reapply: allow',
+  assertSucceeds(setDoc(doc(sRej, 'memberships/sRej'), { status: 'pending', church_id: 'A', reviewed_by: '' }, { merge: true })));
+// C revoked A → pending A（legal reapply）：allow
+await ok('C revoked A → pending A reapply: allow',
+  assertSucceeds(setDoc(doc(sR, 'memberships/sR'), { status: 'pending', church_id: 'A', reviewed_by: '' }, { merge: true })));
 
 await env.cleanup();
 console.log(`\n全部 ${passed} 項 rules 測試通過。`);

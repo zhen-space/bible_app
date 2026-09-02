@@ -70,8 +70,11 @@ service cloud.firestore {
     // ---- 受管理內容（published mirror）：Published 才可公開讀，僅管理員可寫 ----
     // annotations（卷/章導讀、節註解）、knowledge（知識架構）、daily_verses（每日經文）、
     // reading_plans（讀經計畫）、public_notes（審核通過的公開註解）。
+    // annotations：Church/Teacher R1 起改用 audience 授權（public/church/internal）。
+    // ⚠️ 需先 migrate annotations audience（見 tools/migrate_audience.mjs）再部署，
+    // 否則未補 audience 的 legacy 註解會 fail-closed 隱藏（安全但暫不顯示）。
     match /annotations/{doc} {
-      allow read: if isPublished() || isAdmin();
+      allow read: if audienceOK() || isAdmin();
       allow write: if isAdmin();
     }
     match /knowledge/{doc} {

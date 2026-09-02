@@ -22,13 +22,19 @@ const APPLY = process.argv.includes('--apply');
 const COLLECTIONS = [
   'study_content', 'study_content_workspace',
   'study_topics', 'study_topics_workspace',
+  // annotations：legacy 皆為公開內容 → audience=public（missing→internal fail-closed 亦適用）。
+  'annotations', 'annotations_workspace',
 ];
 
 function die(msg) { console.error(`[migrate-audience] FAIL-CLOSED: ${msg}`); process.exit(1); }
 
-/** 純映射（可測）：legacy doc → 要補的 audience（若已有 audience 則回 null＝skip）。 */
-export function audienceFor(doc) {
+/** 純映射（可測）：legacy doc → 要補的 audience（若已有 audience 則回 null＝skip）。
+ *  - study_content/topics：visibility==student→public、其餘→internal（fail-closed）。
+ *  - annotations（無 visibility 欄；#8 起「published＝對全學生公開」）：published→public、
+ *    其餘→internal。**不擴大 exposure**（published 註解本就 student-visible）。 */
+export function audienceFor(doc, { isAnnotation = false } = {}) {
   if (typeof doc.audience === 'string') return null; // idempotent skip
+  if (isAnnotation) return doc.status === 'published' ? 'public' : 'internal';
   if (doc.visibility === 'student') return 'public';
   return 'internal'; // internal / missing / unknown → fail-closed internal
 }
@@ -70,8 +76,9 @@ async function main() {
   for (const col of COLLECTIONS) {
     const snap = await db.collection(col).get(); // 只讀
     let toPublic = 0, toInternal = 0, skipped = 0;
+    const isAnnotation = col.startsWith('annotations');
     for (const doc of snap.docs) {
-      const target = audienceFor(doc.data());
+      const target = audienceFor(doc.data(), { isAnnotation });
       if (target === null) { skipped++; continue; }
       if (target === 'public') toPublic++; else toInternal++;
       if (APPLY) {

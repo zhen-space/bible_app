@@ -467,6 +467,14 @@ final authorizedTopicsProvider = FutureProvider<List<StudyTopic>>((ref) async {
   return ref.watch(studyContentRepositoryProvider).fetchAuthorizedTopics(auth);
 });
 
+/// **授權後**的雲端註解（Reader 未來直接消費；public ∪ active-church，無 fallback）。
+final authorizedAnnotationsProvider =
+    FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const {};
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref.watch(contentServiceProvider).fetchAuthorizedAnnotations(auth);
+});
+
 /// 學生端研讀內容：**只回 published+student**，沒有就空清單（**不 fallback knowledge/data**）。
 final studentStudyContentProvider =
     FutureProvider<List<StudyContentItem>>((ref) async {

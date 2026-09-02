@@ -567,9 +567,12 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
 
   Future<void> _openStudyContent(BuildContext context, String contentId) async {
     final m = ScaffoldMessenger.of(context);
+    // **開啟一律走 authorization-aware（audience）by-id，不用 visibility-only 舊路徑**：
+    // 以目前使用者的授權（Active Membership）live resolve；revoked/未授權 → null（不回 payload）。
+    final auth = await ref.read(myAuthProvider.future);
     final item = await ref
         .read(studyContentRepositoryProvider)
-        .fetchStudentStudyContentById(contentId);
+        .fetchAuthorizedStudyContentById(contentId, auth);
     if (!context.mounted) return;
     if (item == null) {
       m.showSnackBar(const SnackBar(content: Text('此內容目前無法瀏覽。')));

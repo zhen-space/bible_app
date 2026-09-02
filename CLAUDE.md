@@ -240,7 +240,15 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **indexes**（`firestore.indexes.json`）：study_content/study_topics/teacher_books/chapters 各加 (status,audience)＋(status,audience,allowed_church_ids array-contains)。保留 legacy visibility 索引（UI 尚未 cutover）。**未 deploy。**
 - **migration**：`tools/migrate_audience.mjs`（visibility→audience：student→public、internal→internal、missing→internal fail-closed；**絕不自動產生 church、不擴大 exposure**；dry-run 預設、idempotent、fail-closed）。**部署順序硬性：先 migrate audience → deploy indexes（Ready）→ deploy rules**（否則 legacy 內容 fail-closed 隱藏）。**本輪不執行。**
 - 測試：`test/church_authorization_test.dart`（19 案：audience 純函式矩陣、Authorized Universe public∪church、by-id/byTopic/byType 不洩漏 church B、Topic Option A、teacher hierarchy、membership doc-id=uid 唯一/pending/active/revoke、saved 不授予 access）＋`tools/rules_test.mjs`（+21 → 79 案：spec 25 的授權矩陣）。flutter test 114／rules 79／analyze clean／兩 build 通過。
-- ⛔ 內容仍由使用者親撰。**未做（下一輪 UI）**：Me→教會、Bible→老師專區、Reader annotation 授權呈現、Admin audience/church/membership/teacher UI、Search/My Content 授權整合、annotation audience gating（暫仍 isPublished-only，待 annotation 呈現輪次）。
+- ⛔ 內容仍由使用者親撰。
+
+### Foundation CLOSURE（補完 backend/security 缺口，仍無 UI/deploy）
+- **Annotation audience 授權補完**：`ContentService.fetchAuthorizedAnnotations(auth)`＋`annotationAuthorized()`（public ∪ my-church，fail-closed）＋`authorizedAnnotationsProvider`（Reader 未來消費）；`annotations` rule 改 `audienceOK()`；indexes 加 annotations (status,audience)(+array)；`migrate_audience` 納入 annotations（published→public、其餘→internal，不擴大 exposure）。**Reader 未改。**
+- **Membership self-switch 封死**：rules 驗 active A 不可 self →pending A/pending B/改 churchId/自我 approve；只有 rejected/revoked 本人可 reapply→pending（target church active）；其餘全走 Admin。rules_test 加 D/E/F/G/H＋B/C reapply。
+- **Inactive-Church / empty-allowedChurchIds publish-target**：落在 **trusted service boundary**（`StudyContentRepository._assertChurchPublishable`：audience==church 時 allowedChurchIds 非空且每個 church 存在且 active，否則 submit/publish throw）——不靠 UI；有 unit test。
+- **Q&A open-time 無 visibility bypass**：`qa_screen._openStudyContent` 改走 `fetchAuthorizedStudyContentById(id, myAuth)`（audience 授權），移除 visibility-only by-id 開啟路徑。
+- 測試：church_authorization_test 26／全套 flutter test 121／rules 91／analyze clean／兩 build 通過。
+- **未做（下一輪 UI）**：Me→教會、Bible→老師專區、Reader annotation 呈現、Admin audience/church/membership/teacher UI、Search/My Content 授權整合。**部署順序不變（migrate audience→indexes→rules→Admin→Student）。**
 
 ## 開發守則（歷史教訓）
 

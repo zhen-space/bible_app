@@ -110,6 +110,23 @@
         { "fieldPath": "audience", "order": "ASCENDING" },
         { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
       ]
+    },
+    {
+      "collectionGroup": "annotations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "annotations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" },
+        { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
+      ]
     }
   ],
   "fieldOverrides": []

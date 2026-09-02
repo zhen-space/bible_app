@@ -5,6 +5,7 @@ import 'package:bible_app/models/church.dart';
 import 'package:bible_app/models/study_content.dart';
 import 'package:bible_app/models/teacher.dart';
 import 'package:bible_app/services/church_repository.dart';
+import 'package:bible_app/services/content_service.dart';
 import 'package:bible_app/services/content_workflow_service.dart';
 import 'package:bible_app/services/study_content_repository.dart';
 
@@ -223,15 +224,118 @@ void main() {
   });
 
   group('Saved relationship 不授予 access', () {
-    test('save church item + 無 membership → live resolve 仍 null', () async {
+    test('save church B item + 無 membership → live resolve 仍 null', () async {
       final fs = FakeFirebaseFirestore();
       final repo = _repo(fs);
       final saved = SavedStudyContentRepository(fs);
-      await _seed(fs, 'chA', status: 'published', audience: 'church', churches: ['A']);
-      await saved.save('u1', 'chA');
-      expect(await saved.savedIds('u1'), ['chA']); // relationship 保留
-      // 但 open 走授權 repo：無 membership → null（不回 payload）。
-      expect(await repo.fetchAuthorizedStudyContentById('chA', StudentAuth.none), isNull);
+      await _seed(fs, 'chB', status: 'published', audience: 'church', churches: ['B']);
+      await saved.save('u1', 'chB');
+      expect(await saved.savedIds('u1'), ['chB']); // relationship 保留
+      // open 走授權 repo：無 membership / active A → null（不回 payload）。
+      expect(await repo.fetchAuthorizedStudyContentById('chB', StudentAuth.none), isNull);
+      expect(await repo.fetchAuthorizedStudyContentById('chB', const StudentAuth('A')), isNull);
+    });
+  });
+
+  group('Annotation authorization', () {
+    test('annotationAuthorized 純函式：public/church/internal/missing', () {
+      bool a(Map<String, dynamic> m, String? c) =>
+          ContentService.annotationAuthorized(m, c);
+      expect(a({'status': 'published', 'audience': 'public'}, null), isTrue);
+      expect(a({'status': 'draft', 'audience': 'public'}, null), isFalse);
+      expect(a({'status': 'published', 'audience': 'internal'}, 'A'), isFalse);
+      expect(a({'status': 'published'}, 'A'), isFalse); // 缺 audience
+      expect(a({'status': 'published', 'audience': 'church', 'allowed_church_ids': ['A']}, 'A'), isTrue);
+      expect(a({'status': 'published', 'audience': 'church', 'allowed_church_ids': ['A']}, 'B'), isFalse);
+      expect(a({'status': 'published', 'audience': 'church', 'allowed_church_ids': []}, 'A'), isFalse);
+    });
+
+    test('fetchAuthorizedAnnotations：active A 得 public+chA，不得 chB', () async {
+      final fs = FakeFirebaseFirestore();
+      final cs = ContentService(fs);
+      await fs.collection('annotations').doc('pub').set({'status': 'published', 'audience': 'public', 'body': 'p'});
+      await fs.collection('annotations').doc('chA').set({'status': 'published', 'audience': 'church', 'allowed_church_ids': ['A'], 'body': 'a'});
+      await fs.collection('annotations').doc('chB').set({'status': 'published', 'audience': 'church', 'allowed_church_ids': ['B'], 'body': 'b'});
+      await fs.collection('annotations').doc('intn').set({'status': 'published', 'audience': 'internal', 'body': 'i'});
+      final none = await cs.fetchAuthorizedAnnotations(StudentAuth.none);
+      expect(none.keys, ['pub']);
+      final a = await cs.fetchAuthorizedAnnotations(const StudentAuth('A'));
+      expect(a.keys.toSet(), {'pub', 'chA'});
+      expect(a.containsKey('chB'), isFalse);
+      expect(a.containsKey('intn'), isFalse);
+    });
+  });
+
+  group('Church publish-target 驗證（trusted service boundary）', () {
+    Future<void> draftChurch(StudyContentRepository repo, String id, List<String> churches) =>
+        repo.saveContentDraft(id,
+            type: StudyContentType.topicArticle,
+            payload: {'title': id, 'data': {}},
+            editorEmail: _admin,
+            audience: Audience.church,
+            allowedChurchIds: churches);
+
+    test('audience=church + 空 allowedChurchIds → 送審/發佈 throw', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = _repo(fs);
+      await draftChurch(repo, 'c1', const []);
+      expect(() => repo.submitContentForReview('c1', _admin), throwsA(isA<StateError>()));
+      expect(() => repo.publishContent('c1', _admin), throwsA(isA<StateError>()));
+    });
+
+    test('inactive / 不存在 church → publish throw；active → 通過', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = _repo(fs);
+      await fs.collection('churches').doc('A').set({'active': true});
+      await fs.collection('churches').doc('X').set({'active': false});
+      await draftChurch(repo, 'cX', const ['X']); // inactive
+      expect(() => repo.publishContent('cX', _admin), throwsA(isA<StateError>()));
+      await draftChurch(repo, 'cGhost', const ['ghost']); // 不存在
+      expect(() => repo.publishContent('cGhost', _admin), throwsA(isA<StateError>()));
+      await draftChurch(repo, 'cA', const ['A']); // active
+      await repo.submitContentForReview('cA', _admin);
+      await repo.publishContent('cA', _admin);
+      final pub = await repo.adminGetContentPublished('cA');
+      expect(pub!.audience, Audience.church);
+      expect(pub.allowedChurchIds, ['A']);
+    });
+
+    test('public audience 不受 church 驗證影響', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = _repo(fs);
+      await repo.saveContentDraft('p1',
+          type: StudyContentType.topicArticle,
+          payload: {'title': 'p', 'data': {}},
+          editorEmail: _admin,
+          audience: Audience.public);
+      await repo.submitContentForReview('p1', _admin);
+      await repo.publishContent('p1', _admin);
+      expect((await repo.adminGetContentPublished('p1'))!.audience, Audience.public);
+    });
+  });
+
+  group('Authorized union count / teacher 結構不洩漏', () {
+    test('union result 只含 public + active-A（count 對）', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = _repo(fs);
+      await _seed(fs, 'p', status: 'published', audience: 'public');
+      await _seed(fs, 'a', status: 'published', audience: 'church', churches: ['A']);
+      await _seed(fs, 'b', status: 'published', audience: 'church', churches: ['B']);
+      final u = await repo.fetchAuthorizedStudyContent(const StudentAuth('A'));
+      expect(u.length, 2);
+      expect(u.map((e) => e.id).toSet(), {'p', 'a'});
+    });
+
+    test('Public Book + 只有 church-B chapter：active A 讀不到 B chapter（無結構洩漏）', () async {
+      final fs = FakeFirebaseFirestore();
+      final tr = TeacherRepository(fs);
+      await fs.collection('teacher_books').doc('bk').set({'title': '公開書', 'status': 'published', 'audience': 'public', 'order': 0});
+      await fs.collection('teacher_books').doc('bk').collection('chapters').doc('cB')
+          .set({'book_id': 'bk', 'status': 'published', 'audience': 'church', 'allowed_church_ids': ['B'], 'order': 0});
+      // Book 公開可見，但 active A 的授權章為空（B 章不洩漏）。
+      expect((await tr.fetchAuthorizedBooks(const StudentAuth('A'))).map((b) => b.id), ['bk']);
+      expect(await tr.fetchAuthorizedChapters('bk', const StudentAuth('A')), isEmpty);
+      expect((await tr.fetchAuthorizedChapters('bk', const StudentAuth('B'))).map((c) => c.id), ['cB']);
     });
   });
 }

@@ -1,5 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/church.dart';
+import '../models/managed_content.dart';
+
 /// 註解內容的雲端層（管理後台寫入、所有讀者讀取）。
 ///
 /// Firestore `annotations` collection，doc id：
@@ -28,6 +31,48 @@ class ContentService {
   Future<Map<String, Map<String, dynamic>>> fetchAllPublished() async {
     final snap = await _col.where('status', isEqualTo: 'published').get();
     return {for (final d in snap.docs) d.id: d.data()};
+  }
+
+  /// **Church/Teacher R1：授權後的註解**（Reader 未來直接消費）。
+  /// universe = published+public ∪ published+church(my active church)；**絕不 fetch-all-then-hide**。
+  /// audience 缺失/'internal'、church 但無授權 → 不回（fail-closed）。by-doc 再驗一次。
+  Future<Map<String, Map<String, dynamic>>> fetchAuthorizedAnnotations(
+      StudentAuth auth) async {
+    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    docs.addAll((await _col
+            .where('status', isEqualTo: 'published')
+            .where('audience', isEqualTo: Audience.public.name)
+            .get())
+        .docs);
+    if (auth.hasChurch) {
+      docs.addAll((await _col
+              .where('status', isEqualTo: 'published')
+              .where('audience', isEqualTo: Audience.church.name)
+              .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+              .get())
+          .docs);
+    }
+    final out = <String, Map<String, dynamic>>{};
+    for (final d in docs) {
+      final m = d.data();
+      // 防禦性再驗（純函式；rules 才是真正邊界）。
+      if (annotationAuthorized(m, auth.activeChurchId)) out[d.id] = m;
+    }
+    return out;
+  }
+
+  /// 純授權判斷（可測）：published 且（public，或 church 且 activeChurchId ∈ allowed_church_ids）。
+  static bool annotationAuthorized(
+      Map<String, dynamic> m, String? activeChurchId) {
+    if (m['status'] != 'published') return false;
+    final audience = m['audience'];
+    if (audience == 'public') return true;
+    if (audience == 'church') {
+      final ids = ((m['allowed_church_ids'] as List?) ?? const [])
+          .map((e) => e.toString());
+      return activeChurchId != null && ids.contains(activeChurchId);
+    }
+    return false; // internal / missing → fail-closed
   }
 
   /// 版本化存檔（**直接發佈**：管理員本人親撰內容，寫入 published mirror）。

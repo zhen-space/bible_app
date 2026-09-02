@@ -179,6 +179,8 @@ class StudyContentRepository {
     required Map<String, dynamic> payload,
     required String editorEmail,
     Visibility visibility = Visibility.internal,
+    Audience? audience,
+    List<String>? allowedChurchIds,
     ContentProvenance provenance = const ContentProvenance(),
   }) =>
       _workflow.saveDraft(
@@ -189,18 +191,52 @@ class StudyContentRepository {
         editorEmail: editorEmail,
         provenance: provenance,
         visibility: visibility,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
       );
 
-  Future<void> submitContentForReview(String contentId, String editorEmail) =>
-      _workflow.submitForReview(contentType, contentId, editorEmail);
+  Future<void> submitContentForReview(String contentId, String editorEmail) async {
+    await _assertChurchPublishable(await adminGetContentWorkspace(contentId));
+    return _workflow.submitForReview(contentType, contentId, editorEmail);
+  }
 
   Future<void> rejectContent(String contentId, String reviewerEmail) =>
       _workflow.reject(contentType, contentId, reviewerEmail);
 
-  /// 發佈（含 visibility）；舊版快照寫入 versions 子集合（admin-only）。
-  Future<void> publishContent(String contentId, String publisherEmail) =>
-      _workflow.approveAndPublish(contentType, contentId,
-          publisherEmail: publisherEmail, snapshotToSubcollection: true);
+  /// 發佈（含 audience）；舊版快照寫入 versions 子集合（admin-only）。
+  /// **church audience 的 trusted 驗證**（allowedChurchIds 非空、皆 active）在此 service 邊界。
+  Future<void> publishContent(String contentId, String publisherEmail) async {
+    await _assertChurchPublishable(await adminGetContentWorkspace(contentId));
+    return _workflow.approveAndPublish(contentType, contentId,
+        publisherEmail: publisherEmail, snapshotToSubcollection: true);
+  }
+
+  /// **Inactive-Church / empty-allowedChurchIds publish-target enforcement**（§3）。
+  /// audience==church 時：allowedChurchIds 非空、每個都是正式 church entity 且 active。
+  /// 非 church audience 直接通過。Firestore rules 無法可靠驗 array 內所有 church active，
+  /// 故此檢查落在 trusted service boundary，不靠 UI。
+  Future<void> _assertChurchPublishable(Object? draft) async {
+    Audience? audience;
+    List<String> ids = const [];
+    if (draft is StudyContentItem) {
+      audience = draft.audience;
+      ids = draft.allowedChurchIds;
+    } else if (draft is StudyTopic) {
+      audience = draft.audience;
+      ids = draft.allowedChurchIds;
+    }
+    if (audience != Audience.church) return;
+    if (ids.isEmpty) {
+      throw StateError('audience=church 但 allowedChurchIds 為空，不可送審／發佈');
+    }
+    for (final cid in ids) {
+      final c = await _fs.collection('churches').doc(cid).get();
+      if (!c.exists) throw StateError('church «$cid» 不存在，不可作為發佈對象');
+      if (c.data()?['active'] != true) {
+        throw StateError('church «$cid» 非 active，不可作為新發佈對象');
+      }
+    }
+  }
 
   Future<void> archiveContent(String contentId, String publisherEmail) =>
       _workflow.archive(contentType, contentId, publisherEmail);
@@ -218,6 +254,8 @@ class StudyContentRepository {
     required Map<String, dynamic> payload,
     required String editorEmail,
     Visibility visibility = Visibility.internal,
+    Audience? audience,
+    List<String>? allowedChurchIds,
     ContentProvenance provenance = const ContentProvenance(),
   }) =>
       _workflow.saveDraft(
@@ -228,17 +266,23 @@ class StudyContentRepository {
         editorEmail: editorEmail,
         provenance: provenance,
         visibility: visibility,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
       );
 
-  Future<void> submitTopicForReview(String topicId, String editorEmail) =>
-      _workflow.submitForReview(topicType, topicId, editorEmail);
+  Future<void> submitTopicForReview(String topicId, String editorEmail) async {
+    await _assertChurchPublishable(await adminGetTopicWorkspace(topicId));
+    return _workflow.submitForReview(topicType, topicId, editorEmail);
+  }
 
   Future<void> rejectTopic(String topicId, String reviewerEmail) =>
       _workflow.reject(topicType, topicId, reviewerEmail);
 
-  Future<void> publishTopic(String topicId, String publisherEmail) =>
-      _workflow.approveAndPublish(topicType, topicId,
-          publisherEmail: publisherEmail, snapshotToSubcollection: true);
+  Future<void> publishTopic(String topicId, String publisherEmail) async {
+    await _assertChurchPublishable(await adminGetTopicWorkspace(topicId));
+    return _workflow.approveAndPublish(topicType, topicId,
+        publisherEmail: publisherEmail, snapshotToSubcollection: true);
+  }
 
   Future<void> archiveTopic(String topicId, String publisherEmail) =>
       _workflow.archive(topicType, topicId, publisherEmail);
