@@ -7,6 +7,7 @@ import '../widgets/google_login_button_stub.dart'
 import 'admin_screen.dart';
 import 'admin_knowledge_screen.dart';
 import 'admin_study_content_screen.dart';
+import 'admin_church_screen.dart';
 import 'admin_daily_verse_screen.dart';
 import 'qa_screen.dart';
 
@@ -117,6 +118,15 @@ class AdminDashboard extends ConsumerWidget {
           _tile(context, Icons.inventory_2_outlined, 'Legacy Knowledge',
               '舊版 knowledge/data aggregate（內部維護，非新版研讀內容入口）',
               const KnowledgeAdminScreen()),
+          const Divider(height: 24),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
+            child: Text('教會與教師', style: TextStyle(fontWeight: FontWeight.w700)),
+          ),
+          _tile(context, Icons.church_outlined, '教會',
+              '建立／管理教會、Active 狀態', const AdminChurchesScreen()),
+          _tile(context, Icons.how_to_reg_outlined, '教會會籍申請',
+              '審核加入申請（通過／退回）', const AdminMembershipRequestsScreen()),
           const Divider(height: 24),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 4, 16, 4),

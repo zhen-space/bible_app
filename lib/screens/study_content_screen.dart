@@ -23,7 +23,8 @@ class StudentStudyContentScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(studentStudyContentProvider);
+    // **authorization-aware**：public ∪ active-church（無 legacy visibility universe）。
+    final async = ref.watch(authorizedStudyContentProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('研讀內容')),
       body: async.when(
@@ -76,10 +77,14 @@ class StudentStudyContentScreen extends ConsumerWidget {
         child: ListTile(
           title: Text(it.title.isEmpty ? '(未命名)' : it.title,
               style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: it.body.isEmpty
-              ? null
-              : Text(it.body,
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (it.audience == Audience.church) churchBadge(context),
+              if (it.body.isNotEmpty)
+                Text(it.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+            ],
+          ),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.push(
               context,
@@ -89,6 +94,21 @@ class StudentStudyContentScreen extends ConsumerWidget {
       );
 }
 
+/// 「教會專屬」標記（**不暴露 allowedChurchIds raw values**）。
+Widget churchBadge(BuildContext context) => Container(
+      margin: const EdgeInsets.only(top: 2, bottom: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text('教會專屬',
+          style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSecondaryContainer,
+              fontWeight: FontWeight.w600)),
+    );
+
 /// 研讀內容詳情：依型別呈現正式 typed payload（authority＝StudyContentItem）。
 class StudentStudyContentDetail extends ConsumerWidget {
   final StudyContentItem item;
@@ -96,11 +116,35 @@ class StudentStudyContentDetail extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final saved =
+        ref.watch(savedStudyContentIdsProvider).value?.contains(item.id) ??
+            false;
     return Scaffold(
-      appBar: AppBar(title: Text(studyTypeLabel(item.contentType))),
+      appBar: AppBar(
+        title: Text(studyTypeLabel(item.contentType)),
+        actions: [
+          IconButton(
+            icon: Icon(saved ? Icons.bookmark : Icons.bookmark_border),
+            tooltip: saved ? '取消儲存' : '儲存',
+            onPressed: () async {
+              final uid = ref.read(authUserProvider).value?.uid;
+              if (uid == null) return;
+              final repo = ref.read(savedStudyContentRepositoryProvider);
+              saved
+                  ? await repo.unsave(uid, item.id)
+                  : await repo.save(uid, item.id);
+              ref.invalidate(savedStudyContentIdsProvider);
+            },
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (item.audience == Audience.church) ...[
+            churchBadge(context),
+            const SizedBox(height: 8),
+          ],
           Text(item.title,
               style: Theme.of(context)
                   .textTheme
@@ -226,7 +270,7 @@ class StudentTopicsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(studentTopicsProvider);
+    final async = ref.watch(authorizedTopicsProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('主題')),
       body: async.when(
@@ -270,7 +314,7 @@ class StudentTopicContentScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(studentStudyContentByTopicProvider(topic.id));
+    final async = ref.watch(authorizedStudyContentByTopicProvider(topic.id));
     return Scaffold(
       appBar: AppBar(title: Text(topic.title.isEmpty ? '主題' : topic.title)),
       body: async.when(
@@ -302,6 +346,73 @@ class StudentTopicContentScreen extends ConsumerWidget {
                             MaterialPageRoute(
                                 builder: (_) =>
                                     StudentStudyContentDetail(item: it))),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+    );
+  }
+}
+
+/// 已儲存的研讀內容：relationship 保留，開啟走 live authorized resolve。
+/// revoked/未授權 → 顯示「目前無法存取」＋可移除；**不從 cache 顯示全文**。
+class SavedStudyContentScreen extends ConsumerWidget {
+  const SavedStudyContentScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(resolvedSavedStudyContentProvider);
+    return Scaffold(
+      appBar: AppBar(title: const Text('已儲存的研讀內容')),
+      body: async.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => _StudyEmpty('載入失敗，請稍後再試。'),
+        data: (rows) => rows.isEmpty
+            ? const _StudyEmpty('尚未儲存任何研讀內容。')
+            : ListView(
+                padding: const EdgeInsets.all(12),
+                children: [
+                  for (final r in rows)
+                    Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ListTile(
+                        title: Text(
+                            r.item?.title.isNotEmpty == true
+                                ? r.item!.title
+                                : (r.item == null ? '（此內容）' : '(未命名)'),
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: r.item == null
+                            ? const Text('目前無法存取',
+                                style: TextStyle(fontStyle: FontStyle.italic))
+                            : (r.item!.audience == Audience.church
+                                ? churchBadge(context)
+                                : null),
+                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                          if (r.item != null) const Icon(Icons.chevron_right),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            tooltip: '從已儲存移除',
+                            onPressed: () async {
+                              final uid = ref.read(authUserProvider).value?.uid;
+                              if (uid == null) return;
+                              await ref
+                                  .read(savedStudyContentRepositoryProvider)
+                                  .unsave(uid, r.id);
+                              ref.invalidate(savedStudyContentIdsProvider);
+                              ref.invalidate(resolvedSavedStudyContentProvider);
+                            },
+                          ),
+                        ]),
+                        onTap: r.item == null
+                            ? () => ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text('你目前沒有這項研讀內容的存取權。')))
+                            : () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) => StudentStudyContentDetail(
+                                        item: r.item!))),
                       ),
                     ),
                 ],

@@ -248,7 +248,14 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **Inactive-Church / empty-allowedChurchIds publish-target**：落在 **trusted service boundary**（`StudyContentRepository._assertChurchPublishable`：audience==church 時 allowedChurchIds 非空且每個 church 存在且 active，否則 submit/publish throw）——不靠 UI；有 unit test。
 - **Q&A open-time 無 visibility bypass**：`qa_screen._openStudyContent` 改走 `fetchAuthorizedStudyContentById(id, myAuth)`（audience 授權），移除 visibility-only by-id 開啟路徑。
 - 測試：church_authorization_test 26／全套 flutter test 121／rules 91／analyze clean／兩 build 通過。
-- **未做（下一輪 UI）**：Me→教會、Bible→老師專區、Reader annotation 呈現、Admin audience/church/membership/teacher UI、Search/My Content 授權整合。**部署順序不變（migrate audience→indexes→rules→Admin→Student）。**
+- **未做（下一輪 UI）**：Bible→老師專區、Reader annotation 呈現、Search 授權整合。**部署順序不變（migrate audience→indexes→rules→Admin→Student）。**
+
+### UI 整合 R1（Student church + Admin audience，branch `claude/bible-app-setup-xi8bvd`）
+交付「授權曝光面」最關鍵的 UI slice（無 deploy）：
+- **Student**：`me_screen` 加「教會」→ `church_screen.dart`（`ChurchMembershipScreen` 五狀態 none/pending/active/rejected/revoked，前端不得 self-approve/switch/revoke；`ChurchPickerScreen` 只列 active、確認文案「申請加入」非立即授權）。研讀內容/主題**正式 cutover 到 authorized providers**（`authorizedStudyContentProvider`/`authorizedTopicsProvider`/`authorizedStudyContentByTopicProvider`，不再用 legacy visibility universe）；church item 顯示「教會專屬」badge（不暴露 allowedChurchIds）。Saved：Detail 加書籤 toggle（`users/{uid}/saved_study_content`，非 verse Bookmark）＋`SavedStudyContentScreen`（live authorized resolve，revoked→「目前無法存取」＋可移除，不回 cache 全文）＋My Content 入口。Q&A open-path 已走 authorized by-id。
+- **Admin**：dashboard 加「教會與教師」→ `admin_church_screen.dart`（Churches list/create/edit/active toggle；Membership Requests approve/reject，doc-id=uid 結構性防第二 active）。Study Content 編輯器**audience 選擇器**（public/church/internal＋active-church multi-picker），audience 為 authoring authority、visibility 由 audience 派生；church+空 church submit 阻擋（UI＋service 雙層）；public 發布 exposure warning。
+- 測試：`test/church_admin_test.dart`。flutter test 123／rules 91（未改）／analyze clean／兩 build 通過。
+- **仍未做（下一增量）**：Teacher Area（student+admin）、Search 正式 cutover、Reader annotation 呈現、onboarding church step、Admin Topics/annotation audience 編輯器、Q&A admin source badge、offline/logout cache UI 硬化、widget 層測試。皆 foundation fail-closed 保護，非阻斷。
 
 ## 開發守則（歷史教訓）
 

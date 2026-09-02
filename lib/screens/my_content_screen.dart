@@ -7,6 +7,7 @@ import 'chapter_screen.dart';
 import 'notes_screen.dart';
 import 'prayers_screen.dart';
 import 'sermon_notes_screen.dart';
+import 'study_content_screen.dart';
 import 'todos_screen.dart';
 
 /// 我的內容：統一入口，把個人資料的各類集合集中在一個地方，
@@ -39,6 +40,8 @@ class MyContentScreen extends ConsumerWidget {
               () => const BookmarksScreen(initialTab: 0)),
           _tile(context, Icons.watch_later_outlined, '稍後閱讀', c(later),
               '待讀清單', () => const LaterScreen()),
+          _tile(context, Icons.menu_book_outlined, '已儲存的研讀內容', '',
+              '儲存的研讀內容（含教會專屬）', () => const SavedStudyContentScreen()),
           _tile(context, Icons.record_voice_over_outlined, '主日證道筆記',
               c(sermons), '結構化證道筆記，可匯入匯出',
               () => const SermonNotesScreen()),

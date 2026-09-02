@@ -452,6 +452,19 @@ final activeChurchesProvider = FutureProvider<List<Church>>((ref) async {
   return ref.watch(churchRepositoryProvider).fetchActiveChurches();
 });
 
+/// Admin：全部 churches（含 inactive）。
+final adminAllChurchesProvider = FutureProvider<List<Church>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(churchRepositoryProvider).fetchAllChurches();
+});
+
+/// Admin：待審 membership 佇列。
+final adminPendingMembershipsProvider =
+    FutureProvider<List<Membership>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(churchRepositoryProvider).pendingMemberships();
+});
+
 /// **授權後**的研讀內容 universe（public ∪ active-church；無 fallback）。
 final authorizedStudyContentProvider =
     FutureProvider<List<StudyContentItem>>((ref) async {
@@ -465,6 +478,39 @@ final authorizedTopicsProvider = FutureProvider<List<StudyTopic>>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
   final auth = await ref.watch(myAuthProvider.future);
   return ref.watch(studyContentRepositoryProvider).fetchAuthorizedTopics(auth);
+});
+
+/// 授權後：某主題的研讀內容（已授權 universe narrow）。
+final authorizedStudyContentByTopicProvider =
+    FutureProvider.family<List<StudyContentItem>, String>((ref, topicId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .fetchAuthorizedByTopic(topicId, auth);
+});
+
+/// 目前使用者已儲存的研讀內容 id（relationship only）。
+final savedStudyContentIdsProvider = FutureProvider<List<String>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final uid = ref.watch(authUserProvider).value?.uid;
+  if (uid == null) return const [];
+  return ref.watch(savedStudyContentRepositoryProvider).savedIds(uid);
+});
+
+/// 已儲存研讀內容的 **live authorized resolve**（relationship 保留、access 現查）。
+/// 回 (id, item?)：item==null ＝目前無權存取（revoked/未授權）→ UI 顯示「目前無法存取」。
+final resolvedSavedStudyContentProvider =
+    FutureProvider<List<({String id, StudyContentItem? item})>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final ids = await ref.watch(savedStudyContentIdsProvider.future);
+  final auth = await ref.watch(myAuthProvider.future);
+  final repo = ref.watch(studyContentRepositoryProvider);
+  final out = <({String id, StudyContentItem? item})>[];
+  for (final id in ids) {
+    out.add((id: id, item: await repo.fetchAuthorizedStudyContentById(id, auth)));
+  }
+  return out;
 });
 
 /// **授權後**的雲端註解（Reader 未來直接消費；public ∪ active-church，無 fallback）。

@@ -32,6 +32,13 @@ class ChurchRepository {
     return d.exists ? Church.fromDoc(d.id, d.data()!) : null;
   }
 
+  /// Admin：全部 churches（含 inactive）。
+  Future<List<Church>> fetchAllChurches() async {
+    final s = await _churches.get();
+    return [for (final d in s.docs) Church.fromDoc(d.id, d.data())]
+      ..sort((a, b) => a.name.compareTo(b.name));
+  }
+
   /// Admin：寫入 church **公開欄位**（私有資料另寫 churches/{id}/private/admin）。
   Future<void> saveChurch(Church c) =>
       _churches.doc(c.id).set(c.toPublicMap(), SetOptions(merge: true));

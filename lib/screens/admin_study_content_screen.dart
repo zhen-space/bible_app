@@ -309,6 +309,9 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
   late final TextEditingController _tags;
   late final Map<String, TextEditingController> _typed;
   late Visibility _visibility;
+  // Church/Teacher R1：audience 為 authoring authority；visibility 由 audience 派生（相容）。
+  late Audience _audience;
+  late Set<String> _churchIds;
   late Set<String> _topicIds;
   bool _busy = false;
 
@@ -329,6 +332,10 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
     _refs = TextEditingController(text: it.scriptureRefs.join('\n'));
     _tags = TextEditingController(text: it.tags.join(' '));
     _visibility = it.visibility ?? Visibility.internal;
+    // audience：優先用既有；否則由 legacy visibility 派生（student→public、其餘→internal）。
+    _audience = it.audience ??
+        (it.visibility == Visibility.student ? Audience.public : Audience.internal);
+    _churchIds = {...it.allowedChurchIds};
     _topicIds = {...it.topicIds};
     _typed = {
       for (final k in _typedFields(type))
@@ -472,34 +479,75 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
       );
 
   Widget _visibilitySelector() {
+    final cur = _readOnly ? (it.audience ?? Audience.internal) : _audience;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('學生可見度（與發布狀態獨立）',
+      const Text('對象（audience）— 學生存取權的正式依據',
           style: TextStyle(fontWeight: FontWeight.w600)),
       const SizedBox(height: 4),
-      SegmentedButton<Visibility>(
+      SegmentedButton<Audience>(
         segments: const [
           ButtonSegment(
-              value: Visibility.internal,
-              label: Text('學生不可瀏覽'),
-              icon: Icon(Icons.lock_outline)),
+              value: Audience.public,
+              label: Text('公開'),
+              icon: Icon(Icons.public)),
           ButtonSegment(
-              value: Visibility.student,
-              label: Text('學生可瀏覽'),
-              icon: Icon(Icons.visibility_outlined)),
+              value: Audience.church,
+              label: Text('教會'),
+              icon: Icon(Icons.church_outlined)),
+          ButtonSegment(
+              value: Audience.internal,
+              label: Text('內部'),
+              icon: Icon(Icons.lock_outline)),
         ],
-        selected: {_readOnly ? (it.visibility ?? Visibility.internal) : _visibility},
-        onSelectionChanged: _readOnly
-            ? null
-            : (s) => setState(() => _visibility = s.first),
+        selected: {cur},
+        onSelectionChanged:
+            _readOnly ? null : (s) => setState(() => _audience = s.first),
       ),
       const SizedBox(height: 4),
       Text(
-        _visibility == Visibility.student
-            ? '發布後將出現在學生「研讀內容」（仍需 published）。'
-            : '即使發布，仍只供內部，不會出現在學生「研讀內容」。',
+        switch (cur) {
+          Audience.public => '發布後全體學生可在「研讀內容」取得。',
+          Audience.church => '發布後只有所選教會的 Active 會員可取得。',
+          Audience.internal => '即使發布，仍只供內部，學生不可見。',
+        },
         style: Theme.of(context).textTheme.bodySmall,
       ),
+      if (cur == Audience.church && !_readOnly) ...[
+        const SizedBox(height: 8),
+        _churchPicker(),
+      ],
     ]);
+  }
+
+  Widget _churchPicker() {
+    final churchesAsync = ref.watch(adminAllChurchesProvider);
+    return churchesAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (e, _) => Text('教會載入失敗：$e'),
+      data: (churches) {
+        final active = churches.where((c) => c.active).toList();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('授權教會（只列 Active；Inactive 不可作為新對象）',
+              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          if (active.isEmpty)
+            const Text('尚無 Active 教會。請先在「教會與教師 → 教會」建立。',
+                style: TextStyle(fontSize: 12)),
+          Wrap(spacing: 6, children: [
+            for (final c in active)
+              FilterChip(
+                label: Text(c.name.isEmpty ? c.id : c.name),
+                selected: _churchIds.contains(c.id),
+                onSelected: (sel) => setState(() =>
+                    sel ? _churchIds.add(c.id) : _churchIds.remove(c.id)),
+              ),
+          ]),
+          if (_churchIds.isEmpty)
+            Text('⚠️ 教會對象需至少選一間，否則無法送審／發布。',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error, fontSize: 12)),
+        ]);
+      },
+    );
   }
 
   Widget _topicPicker() {
@@ -717,18 +765,32 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
       type: type,
       payload: payload,
       editorEmail: email,
-      visibility: _visibility,
+      // audience 為 authoring authority；visibility 由 audience 派生（相容 legacy）。
+      audience: _audience,
+      allowedChurchIds: _audience == Audience.church ? _churchIds.toList() : const [],
+      visibility:
+          _audience == Audience.public ? Visibility.student : Visibility.internal,
       provenance: it.provenance,
     );
     ref.invalidate(adminStudyContentListProvider);
   }
 
+  String _audienceMeaning(Audience a) => switch (a) {
+        Audience.public => '此版本若審核通過並發布，全體學生可在「研讀內容」取得。',
+        Audience.church => '此版本發布後，只有所選教會的 Active 會員可取得。',
+        Audience.internal => '此版本即使發布，仍不會出現在學生「研讀內容」。',
+      };
+
   Future<void> _submitFlow(StudyContentRepository repo, String email) async {
+    if (_audience == Audience.church && _churchIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('教會對象需至少選一間教會，才能送審。')));
+      return;
+    }
     final ok = await _confirm(
       title: '送出審核',
       body:
-          '型別：${type.label}\n標題：${_title.text.trim()}\n主題：${_topicIds.length} 個\n經文：${_refs.text.trim().split('\n').where((e) => e.trim().isNotEmpty).length} 個\n\n此內容將進入「審核中」。\n\n'
-          '${_visibility == Visibility.student ? "此版本若審核通過並發布，學生將可在「研讀內容」取得。" : "此版本即使發布，仍不會出現在學生「研讀內容」。"}',
+          '型別：${type.label}\n標題：${_title.text.trim()}\n對象：${_audience.label}${_audience == Audience.church ? '（${_churchIds.length} 間教會）' : ''}\n\n此內容將進入「審核中」。\n\n${_audienceMeaning(_audience)}',
       confirm: '確認送審',
     );
     if (ok != true) return;
@@ -740,13 +802,19 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
   }
 
   Future<void> _publishFlow(StudyContentRepository repo, String email) async {
-    final student = it.visibility == Visibility.student;
+    final aud = it.audience ?? Audience.internal;
+    final title = switch (aud) {
+      Audience.public => '發布並開放學生',
+      Audience.church => '發布給指定教會',
+      Audience.internal => '發布為內部內容',
+    };
+    // Public/擴大曝光警語（Church/Internal → Public）。
+    final expanding = aud == Audience.public;
     final ok = await _confirm(
-      title: student ? '發布並開放學生' : '發布為內部內容',
-      body: student
-          ? '發布狀態：Published\n學生瀏覽：允許\n\n發布後，此版本將可由學生端「研讀內容」讀取。'
-          : '發布狀態：Published\n學生瀏覽：不允許\n\n發布後，此版本仍只供內部用途，不會出現在學生「研讀內容」。',
-      confirm: student ? '發布並開放學生' : '發布為內部內容',
+      title: title,
+      body: '發布狀態：Published\n對象：${aud.label}\n\n${_audienceMeaning(aud)}'
+          '${expanding ? "\n\n⚠️ 這是「公開」內容——發布後全體學生（含未加入教會者）都可讀取。" : ""}',
+      confirm: title,
     );
     if (ok != true) return;
     await _run(() async {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'church_screen.dart';
 import 'prayers_screen.dart';
 import 'settings_screen.dart';
 
@@ -17,6 +18,15 @@ class MeScreen extends StatelessWidget {
           _sectionTitle(context, '我的讀經'),
           Card(
             child: Column(children: [
+              ListTile(
+                leading: const Icon(Icons.church_outlined),
+                title: const Text('教會'),
+                subtitle: const Text('選擇教會、查看加入狀態'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => const ChurchMembershipScreen())),
+              ),
+              const Divider(height: 1),
               ListTile(
                 leading: const Icon(Icons.volunteer_activism_outlined),
                 title: const Text('禱告事項'),
