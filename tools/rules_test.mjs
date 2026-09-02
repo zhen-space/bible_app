@@ -53,20 +53,28 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'questions/q_pub'), { uid: 'someone', status: 'approved', published: true, answer: { content: 'a' } });
   await setDoc(doc(db, 'questions/q_draft'), { uid: 'someone', status: 'approved', published: false });
   // Study Content：學生可讀 ⇔ published && visibility==student（兩者缺一不可、fail-closed）。
-  await setDoc(doc(db, 'study_content/sc_pub_student'), { status: 'published', visibility: 'student', content_type: 'parallel', version: 1 });
-  await setDoc(doc(db, 'study_content/sc_pub_internal'), { status: 'published', visibility: 'internal', content_type: 'parallel', version: 1 });
-  await setDoc(doc(db, 'study_content/sc_draft_student'), { status: 'draft', visibility: 'student', version: 0 });
-  await setDoc(doc(db, 'study_content/sc_review_student'), { status: 'review', visibility: 'student', version: 0 });
-  await setDoc(doc(db, 'study_content/sc_rejected_student'), { status: 'rejected', visibility: 'student', version: 0 });
-  await setDoc(doc(db, 'study_content/sc_archived_student'), { status: 'archived', visibility: 'student', version: 1 });
-  await setDoc(doc(db, 'study_content/sc_missing_vis'), { status: 'published', version: 1 }); // 缺 visibility
-  await setDoc(doc(db, 'study_content/sc_missing_status'), { visibility: 'student', version: 1 }); // 缺 status
-  await setDoc(doc(db, 'study_content/sc_pub_student/versions/1'), { status: 'published', visibility: 'student', snapshot_at: 1 });
-  await setDoc(doc(db, 'study_content_workspace/sc_ws'), { status: 'draft', visibility: 'internal' });
-  await setDoc(doc(db, 'study_topics/tp_pub_student'), { status: 'published', visibility: 'student' });
-  await setDoc(doc(db, 'study_topics/tp_pub_internal'), { status: 'published', visibility: 'internal' });
-  await setDoc(doc(db, 'study_topics/tp_draft_student'), { status: 'draft', visibility: 'student' });
-  await setDoc(doc(db, 'study_topics_workspace/tp_ws'), { status: 'draft', visibility: 'internal' });
+  // Church/Teacher R1：audience 授權（study_content / study_topics / teacher / church / membership）。
+  await setDoc(doc(db, 'churches/A'), { name: 'A教會', active: true });
+  await setDoc(doc(db, 'churches/B'), { name: 'B教會', active: true });
+  await setDoc(doc(db, 'churches/X'), { name: 'X停用', active: false });
+  await setDoc(doc(db, 'memberships/sA'), { uid: 'sA', church_id: 'A', status: 'active' });
+  await setDoc(doc(db, 'memberships/sB'), { uid: 'sB', church_id: 'B', status: 'active' });
+  await setDoc(doc(db, 'memberships/sP'), { uid: 'sP', church_id: 'A', status: 'pending' });
+  await setDoc(doc(db, 'memberships/sR'), { uid: 'sR', church_id: 'A', status: 'revoked' });
+  await setDoc(doc(db, 'study_content/sc_pub'), { status: 'published', audience: 'public', content_type: 'parallel', version: 1 });
+  await setDoc(doc(db, 'study_content/sc_draft_pub'), { status: 'draft', audience: 'public', version: 0 });
+  await setDoc(doc(db, 'study_content/sc_internal'), { status: 'published', audience: 'internal', version: 1 });
+  await setDoc(doc(db, 'study_content/sc_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], version: 1 });
+  await setDoc(doc(db, 'study_content/sc_chA_empty'), { status: 'published', audience: 'church', allowed_church_ids: [], version: 1 });
+  await setDoc(doc(db, 'study_content/sc_missing_aud'), { status: 'published', version: 1 }); // 缺 audience
+  await setDoc(doc(db, 'study_content/sc_missing_status'), { audience: 'public', version: 1 }); // 缺 status
+  await setDoc(doc(db, 'study_content/sc_pub/versions/1'), { status: 'published', audience: 'public', snapshot_at: 1 });
+  await setDoc(doc(db, 'study_content_workspace/sc_ws'), { status: 'draft', audience: 'internal' });
+  await setDoc(doc(db, 'study_topics/tp_pub'), { status: 'published', audience: 'public' });
+  await setDoc(doc(db, 'study_topics/tp_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'] });
+  await setDoc(doc(db, 'study_topics/tp_draft'), { status: 'draft', audience: 'public' });
+  await setDoc(doc(db, 'teacher_books/tb_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], title: '書' });
+  await setDoc(doc(db, 'teacher_books/tb_chA/chapters/tc_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], book_id: 'tb_chA' });
 });
 
 const guest = env.unauthenticatedContext().firestore();
@@ -74,6 +82,12 @@ const student = env.authenticatedContext('student1', { email: 'student@example.c
 const admin = env.authenticatedContext('admin1', { email: ADMIN }).firestore();
 // 以 custom claim admin==true 授權（email 非 legacy）——backward-compatible role path。
 const claimAdmin = env.authenticatedContext('admin2', { email: 'other@example.com', admin: true }).firestore();
+// Church/Teacher R1：不同 membership 狀態的學生（uid 對應 memberships/{uid} 種子）。
+const sNone = env.authenticatedContext('sNone', { email: 'n@e.com' }).firestore();
+const sA = env.authenticatedContext('sA', { email: 'a@e.com' }).firestore();
+const sB = env.authenticatedContext('sB', { email: 'b@e.com' }).firestore();
+const sP = env.authenticatedContext('sP', { email: 'p@e.com' }).firestore();
+const sR = env.authenticatedContext('sR', { email: 'r@e.com' }).firestore();
 
 let passed = 0;
 async function ok(label, p) {
@@ -157,56 +171,62 @@ await ok('student 可寫自己的 users/{uid}',
 await ok('student 不可讀他人 users/{uid}',
   assertFails(getDoc(doc(student, 'users/other/bookmarks/b1'))));
 
-// ---- Study Content：published && visibility==student 才可讀（Published≠Student-visible）----
-await ok('student 可讀 published+student study_content',
-  assertSucceeds(getDoc(doc(student, 'study_content/sc_pub_student'))));
-await ok('guest 可讀 published+student study_content',
-  assertSucceeds(getDoc(doc(guest, 'study_content/sc_pub_student'))));
-await ok('student 不可讀 published+internal study_content',
-  assertFails(getDoc(doc(student, 'study_content/sc_pub_internal'))));
-await ok('student 不可讀 draft+student study_content',
-  assertFails(getDoc(doc(student, 'study_content/sc_draft_student'))));
-await ok('student 不可讀 review+student study_content',
-  assertFails(getDoc(doc(student, 'study_content/sc_review_student'))));
-await ok('student 不可讀 rejected+student study_content',
-  assertFails(getDoc(doc(student, 'study_content/sc_rejected_student'))));
-await ok('student 不可讀 archived+student study_content',
-  assertFails(getDoc(doc(student, 'study_content/sc_archived_student'))));
-await ok('student 不可讀 缺 visibility 的 study_content（fail-closed）',
-  assertFails(getDoc(doc(student, 'study_content/sc_missing_vis'))));
-await ok('student 不可讀 缺 status 的 study_content（fail-closed）',
-  assertFails(getDoc(doc(student, 'study_content/sc_missing_status'))));
-// admin 可讀 internal / 非 published（後台需要）。
-await ok('admin 可讀 published+internal study_content',
-  assertSucceeds(getDoc(doc(admin, 'study_content/sc_pub_internal'))));
-await ok('admin(claim) 可讀 draft study_content',
-  assertSucceeds(getDoc(doc(claimAdmin, 'study_content/sc_draft_student'))));
-// workspace / versions 子集合：學生完全讀不到；admin 可。
-await ok('student 不可讀 study_content_workspace',
-  assertFails(getDoc(doc(student, 'study_content_workspace/sc_ws'))));
-await ok('admin 可讀 study_content_workspace',
-  assertSucceeds(getDoc(doc(admin, 'study_content_workspace/sc_ws'))));
-await ok('student 不可讀 study_content versions 子集合（不得繞過 visibility）',
-  assertFails(getDoc(doc(student, 'study_content/sc_pub_student/versions/1'))));
-await ok('admin 可讀 study_content versions 子集合',
-  assertSucceeds(getDoc(doc(admin, 'study_content/sc_pub_student/versions/1'))));
-// 學生不可寫 study_content（只有 admin）。
-await ok('student 不可寫 study_content',
-  assertFails(setDoc(doc(student, 'study_content/sc_hack'), { status: 'published', visibility: 'student' })));
-await ok('admin 可寫 study_content',
-  assertSucceeds(setDoc(doc(admin, 'study_content/sc_admin'), { status: 'published', visibility: 'internal', version: 1 })));
+// ---- Church/Teacher R1：audience 授權（study_content）----
+// Public：published+public 任何人可讀；draft/internal deny。
+await ok('1 published public → student allow', assertSucceeds(getDoc(doc(sNone, 'study_content/sc_pub'))));
+await ok('  published public → guest allow', assertSucceeds(getDoc(doc(guest, 'study_content/sc_pub'))));
+await ok('2 draft public → deny', assertFails(getDoc(doc(sNone, 'study_content/sc_draft_pub'))));
+await ok('3 published internal → deny', assertFails(getDoc(doc(sA, 'study_content/sc_internal'))));
+// Church A：active A allow；no/pending/rejected/revoked/active-B deny。
+await ok('4 church A + active A → allow', assertSucceeds(getDoc(doc(sA, 'study_content/sc_chA'))));
+await ok('5 church A + no membership → deny', assertFails(getDoc(doc(sNone, 'study_content/sc_chA'))));
+await ok('6 church A + pending A → deny', assertFails(getDoc(doc(sP, 'study_content/sc_chA'))));
+await ok('8 church A + revoked A → deny', assertFails(getDoc(doc(sR, 'study_content/sc_chA'))));
+await ok('9 church A + active B → deny', assertFails(getDoc(doc(sB, 'study_content/sc_chA'))));
+await ok('10 church + empty allowedChurchIds → deny', assertFails(getDoc(doc(sA, 'study_content/sc_chA_empty'))));
+await ok('11 missing audience → deny', assertFails(getDoc(doc(sA, 'study_content/sc_missing_aud'))));
+await ok('   missing status → deny', assertFails(getDoc(doc(sA, 'study_content/sc_missing_status'))));
+await ok('12 by-id cannot bypass (B cannot get chA)', assertFails(getDoc(doc(sB, 'study_content/sc_chA'))));
+// admin bypass。
+await ok('admin 可讀 internal', assertSucceeds(getDoc(doc(admin, 'study_content/sc_internal'))));
+await ok('admin(claim) 可讀 church', assertSucceeds(getDoc(doc(claimAdmin, 'study_content/sc_chA'))));
+// workspace / versions：學生 deny、admin allow。
+await ok('student 不可讀 study_content_workspace', assertFails(getDoc(doc(sA, 'study_content_workspace/sc_ws'))));
+await ok('admin 可讀 study_content_workspace', assertSucceeds(getDoc(doc(admin, 'study_content_workspace/sc_ws'))));
+await ok('student 不可讀 versions 子集合', assertFails(getDoc(doc(sA, 'study_content/sc_pub/versions/1'))));
+await ok('admin 可讀 versions 子集合', assertSucceeds(getDoc(doc(admin, 'study_content/sc_pub/versions/1'))));
+await ok('student 不可寫 study_content', assertFails(setDoc(doc(sA, 'study_content/sc_hack'), { status: 'published', audience: 'public' })));
+await ok('admin 可寫 study_content', assertSucceeds(setDoc(doc(admin, 'study_content/sc_admin'), { status: 'published', audience: 'internal', version: 1 })));
 
-// ---- Study Topic：published && student 才可讀 ----
-await ok('student 可讀 published+student topic',
-  assertSucceeds(getDoc(doc(student, 'study_topics/tp_pub_student'))));
-await ok('student 不可讀 published+internal topic',
-  assertFails(getDoc(doc(student, 'study_topics/tp_pub_internal'))));
-await ok('student 不可讀 draft+student topic',
-  assertFails(getDoc(doc(student, 'study_topics/tp_draft_student'))));
-await ok('student 不可讀 study_topics_workspace',
-  assertFails(getDoc(doc(student, 'study_topics_workspace/tp_ws'))));
-await ok('admin 可讀 study_topics_workspace',
-  assertSucceeds(getDoc(doc(admin, 'study_topics_workspace/tp_ws'))));
+// ---- Study Topic（Option A）----
+await ok('15 topic church A + active A → allow', assertSucceeds(getDoc(doc(sA, 'study_topics/tp_chA'))));
+await ok('16 topic church A + active B → deny', assertFails(getDoc(doc(sB, 'study_topics/tp_chA'))));
+await ok('   topic public → allow', assertSucceeds(getDoc(doc(sNone, 'study_topics/tp_pub'))));
+await ok('   topic draft → deny', assertFails(getDoc(doc(sNone, 'study_topics/tp_draft'))));
+await ok('   student 不可讀 study_topics_workspace', assertFails(getDoc(doc(sA, 'study_topics_workspace/tp_ws'))));
+
+// ---- Teacher hierarchy（17：no metadata leak）----
+await ok('17 teacher book church A + active B → deny', assertFails(getDoc(doc(sB, 'teacher_books/tb_chA'))));
+await ok('   teacher book church A + active A → allow', assertSucceeds(getDoc(doc(sA, 'teacher_books/tb_chA'))));
+await ok('   teacher chapter church A + active B → deny', assertFails(getDoc(doc(sB, 'teacher_books/tb_chA/chapters/tc_chA'))));
+await ok('   teacher chapter church A + active A → allow', assertSucceeds(getDoc(doc(sA, 'teacher_books/tb_chA/chapters/tc_chA'))));
+
+// ---- Churches（public/private split）----
+await ok('active church 可讀', assertSucceeds(getDoc(doc(sNone, 'churches/A'))));
+await ok('21 inactive church 非 admin 不可讀', assertFails(getDoc(doc(sNone, 'churches/X'))));
+await ok('admin 可讀 inactive church', assertSucceeds(getDoc(doc(admin, 'churches/X'))));
+await ok('student 不可讀 church private', assertFails(getDoc(doc(sA, 'churches/A/private/admin'))));
+await ok('student 不可寫 church', assertFails(setDoc(doc(sA, 'churches/A'), { active: true })));
+
+// ---- Membership（self-read / legal pending / no self-approve）----
+await ok('student 可讀自己的 membership', assertSucceeds(getDoc(doc(sA, 'memberships/sA'))));
+await ok('student 不可讀他人 membership', assertFails(getDoc(doc(sA, 'memberships/sB'))));
+await ok('19 student 可建立自己的 pending（active church）', assertSucceeds(setDoc(doc(sNone, 'memberships/sNone'), { uid: 'sNone', church_id: 'A', status: 'pending', reviewed_by: '' })));
+await ok('19b student 不可建立 active（self-approve）', assertFails(setDoc(doc(guest, 'memberships/guestx'), { uid: 'guestx', church_id: 'A', status: 'active', reviewed_by: '' })));
+await ok('21b student 不可用 inactive church 申請', assertFails(setDoc(doc(sB, 'memberships/sB2'), { uid: 'sB2', church_id: 'X', status: 'pending', reviewed_by: '' })));
+await ok('20 student(pending) 不可自己改 active', assertFails(setDoc(doc(sP, 'memberships/sP'), { status: 'active' }, { merge: true })));
+await ok('admin 可 approve membership', assertSucceeds(setDoc(doc(admin, 'memberships/sP'), { status: 'active', reviewed_by: ADMIN }, { merge: true })));
+await ok('student 不可寫 membership history', assertFails(setDoc(doc(sA, 'memberships/sA/history/h1'), { x: 1 })));
 
 await env.cleanup();
 console.log(`\n全部 ${passed} 項 rules 測試通過。`);

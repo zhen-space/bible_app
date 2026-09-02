@@ -17,7 +17,29 @@ import 'knowledge.dart';
 import 'managed_content.dart';
 
 export 'managed_content.dart'
-    show Visibility, ContentStatus, ContentProvenance, AnswerSource;
+    show Visibility, Audience, ContentStatus, ContentProvenance, AnswerSource;
+
+/// 對象授權判斷（Church/Teacher R1）——**受管理內容對 Student 可讀的唯一 authority**。
+/// published 且（public，或 church 且 activeChurchId ∈ allowedChurchIds）。
+/// internal／缺 audience／church 但無授權 → false（fail-closed）。
+bool audienceAuthorized({
+  required ContentStatus status,
+  required Audience? audience,
+  required List<String> allowedChurchIds,
+  required String? activeChurchId,
+}) {
+  if (status != ContentStatus.published) return false;
+  switch (audience) {
+    case Audience.public:
+      return true;
+    case Audience.church:
+      return activeChurchId != null &&
+          allowedChurchIds.contains(activeChurchId);
+    case Audience.internal:
+    case null:
+      return false;
+  }
+}
 
 /// Study Content 型別（R1 正式允許值）。Firestore 序列化用 [wire]。
 ///
@@ -87,6 +109,12 @@ class StudyContentItem {
   final String reviewedBy;
   final int publishedAt;
   final String publishedBy;
+  // Church/Teacher R1：對象授權（Student 唯一 authority）。
+  final Audience? audience;
+  final List<String> allowedChurchIds;
+  // 老師專區 reference（teaching＝study content，掛到 book/chapter）。
+  final String teacherBookId;
+  final String teacherChapterId;
 
   /// 型別化結構資料（legacy 原形／native 專屬欄位），存於 payload 的 `data`。
   final Map<String, dynamic> data;
@@ -111,10 +139,22 @@ class StudyContentItem {
     this.reviewedBy = '',
     this.publishedAt = 0,
     this.publishedBy = '',
+    this.audience,
+    this.allowedChurchIds = const [],
+    this.teacherBookId = '',
+    this.teacherChapterId = '',
     this.data = const {},
   });
 
-  /// 學生可直接讀取的唯一條件（**兩者皆須成立**）。
+  /// **Church/Teacher R1 授權**：對某 activeChurchId 是否可讀（唯一 Student authority）。
+  bool authorizedFor(String? activeChurchId) => audienceAuthorized(
+        status: status,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
+        activeChurchId: activeChurchId,
+      );
+
+  /// legacy（visibility 軸）——僅保留相容，不再是 Church 世界的 authority。
   bool get isStudentVisible =>
       status == ContentStatus.published && visibility == Visibility.student;
 
@@ -124,6 +164,8 @@ class StudyContentItem {
         'scripture_refs': scriptureRefs,
         'topic_ids': topicIds,
         'tags': tags,
+        if (teacherBookId.isNotEmpty) 'teacher_book_id': teacherBookId,
+        if (teacherChapterId.isNotEmpty) 'teacher_chapter_id': teacherChapterId,
         'data': data,
       };
 
@@ -143,6 +185,8 @@ class StudyContentItem {
         publishedAt: publishedAt,
         provenance: provenance,
         visibility: visibility,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
         payload: payload,
       );
 
@@ -170,6 +214,10 @@ class StudyContentItem {
       reviewedBy: c.reviewedBy,
       publishedAt: c.publishedAt,
       publishedBy: c.publishedBy,
+      audience: c.audience, // 缺失 → null（fail-closed）
+      allowedChurchIds: c.allowedChurchIds,
+      teacherBookId: (p['teacher_book_id'] as String?) ?? '',
+      teacherChapterId: (p['teacher_chapter_id'] as String?) ?? '',
       data: ((p['data'] as Map?)?.cast<String, dynamic>()) ?? const {},
     );
   }
@@ -209,6 +257,9 @@ class StudyTopic {
   final String reviewedBy;
   final int publishedAt;
   final String publishedBy;
+  // Church/Teacher R1（Topic 授權採 Option A：與 Study Content 對稱）。
+  final Audience? audience;
+  final List<String> allowedChurchIds;
 
   const StudyTopic({
     required this.id,
@@ -227,7 +278,17 @@ class StudyTopic {
     this.reviewedBy = '',
     this.publishedAt = 0,
     this.publishedBy = '',
+    this.audience,
+    this.allowedChurchIds = const [],
   });
+
+  /// Church/Teacher R1 授權（唯一 Student authority）。
+  bool authorizedFor(String? activeChurchId) => audienceAuthorized(
+        status: status,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
+        activeChurchId: activeChurchId,
+      );
 
   bool get isStudentVisible =>
       status == ContentStatus.published && visibility == Visibility.student;
@@ -253,6 +314,8 @@ class StudyTopic {
         publishedAt: publishedAt,
         provenance: provenance,
         visibility: visibility,
+        audience: audience,
+        allowedChurchIds: allowedChurchIds,
         payload: payload,
       );
 
@@ -260,6 +323,8 @@ class StudyTopic {
         id: c.contentId,
         status: c.status,
         visibility: c.visibility,
+        audience: c.audience,
+        allowedChurchIds: c.allowedChurchIds,
         title: (c.payload['title'] as String?) ?? '',
         description: (c.payload['description'] as String?) ?? '',
         sortOrder: (c.payload['sort_order'] as int?) ?? 0,

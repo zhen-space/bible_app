@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/church.dart';
 import '../models/study_content.dart';
 import 'content_workflow_service.dart';
 
@@ -78,6 +79,95 @@ class StudyContentRepository {
       [for (final d in docs) StudyContentItem.fromDoc(d.id, d.data())]
           // 防禦性：查詢已過濾，這裡再確認一次 domain 條件（fail-closed）。
           .where((i) => i.isStudentVisible)
+          .toList();
+
+  // ==================================================================
+  // Church/Teacher R1：**Authorized Universe**（audience 授權；正式 Student authority）
+  // ==================================================================
+  // 每個查詢自帶授權述詞；rules 逐 doc 再驗。universe = public ∪ my-church；
+  // byType/byTopic/search 一律在**已授權 universe** 上 client 端 narrow
+  // （§12：authorization-first，never fetch-all-then-hide）。
+
+  static const _pub = 'published';
+
+  Query<Map<String, dynamic>> _pubQuery(
+          CollectionReference<Map<String, dynamic>> col) =>
+      col
+          .where('status', isEqualTo: _pub)
+          .where('audience', isEqualTo: Audience.public.name);
+
+  Query<Map<String, dynamic>> _churchQuery(
+          CollectionReference<Map<String, dynamic>> col, String churchId) =>
+      col
+          .where('status', isEqualTo: _pub)
+          .where('audience', isEqualTo: Audience.church.name)
+          .where('allowed_church_ids', arrayContains: churchId);
+
+  /// 目前 User 有權讀的 study content universe（public ∪ active-church）。
+  Future<List<StudyContentItem>> fetchAuthorizedStudyContent(
+      StudentAuth auth) async {
+    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    docs.addAll((await _pubQuery(_content).get()).docs);
+    if (auth.hasChurch) {
+      docs.addAll(
+          (await _churchQuery(_content, auth.activeChurchId!).get()).docs);
+    }
+    final seen = <String>{};
+    final out = <StudyContentItem>[];
+    for (final d in docs) {
+      if (!seen.add(d.id)) continue;
+      final it = StudyContentItem.fromDoc(d.id, d.data());
+      if (it.authorizedFor(auth.activeChurchId)) out.add(it); // 防禦性再驗
+    }
+    return out;
+  }
+
+  /// by-id：即使知道 id，也只在 audience 授權通過時回傳（fail-closed）。
+  Future<StudyContentItem?> fetchAuthorizedStudyContentById(
+      String contentId, StudentAuth auth) async {
+    final d = await _content.doc(contentId).get();
+    if (!d.exists) return null;
+    final it = StudyContentItem.fromDoc(d.id, d.data()!);
+    return it.authorizedFor(auth.activeChurchId) ? it : null;
+  }
+
+  /// byType/byTopic：在**已授權 universe** 上 narrow（不另發未授權 query）。
+  Future<List<StudyContentItem>> fetchAuthorizedByType(
+          StudyContentType type, StudentAuth auth) async =>
+      (await fetchAuthorizedStudyContent(auth))
+          .where((i) => i.contentType == type)
+          .toList();
+
+  Future<List<StudyContentItem>> fetchAuthorizedByTopic(
+          String topicId, StudentAuth auth) async =>
+      (await fetchAuthorizedStudyContent(auth))
+          .where((i) => i.topicIds.contains(topicId))
+          .toList();
+
+  /// 授權主題（Topic Option A：Topic 自帶 audience）。
+  Future<List<StudyTopic>> fetchAuthorizedTopics(StudentAuth auth) async {
+    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+    docs.addAll((await _pubQuery(_topics).get()).docs);
+    if (auth.hasChurch) {
+      docs.addAll(
+          (await _churchQuery(_topics, auth.activeChurchId!).get()).docs);
+    }
+    final seen = <String>{};
+    final out = <StudyTopic>[];
+    for (final d in docs) {
+      if (!seen.add(d.id)) continue;
+      final t = StudyTopic.fromDoc(d.id, d.data());
+      if (t.authorizedFor(auth.activeChurchId)) out.add(t);
+    }
+    out.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    return out;
+  }
+
+  /// 老師專區 teaching（＝study content，掛某 chapter）：授權 universe 上 narrow。
+  Future<List<StudyContentItem>> fetchAuthorizedTeachings(
+          String chapterId, StudentAuth auth) async =>
+      (await fetchAuthorizedStudyContent(auth))
+          .where((i) => i.teacherChapterId == chapterId)
           .toList();
 
   // ---- Admin workflow（包裝既有 ContentWorkflowService；不另造 engine）----

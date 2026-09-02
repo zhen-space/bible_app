@@ -39,6 +39,8 @@ class ContentWorkflowService {
     'archived_at',
     'provenance',
     'visibility',
+    'audience',
+    'allowed_church_ids',
     'versions',
     // legacy 舊欄名（讀取相容；新寫入不再產生）
     'reviewer',
@@ -73,6 +75,9 @@ class ContentWorkflowService {
         'provenance': c.provenance.toMap(),
         // visibility 僅在使用該維度（Study Content）時寫入，null 省略。
         if (c.visibility != null) 'visibility': c.visibility!.name,
+        // audience/allowed_church_ids（Church/Teacher R1），null 省略。
+        if (c.audience != null) 'audience': c.audience!.name,
+        if (c.audience != null) 'allowed_church_ids': c.allowedChurchIds,
       };
 
   // ---- 讀取（管理端）----
@@ -106,12 +111,16 @@ class ContentWorkflowService {
     // Study Content 使用；其餘型別維持 null（不寫 visibility 欄位）。
     // 傳入時覆蓋既有；null 時沿用既有草稿的 visibility（新建則保持 null）。
     Visibility? visibility,
+    // Church/Teacher R1：對象授權。傳入覆蓋既有；null 時沿用既有草稿（新建保持 null）。
+    Audience? audience,
+    List<String>? allowedChurchIds,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await getWorkspace(type, contentId);
     final published = await _published(type).doc(contentId).get();
     final baseVersion = existing?.version ??
         ((published.data()?['version'] as int?) ?? 0);
+    final effAudience = audience ?? existing?.audience;
     final c = ManagedContent(
       contentId: contentId,
       contentType: contentType,
@@ -127,6 +136,9 @@ class ContentWorkflowService {
       publishedAt: existing?.publishedAt ?? 0,
       provenance: provenance,
       visibility: visibility ?? existing?.visibility,
+      audience: effAudience,
+      allowedChurchIds:
+          allowedChurchIds ?? existing?.allowedChurchIds ?? const [],
       payload: payload,
     );
     await _workspace(type).doc(contentId).set(_flat(c));
@@ -163,6 +175,8 @@ class ContentWorkflowService {
       publishedAt: src.publishedAt,
       provenance: src.provenance,
       visibility: src.visibility,
+      audience: src.audience,
+      allowedChurchIds: src.allowedChurchIds,
       payload: src.payload,
     );
     await _workspace(type).doc(contentId).set(_flat(draft));
@@ -225,6 +239,8 @@ class ContentWorkflowService {
       publishedAt: now,
       provenance: ws.provenance,
       visibility: ws.visibility,
+      audience: ws.audience,
+      allowedChurchIds: ws.allowedChurchIds,
       payload: ws.payload,
     ));
     // 舊 Published 快照留存

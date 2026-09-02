@@ -38,6 +38,26 @@ service cloud.firestore {
       return resource.data.status == 'published'
         && resource.data.visibility == 'student';
     }
+    // ---- Church/Teacher R1：audience 授權（受管理內容對 Student 的唯一 authority）----
+    // 目前使用者的 Active Church id（只有 memberships/{uid}.status=='active' 才算數）。
+    function activeChurchId() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/memberships/$(request.auth.uid))
+        && get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.status == 'active'
+        ? get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.church_id
+        : null;
+    }
+    // Student 可讀 ⇔ published 且（public，或 church 且 activeChurchId ∈ allowedChurchIds）。
+    // audience 缺失/'internal'、church 但 allowedChurchIds 空/無授權 → 全 false（fail-closed）。
+    function audienceOK() {
+      return resource.data.status == 'published' && (
+        resource.data.audience == 'public'
+        || (resource.data.audience == 'church'
+            && resource.data.allowed_church_ids is list
+            && activeChurchId() != null
+            && (activeChurchId() in resource.data.allowed_church_ids))
+      );
+    }
 
     // ---- 個人私有資料：只有本人能存取（含所有子集合：bookmarks/highlights/
     //      notes/reading_log/chapter_completions/plan_item_progress/later/
@@ -78,7 +98,7 @@ service cloud.firestore {
     // Published+Internal 學生讀不到。歷史版本子集合與 workspace 皆 admin-only，
     // 學生不得經此繞過 current visibility。
     match /study_content/{doc} {
-      allow read: if isStudentVisible() || isAdmin();
+      allow read: if audienceOK() || isAdmin();
       allow write: if isAdmin();
     }
     match /study_content/{doc}/versions/{vid} {
@@ -87,15 +107,65 @@ service cloud.firestore {
     match /study_content_workspace/{doc} {
       allow read, write: if isAdmin();
     }
-    // Study Topic（正式主題 entity；student visibility 與 content 獨立判定）。
+    // Study Topic（Option A：Topic 自帶 audience，與 Study Content 同 authorization）。
     match /study_topics/{doc} {
-      allow read: if isStudentVisible() || isAdmin();
+      allow read: if audienceOK() || isAdmin();
       allow write: if isAdmin();
     }
     match /study_topics/{doc}/versions/{vid} {
       allow read, write: if isAdmin();
     }
     match /study_topics_workspace/{doc} {
+      allow read, write: if isAdmin();
+    }
+
+    // ---- Church / Membership（Church/Teacher R1）----
+    // churches：只讀 active 的公開表示；私有資料在 churches/{id}/private/**（admin-only）。
+    match /churches/{churchId} {
+      allow read: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /churches/{churchId}/private/{doc} {
+      allow read, write: if isAdmin();
+    }
+    // memberships/{uid}（doc id=uid）：本人可讀自己；本人只能建立自己的 pending
+    // （且不得自設 reviewed/active/rejected/revoked、target church 須 active）；
+    // approve/reject/revoke 只有 admin。
+    match /memberships/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.reviewed_by == ''
+        && exists(/databases/$(database)/documents/churches/$(request.resource.data.church_id))
+        && get(/databases/$(database)/documents/churches/$(request.resource.data.church_id)).data.active == true;
+      // 重新申請：rejected/revoked 的本人可把自己改回 pending（不得自設 active），
+      // target church 須 active。approve/reject/revoke 及其他一律 admin。
+      allow update: if isAdmin()
+        || (isSignedIn() && request.auth.uid == uid
+            && resource.data.status in ['rejected', 'revoked']
+            && request.resource.data.status == 'pending'
+            && request.resource.data.reviewed_by == ''
+            && exists(/databases/$(database)/documents/churches/$(request.resource.data.church_id))
+            && get(/databases/$(database)/documents/churches/$(request.resource.data.church_id)).data.active == true);
+      allow delete: if isAdmin();
+    }
+    match /memberships/{uid}/history/{doc} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // ---- 老師專區結構（audience-gated；teaching body = study_content）----
+    match /teacher_books/{bookId} {
+      allow read: if audienceOK() || isAdmin();
+      allow write: if isAdmin();
+      match /chapters/{chapterId} {
+        allow read: if audienceOK() || isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+    match /teacher_books_workspace/{doc} {
       allow read, write: if isAdmin();
     }
 

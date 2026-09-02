@@ -63,6 +63,33 @@ enum Visibility {
       };
 }
 
+/// 內容對象授權維度（Church/Teacher R1）——**受管理內容對 Student 的唯一 access authority**。
+///
+/// 學生可讀 ⇔ `status==published` 且：
+///  - `public`：全學生可讀；
+///  - `church`：目前 Active Membership 的 churchId ∈ `allowedChurchIds`；
+///  - `internal`：學生永不可讀。
+/// **缺失／未知一律 fail-closed**（[fromName] 回 null，rules 與 repository 視為不可見）。
+/// 不得由 status 或 legacy visibility 推導 audience；`allowedChurchIds` 只在 church 時作 authority。
+enum Audience {
+  public,
+  church,
+  internal;
+
+  static Audience? fromName(String? s) {
+    for (final a in Audience.values) {
+      if (a.name == s) return a;
+    }
+    return null;
+  }
+
+  String get label => switch (this) {
+        Audience.public => '公開',
+        Audience.church => '教會專屬',
+        Audience.internal => '內部',
+      };
+}
+
 /// 內容溯源。
 class ContentProvenance {
   final String source; // 來源說明（例：使用者親撰、公有領域、投稿轉入…）
@@ -104,6 +131,11 @@ class ManagedContent {
   // （annotations/knowledge/daily_verses… 走 isPublished-only 規則），
   // 序列化時省略、不污染既有型別。Study Content 一律非 null。
   final Visibility? visibility;
+  // 對象授權維度（見 [Audience]）——Church/Teacher R1 的 Student authority。
+  // null ＝未使用（序列化省略）；Study Content/Topic/annotation/teacher 一律非 null。
+  final Audience? audience;
+  // audience==church 時的授權教會集合；其餘 audience 不作 authority。
+  final List<String> allowedChurchIds;
   final Map<String, dynamic> payload;
 
   const ManagedContent({
@@ -122,6 +154,8 @@ class ManagedContent {
     this.archivedAt = 0,
     this.provenance = const ContentProvenance(),
     this.visibility,
+    this.audience,
+    this.allowedChurchIds = const [],
     this.payload = const {},
   });
 
@@ -148,6 +182,10 @@ class ManagedContent {
         provenance:
             ContentProvenance.fromMap((m['provenance'] as Map?)?.cast()),
         visibility: Visibility.fromName(m['visibility'] as String?),
+        audience: Audience.fromName(m['audience'] as String?),
+        allowedChurchIds: ((m['allowed_church_ids'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
         payload: ((m['payload'] as Map?)?.cast<String, dynamic>()) ?? const {},
       );
 
@@ -168,6 +206,9 @@ class ManagedContent {
         'provenance': provenance.toMap(),
         // visibility 僅在使用該維度時序列化（null 省略，維持既有型別 doc 形狀）。
         if (visibility != null) 'visibility': visibility!.name,
+        // audience/allowed_church_ids 同理（Church/Teacher R1）。
+        if (audience != null) 'audience': audience!.name,
+        if (audience != null) 'allowed_church_ids': allowedChurchIds,
         'payload': payload,
       };
 }

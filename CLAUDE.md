@@ -229,6 +229,19 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   - Q&A safety contract 未改（human-curated／Published-only／no LLM／no Web／insufficient／pending 不入語料／發佈前 re-validate source published）。
 - 測試：`test/student_cutover_test.dart`（無 knowledge/data fallback、published+student only、主題→內容過濾、AnswerSource access/ref/isStudentOpenable、Q&A 結構化 sources save/load/order/access、legacy scriptures 相容）。全套 flutter test 95／rules 58／analyze clean／兩 build 通過。**Reader 未動、Daily Verse 未重做、無 migration/deploy。**
 
+## Church / Teacher 授權 FOUNDATION（backend，branch `claude/bible-app-setup-xi8bvd`）
+
+依 `docs/CHURCH_TEACHER_BACKEND_CONTRACT_R1.md` 落 **authorization-first 後端基座**（**本輪只 backend＋rules＋indexes＋migration tool＋security tests；Student/Admin/Teacher/Reader UI 未做；無 migration/deploy**）。
+
+- **新 authority＝`audience`**（`public|church|internal`，`models/managed_content.dart` 的 `Audience`）＋`allowedChurchIds`；Student 可讀 ⇔ `status==published` 且（public，或 church 且 **Active Membership churchId ∈ allowedChurchIds**）。internal／缺 audience／church 但空 allowedChurchIds → **fail-closed**。舊 `visibility` 保留但**不再是 Church 世界的 authority**。純授權函式＝`study_content.dart` 的 `audienceAuthorized(...)`。
+- **models**：`ManagedContent` 加 `audience`/`allowedChurchIds`（reservedKeys/_flat 同步，null 省略不污染既有型別）；`StudyContentItem`/`StudyTopic` 加 audience＋`authorizedFor(activeChurchId)`＋teacher reference（`teacherBookId/ChapterId`）；`models/church.dart`（`Church` 公開表示、`Membership` doc-id=uid、`MembershipStatus`、`StudentAuth`）；`models/teacher.dart`（`TeacherBook`/`TeacherChapter`，audience-gated）。
+- **repositories**：`StudyContentRepository` 新增 **Authorized Universe**（`fetchAuthorizedStudyContent/ById/ByType/ByTopic/Topics/Teachings`＝public query ∪ my-church query，byType/byTopic 在**已授權 universe** narrow，**絕不 fetch-all-then-hide**、by-id 也再驗）；`church_repository.dart`＝`ChurchRepository`（active churches、membership self-read/request-pending、admin approve/reject/revoke＋history）、`TeacherRepository`（authorized books/chapters）、`SavedStudyContentRepository`（relationship only、open 走 live authorized resolve）。providers：myMembership/myAuth/activeChurches/authorizedStudyContent/authorizedTopics/church/teacher/saved repos。
+- **rules**（`firestore.rules`）：`audienceOK()`＋`activeChurchId()`（get `memberships/{uid}` 且 status==active）；study_content/study_topics/teacher_books(+chapters) 學生讀 = `audienceOK()||isAdmin()`；churches read active-only＋private admin-only；`memberships/{uid}` self-read＋本人只能建/改回 pending（target church 須 active、不得 self-approve）、admin 才能 approve/reject/revoke；workspace/versions admin-only。**未 deploy。**
+- **indexes**（`firestore.indexes.json`）：study_content/study_topics/teacher_books/chapters 各加 (status,audience)＋(status,audience,allowed_church_ids array-contains)。保留 legacy visibility 索引（UI 尚未 cutover）。**未 deploy。**
+- **migration**：`tools/migrate_audience.mjs`（visibility→audience：student→public、internal→internal、missing→internal fail-closed；**絕不自動產生 church、不擴大 exposure**；dry-run 預設、idempotent、fail-closed）。**部署順序硬性：先 migrate audience → deploy indexes（Ready）→ deploy rules**（否則 legacy 內容 fail-closed 隱藏）。**本輪不執行。**
+- 測試：`test/church_authorization_test.dart`（19 案：audience 純函式矩陣、Authorized Universe public∪church、by-id/byTopic/byType 不洩漏 church B、Topic Option A、teacher hierarchy、membership doc-id=uid 唯一/pending/active/revoke、saved 不授予 access）＋`tools/rules_test.mjs`（+21 → 79 案：spec 25 的授權矩陣）。flutter test 114／rules 79／analyze clean／兩 build 通過。
+- ⛔ 內容仍由使用者親撰。**未做（下一輪 UI）**：Me→教會、Bible→老師專區、Reader annotation 授權呈現、Admin audience/church/membership/teacher UI、Search/My Content 授權整合、annotation audience gating（暫仍 isPublished-only，待 annotation 呈現輪次）。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

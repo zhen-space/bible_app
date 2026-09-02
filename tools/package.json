@@ -10,6 +10,8 @@
     "backfill:apply": "node backfill_status.mjs --apply",
     "migrate:knowledge:dryrun": "node migrate_knowledge.mjs",
     "migrate:knowledge:apply": "node migrate_knowledge.mjs --apply",
+    "migrate:audience:dryrun": "node migrate_audience.mjs",
+    "migrate:audience:apply": "node migrate_audience.mjs --apply",
     "test:rules": "firebase emulators:exec --only firestore \"node rules_test.mjs\""
   },
   "dependencies": {

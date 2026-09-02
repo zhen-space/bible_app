@@ -42,6 +42,74 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "visibility", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "study_content",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "study_content",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" },
+        { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "study_topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "study_topics",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" },
+        { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "teacher_books",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teacher_books",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" },
+        { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
+      ]
+    },
+    {
+      "collectionGroup": "chapters",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "chapters",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "audience", "order": "ASCENDING" },
+        { "fieldPath": "allowed_church_ids", "arrayConfig": "CONTAINS" }
+      ]
     }
   ],
   "fieldOverrides": []
