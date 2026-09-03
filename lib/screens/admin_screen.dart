@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import 'admin_annotation_screen.dart';
 
 /// 內容管理後台（只有管理者帳號看得到入口）。
 /// 在這裡撰寫：整卷導讀/統整、章導讀/章重點、每節註解。
@@ -257,7 +258,7 @@ class AdminChapterScreen extends ConsumerWidget {
                 onTap: () => Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => AdminVerseEditor(
+                    builder: (_) => AdminVerseAnnotationsScreen(
                         book: book, chapter: chapter, verse: v),
                   ),
                 ),
@@ -551,7 +552,13 @@ class AdminVerseEditor extends ConsumerWidget {
       loadValues: () async {
         final ann = await ref.read(chapterAnnotationProvider(
             (bookId: book.id, chapter: chapter)).future);
-        final v = ann.verses[verse];
+        // 此 legacy 編輯器只維護「公開/legacy」節註解（教會註解走新版註解後台）。
+        final list = ann.verses[verse];
+        final v = (list == null || list.isEmpty)
+            ? null
+            : list
+                .firstWhere((x) => !x.isChurch, orElse: () => list.first)
+                .ann;
         return {
           'commentary': v?.commentary ?? '',
           'keywords':

@@ -186,6 +186,23 @@ class VerseAnnotation {
   }
 }
 
+/// Reader 節面板用：**同一節可有零到多筆授權註解**（public 先、church 後）。
+/// 每筆帶自己的 audience 標記（`isChurch`）與 stable id（排序穩定用）。
+/// church 的顯示名稱由 Reader 端以目前 Active Church 名補上（此處不存 church name，
+/// church name 僅供 presentation，非授權依據）。
+class VerseAnnotationView {
+  final int verse;
+  final bool isChurch; // false=公開註釋；true=教會專屬（已授權才會出現）
+  final String annotationId; // 註解 identity（與 verseKey 解耦；排序/除錯用）
+  final VerseAnnotation ann;
+  const VerseAnnotationView({
+    required this.verse,
+    required this.isChurch,
+    required this.annotationId,
+    required this.ann,
+  });
+}
+
 /// 禱告事項（首頁區塊）：分類/子分類/內容，使用者自行增刪，不設打勾。
 /// 禱告事項狀態。
 enum PrayerStatus {

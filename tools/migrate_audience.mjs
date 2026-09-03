@@ -39,6 +39,15 @@ export function audienceFor(doc, { isAnnotation = false } = {}) {
   return 'internal'; // internal / missing / unknown → fail-closed internal
 }
 
+/** Annotation identity 解耦（§5/§16）：legacy 節註解 doc id `verse_{b}_{c}_{v}` → 正式
+ *  scripture lookup 欄位 `verse_key`="b_c_v"。**doc id 保持不變**（不新建 doc、不產生重複、
+ *  不 double-render）——annotation_id＝既有 doc id，verse_key＝節位欄位，兩者正式解耦。
+ *  非節註解（book_/chapter_/其他）回 null（不加 verse_key）。deterministic、idempotent。 */
+export function verseKeyForAnnotationDoc(docId) {
+  const m = /^verse_(\d+)_(\d+)_(\d+)$/.exec(docId);
+  return m ? `${m[1]}_${m[2]}_${m[3]}` : null;
+}
+
 const isMain = import.meta.url === `file://${process.argv[1]}`;
 if (isMain) await main();
 
@@ -78,12 +87,20 @@ async function main() {
     let toPublic = 0, toInternal = 0, skipped = 0;
     const isAnnotation = col.startsWith('annotations');
     for (const doc of snap.docs) {
-      const target = audienceFor(doc.data(), { isAnnotation });
+      const data = doc.data();
+      const target = audienceFor(data, { isAnnotation });
       if (target === null) { skipped++; continue; }
       if (target === 'public') toPublic++; else toInternal++;
+      // annotation：同時補 verse_key（identity 解耦；deterministic，doc id 不變、不建新 doc）。
+      const extra = {};
+      if (isAnnotation && typeof data.verse_key !== 'string') {
+        const vk = verseKeyForAnnotationDoc(doc.id);
+        if (vk) extra.verse_key = vk;
+      }
       if (APPLY) {
-        // additive：只補 audience（＋ allowed_church_ids 空陣列作為結構欄位），不動 visibility。
-        await doc.ref.set({ audience: target, allowed_church_ids: [] }, { merge: true });
+        // additive：補 audience（＋ allowed_church_ids 空陣列作為結構欄位）＋（註解）verse_key，
+        // 不動 visibility、不改 doc id、不新建 doc。
+        await doc.ref.set({ audience: target, allowed_church_ids: [], ...extra }, { merge: true });
       }
     }
     summary.byCollection[col] = { total: snap.size, toPublic, toInternal, skipped };

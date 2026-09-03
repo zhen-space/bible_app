@@ -13,6 +13,7 @@ import '../models/models.dart';
 import '../services/bible_repository.dart';
 import '../services/content_service.dart';
 import '../services/content_workflow_service.dart';
+import '../services/annotation_admin_repository.dart';
 import '../services/study_content_repository.dart';
 import '../services/church_repository.dart';
 import '../models/study_content.dart';
@@ -660,6 +661,21 @@ final adminStudyContentListProvider =
   return ref.watch(studyContentRepositoryProvider).adminListContent();
 });
 
+/// 後台「節註解（多版本／audience）」管理 repository。
+final annotationAdminRepositoryProvider = Provider((ref) =>
+    AnnotationAdminRepository(FirebaseFirestore.instance,
+        ref.watch(contentWorkflowServiceProvider)));
+
+/// 某節的所有 annotation（workspace ∪ published ∪ legacy；後台多版本清單用）。
+final adminVerseAnnotationsProvider = FutureProvider.family<
+    List<AnnotationAdminRow>,
+    ({int book, int chapter, int verse})>((ref, a) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref
+      .watch(annotationAdminRepositoryProvider)
+      .listForVerse(a.book, a.chapter, a.verse);
+});
+
 final adminTopicListProvider =
     FutureProvider<List<AdminTopicRow>>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
@@ -749,9 +765,32 @@ final bookAnnotationProvider =
   return BookAnnotation.fromJson(ContentWorkflowService.payloadOf(doc));
 });
 
-/// 章導讀 + 該章的節註解。**只用雲端 Published**；沒有就空（fail-closed，不退回 asset）。
+/// 從 annotation doc 推導 (bookId, chapter, verse)。
+/// **正式 scripture lookup 欄位＝`verse_key`（"b_c_v"）**；缺 verse_key 時退回解析
+/// legacy doc-id `verse_{b}_{c}_{v}`（migration 前的舊資料相容）。非節註解回 null。
+({int book, int chapter, int verse})? _verseLocOf(
+    String docId, Map<String, dynamic> v) {
+  List<String>? parts;
+  final vk = v['verse_key'];
+  if (vk is String) {
+    parts = vk.split('_');
+  } else if (docId.startsWith('verse_')) {
+    parts = docId.substring('verse_'.length).split('_');
+  }
+  if (parts == null || parts.length != 3) return null;
+  final b = int.tryParse(parts[0]);
+  final c = int.tryParse(parts[1]);
+  final ve = int.tryParse(parts[2]);
+  if (b == null || c == null || ve == null) return null;
+  return (book: b, chapter: c, verse: ve);
+}
+
+/// 章導讀 + 該章的節註解。**只用雲端授權後 Published**；沒有就空（fail-closed，不退回 asset）。
+/// **節註解每節回 `List<VerseAnnotationView>`**（同節可有多筆：public 先、church 後；
+/// 同 audience 內以 annotationId 穩定排序）。church 只會是**已授權**的（provider 的
+/// cloud 來源即 authorized universe，未授權教會的 doc 根本不在其中）。
 final chapterAnnotationProvider = FutureProvider.family<
-    ({ChapterAnnotation? chapter, Map<int, VerseAnnotation> verses}),
+    ({ChapterAnnotation? chapter, Map<int, List<VerseAnnotationView>> verses}),
     ({int bookId, int chapter})>((ref, args) async {
   final cloud = await ref.watch(cloudAnnotationsProvider.future);
 
@@ -760,18 +799,50 @@ final chapterAnnotationProvider = FutureProvider.family<
       ? ChapterAnnotation.fromJson(ContentWorkflowService.payloadOf(cloudChapter))
       : null;
 
-  final verses = <int, VerseAnnotation>{};
-  final prefix = 'verse_${args.bookId}_${args.chapter}_';
-  cloud.forEach((k, v) {
-    if (k.startsWith(prefix)) {
-      final verseNo = int.tryParse(k.substring(prefix.length));
-      if (verseNo != null) {
-        verses[verseNo] =
-            VerseAnnotation.fromJson(ContentWorkflowService.payloadOf(v));
-      }
+  // 先收成扁平 list 再做 deterministic 排序（Map 迭代無序）。
+  final flat = <({int verse, bool isChurch, String id, Map<String, dynamic> doc})>[];
+  cloud.forEach((docId, v) {
+    final loc = _verseLocOf(docId, v);
+    if (loc == null || loc.book != args.bookId || loc.chapter != args.chapter) {
+      return;
     }
+    flat.add((
+      verse: loc.verse,
+      isChurch: v['audience'] == 'church',
+      id: docId,
+      doc: v,
+    ));
   });
+  flat.sort((a, b) {
+    if (a.verse != b.verse) return a.verse.compareTo(b.verse);
+    if (a.isChurch != b.isChurch) return a.isChurch ? 1 : -1; // public 先
+    return a.id.compareTo(b.id); // 同 audience 內穩定
+  });
+  final verses = <int, List<VerseAnnotationView>>{};
+  for (final r in flat) {
+    (verses[r.verse] ??= <VerseAnnotationView>[]).add(VerseAnnotationView(
+      verse: r.verse,
+      isChurch: r.isChurch,
+      annotationId: r.id,
+      ann: VerseAnnotation.fromJson(ContentWorkflowService.payloadOf(r.doc)),
+    ));
+  }
   return (chapter: chapter, verses: verses);
+});
+
+/// 目前 Active Church 的顯示名稱（Reader「教會專屬」標題用；純 presentation）。
+/// 無 active membership／取不到 → null（此時 Reader 也不會有 church 註解可顯示）。
+final activeChurchNameProvider = FutureProvider<String?>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return null;
+  final m = await ref.watch(myMembershipProvider.future);
+  final id = m?.activeChurchId;
+  if (id == null) return null;
+  try {
+    final church = await ref.watch(churchRepositoryProvider).fetchChurch(id);
+    return church?.name;
+  } catch (_) {
+    return null;
+  }
 });
 
 /// 是否為管理者（同步；後台入口顯示條件）。**backward-compatible**：

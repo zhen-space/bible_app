@@ -39,6 +39,11 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'annotations/book_1'), { status: 'published', audience: 'public', version: 1, content_type: 'book_guide', content_id: 'book_1' });
   await setDoc(doc(db, 'annotations/ann_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], version: 1 });
   await setDoc(doc(db, 'annotations/ann_noaud'), { status: 'published', version: 1 }); // 缺 audience → fail-closed
+  // 同一節（verse_key 1_1_1）public + church A + church B 三筆共存（multi-doc identity）。
+  await setDoc(doc(db, 'annotations/ann_v111_pub'), { status: 'published', audience: 'public', verse_key: '1_1_1', version: 1 });
+  await setDoc(doc(db, 'annotations/ann_v111_chA'), { status: 'published', audience: 'church', allowed_church_ids: ['A'], verse_key: '1_1_1', version: 1 });
+  await setDoc(doc(db, 'annotations/ann_v111_chB'), { status: 'published', audience: 'church', allowed_church_ids: ['B'], verse_key: '1_1_1', version: 1 });
+  await setDoc(doc(db, 'annotations/ann_v111_chEmpty'), { status: 'published', audience: 'church', allowed_church_ids: [], verse_key: '1_1_1', version: 1 });
   await setDoc(doc(db, 'annotations/book_2_draft'), { status: 'draft', version: 0 });
   await setDoc(doc(db, 'annotations/book_3_review'), { status: 'review', version: 0 });
   await setDoc(doc(db, 'annotations/book_4_rejected'), { status: 'rejected', version: 0 });
@@ -239,6 +244,16 @@ await ok('annotation church A + active A → allow', assertSucceeds(getDoc(doc(s
 await ok('7 annotation church A + active B → deny', assertFails(getDoc(doc(sB, 'annotations/ann_chA'))));
 await ok('annotation church A + no membership → deny', assertFails(getDoc(doc(sNone, 'annotations/ann_chA'))));
 await ok('annotation 缺 audience → deny（fail-closed）', assertFails(getDoc(doc(sA, 'annotations/ann_noaud'))));
+// ---- 同節 public + church 共存（multi-doc）：逐 doc 授權，rules 才是邊界 ----
+await ok('coexist: 同節 public → active A allow', assertSucceeds(getDoc(doc(sA, 'annotations/ann_v111_pub'))));
+await ok('coexist: 同節 church A → active A allow', assertSucceeds(getDoc(doc(sA, 'annotations/ann_v111_chA'))));
+await ok('coexist: 同節 public → active B allow', assertSucceeds(getDoc(doc(sB, 'annotations/ann_v111_pub'))));
+await ok('coexist: 同節 church B → active B allow', assertSucceeds(getDoc(doc(sB, 'annotations/ann_v111_chB'))));
+await ok('coexist: 同節 church A → active B deny（by-id 不可 bypass）', assertFails(getDoc(doc(sB, 'annotations/ann_v111_chA'))));
+await ok('coexist: 同節 church B → active A deny', assertFails(getDoc(doc(sA, 'annotations/ann_v111_chB'))));
+await ok('coexist: 同節 church A → no membership deny，只 public', assertFails(getDoc(doc(sNone, 'annotations/ann_v111_chA'))));
+await ok('coexist: 同節 public → no membership allow', assertSucceeds(getDoc(doc(sNone, 'annotations/ann_v111_pub'))));
+await ok('coexist: church 空 allowedChurchIds → active A deny（fail-closed）', assertFails(getDoc(doc(sA, 'annotations/ann_v111_chEmpty'))));
 
 // ---- Membership self-switch bypass 封死（§2 A–H）----
 // D active A → pending B：DENY

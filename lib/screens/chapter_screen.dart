@@ -15,6 +15,13 @@ import '../utils/share_utils.dart';
 import '../theme/app_theme.dart';
 import 'search_screen.dart';
 
+/// 節註解「區塊標題」（annotation 呈現用，純函式，可測）：
+/// public → 「公開註釋」；church → 「[目前教會名] · 教會專屬」（無名時退回「教會」）。
+/// **church 只會是已授權的**（未授權教會的 doc 不在 Reader 的 authorized universe）。
+String annotationSectionLabel(bool isChurch, String? churchName) => isChurch
+    ? '${(churchName == null || churchName.isEmpty) ? '教會' : churchName} · 教會專屬'
+    : '公開註釋';
+
 /// 讀經畫面：一次一章，左右滑或按鈕換章，點經節開操作選單。
 /// 支援兩種閱讀模式（逐節／整章）、章前導讀、章後統整、每節註解。
 class ChapterScreen extends ConsumerStatefulWidget {
@@ -371,7 +378,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             .watch(chapterAnnotationProvider(
                 (bookId: _bookId, chapter: _chapter)))
             .value;
-        final verseAnns = ann?.verses ?? const <int, VerseAnnotation>{};
+        final verseAnns =
+            ann?.verses ?? const <int, List<VerseAnnotationView>>{};
+        // 教會專屬註釋標題用（純 presentation，非授權依據）——先預熱。
+        ref.watch(activeChurchNameProvider);
         // 段落標題：來自章導讀的「分段」欄（後台可編輯），如「1-8 各支派在營地的位置」
         final headings = headingsFromOutline(ann?.chapter?.outline ?? const []);
         // 預抓本章社群註解（審核通過的公開投稿）
@@ -503,7 +513,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             _toggleSelect(verseNo);
                           } else {
                             _showVerseActions(books, book, verseNo, verses[i],
-                                marks, verseAnns[verseNo]);
+                                marks, verseAnns[verseNo] ?? const []);
                           }
                         },
                         onLongPress: () => _toggleSelect(verseNo),
@@ -552,7 +562,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             verseNo,
                             verses[verseNo - 1],
                             marks,
-                            verseAnns[verseNo]),
+                            verseAnns[verseNo] ?? const []),
                       ),
                       if (bookSummary != null)
                         _BookSummaryCard(
@@ -842,7 +852,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   }
 
   void _showVerseActions(List<Book> books, Book book, int verseNo, String text,
-      ChapterMarks marks, VerseAnnotation? annotation) {
+      ChapterMarks marks, List<VerseAnnotationView> anns) {
+    // 目前 Active Church 名（教會專屬標題用；純 presentation，非授權依據）。
+    final churchName = ref.read(activeChurchNameProvider).value;
     final db = ref.read(databaseServiceProvider);
     final highlightLabels = ref.read(highlightLabelsProvider);
     final isBookmarked = marks.bookmarks.contains(verseNo);
@@ -887,11 +899,27 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       .bodySmall
                       ?.copyWith(color: scheme.outline)),
             );
+        // 每筆註解的區塊標題：public → 公開註釋；church → [教會名] · 教會專屬。
+        // （church 只會是已授權的；未授權教會的 doc 根本不在 anns 裡。）
+        Widget sectionHeader(VerseAnnotationView v) {
+          final label = annotationSectionLabel(v.isChurch, churchName);
+          final color = v.isChurch ? scheme.primary : scheme.secondary;
+          return Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 6),
+            child: Row(children: [
+              Icon(v.isChurch ? Icons.church_outlined : Icons.public,
+                  size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(label,
+                  style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
+                      color: color, fontWeight: FontWeight.w600)),
+            ]),
+          );
+        }
 
         return FractionallySizedBox(
-          heightFactor: annotation != null || publicNotes.isNotEmpty
-              ? 0.82
-              : 0.6,
+          heightFactor:
+              anns.isNotEmpty || publicNotes.isNotEmpty ? 0.82 : 0.6,
           child: DefaultTabController(
             length: 4,
             child: Column(
@@ -1035,91 +1063,120 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 Expanded(
                   child: TabBarView(
                     children: [
-                      // 字義：注釋 + 關鍵字
-                      if (annotation?.commentary == null &&
-                          (annotation?.keywords.isEmpty ?? true))
-                        empty('此節尚無字義註釋（內容待補）')
-                      else
-                        ListView(
+                      // 字義：注釋 + 關鍵字（同節多筆，public 先 church 後，各自區塊）
+                      Builder(builder: (_) {
+                        final items = anns
+                            .where((v) =>
+                                v.ann.commentary != null ||
+                                v.ann.keywords.isNotEmpty)
+                            .toList();
+                        if (items.isEmpty) {
+                          return empty('此節尚無字義註釋（內容待補）');
+                        }
+                        return ListView(
                           padding: const EdgeInsets.all(16),
                           children: [
-                            if (annotation!.commentary != null)
-                              Text(annotation.commentary!,
-                                  style: const TextStyle(height: 1.8)),
-                            if (annotation.keywords.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              for (final k in annotation.keywords)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(bottom: 6),
-                                  child: Text.rich(TextSpan(children: [
-                                    TextSpan(
-                                        text: '${k.word}　',
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.bold)),
-                                    TextSpan(
-                                        text: k.note,
-                                        style:
-                                            const TextStyle(height: 1.6)),
-                                  ])),
-                                ),
-                            ],
-                            if (annotation.updatedAt != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 12),
-                                child: Text(
-                                    '註解更新於 ${_ymdOf(annotation.updatedAt!)}',
-                                    style: Theme.of(ctx)
-                                        .textTheme
-                                        .labelSmall
-                                        ?.copyWith(color: scheme.outline)),
-                              ),
-                          ],
-                        ),
-                      // 背景
-                      annotation?.background == null
-                          ? empty('此節尚無背景說明（內容待補）')
-                          : ListView(
-                              padding: const EdgeInsets.all(16),
-                              children: [
-                                Text(annotation!.background!,
+                            for (final v in items) ...[
+                              sectionHeader(v),
+                              if (v.ann.commentary != null)
+                                Text(v.ann.commentary!,
                                     style: const TextStyle(height: 1.8)),
-                              ],
-                            ),
-                      // 應用
-                      annotation?.application == null
-                          ? empty('此節尚無生活應用（內容待補）')
-                          : ListView(
-                              padding: const EdgeInsets.all(16),
-                              children: [
-                                if (annotation!.applicationCategory != null)
+                              if (v.ann.keywords.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                for (final k in v.ann.keywords)
                                   Padding(
                                     padding:
                                         const EdgeInsets.only(bottom: 6),
-                                    child: Text(
-                                        '分類：${annotation.applicationCategory}',
-                                        style: Theme.of(ctx)
-                                            .textTheme
-                                            .labelLarge),
+                                    child: Text.rich(TextSpan(children: [
+                                      TextSpan(
+                                          text: '${k.word}　',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold)),
+                                      TextSpan(
+                                          text: k.note,
+                                          style:
+                                              const TextStyle(height: 1.6)),
+                                    ])),
                                   ),
-                                Text(annotation.application!,
-                                    style: const TextStyle(height: 1.8)),
                               ],
-                            ),
-                      // 相關：交叉引用 + 社群註解
+                              if (v.ann.updatedAt != null)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 12),
+                                  child: Text(
+                                      '註解更新於 ${_ymdOf(v.ann.updatedAt!)}',
+                                      style: Theme.of(ctx)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(color: scheme.outline)),
+                                ),
+                              const SizedBox(height: 18),
+                            ],
+                          ],
+                        );
+                      }),
+                      // 背景
+                      Builder(builder: (_) {
+                        final items = anns
+                            .where((v) => v.ann.background != null)
+                            .toList();
+                        if (items.isEmpty) {
+                          return empty('此節尚無背景說明（內容待補）');
+                        }
+                        return ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            for (final v in items) ...[
+                              sectionHeader(v),
+                              Text(v.ann.background!,
+                                  style: const TextStyle(height: 1.8)),
+                              const SizedBox(height: 18),
+                            ],
+                          ],
+                        );
+                      }),
+                      // 應用
+                      Builder(builder: (_) {
+                        final items = anns
+                            .where((v) => v.ann.application != null)
+                            .toList();
+                        if (items.isEmpty) {
+                          return empty('此節尚無生活應用（內容待補）');
+                        }
+                        return ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            for (final v in items) ...[
+                              sectionHeader(v),
+                              if (v.ann.applicationCategory != null)
+                                Padding(
+                                  padding:
+                                      const EdgeInsets.only(bottom: 6),
+                                  child: Text(
+                                      '分類：${v.ann.applicationCategory}',
+                                      style: Theme.of(ctx)
+                                          .textTheme
+                                          .labelLarge),
+                                ),
+                              Text(v.ann.application!,
+                                  style: const TextStyle(height: 1.8)),
+                              const SizedBox(height: 18),
+                            ],
+                          ],
+                        );
+                      }),
+                      // 相關：交叉引用（同節多筆各自區塊）+ 社群註解
                       ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
-                          if (annotation != null &&
-                              annotation.crossRefs.isNotEmpty) ...[
-                            Text('相關經文',
-                                style: Theme.of(ctx).textTheme.labelLarge),
+                          for (final v
+                              in anns.where((v) => v.ann.crossRefs.isNotEmpty)) ...[
+                            sectionHeader(v),
                             const SizedBox(height: 8),
                             Wrap(
                               spacing: 8,
                               runSpacing: 8,
                               children: [
-                                for (final r in annotation.crossRefs)
+                                for (final r in v.ann.crossRefs)
                                   ActionChip(
                                     avatar: const Icon(Icons.link, size: 16),
                                     label: Text(r),
@@ -1163,8 +1220,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                                 ),
                               ),
                           ],
-                          if ((annotation == null ||
-                                  annotation.crossRefs.isEmpty) &&
+                          if (anns.every((v) => v.ann.crossRefs.isEmpty) &&
                               publicNotes.isEmpty)
                             Padding(
                               padding: const EdgeInsets.only(top: 40),
