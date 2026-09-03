@@ -147,6 +147,28 @@ class TeacherRepository {
     return out;
   }
 
+  // ---- Admin（含未發佈；rules 限管理員）----
+  Future<List<TeacherBook>> adminListBooks() async {
+    final s = await _books.get();
+    return [for (final d in s.docs) TeacherBook.fromDoc(d.id, d.data())]
+      ..sort((a, b) => a.order.compareTo(b.order));
+  }
+
+  Future<List<TeacherChapter>> adminListChapters(String bookId) async {
+    final s = await _books.doc(bookId).collection('chapters').get();
+    return [for (final d in s.docs) TeacherChapter.fromDoc(d.id, d.data())]
+      ..sort((a, b) => a.order.compareTo(b.order));
+  }
+
+  Future<void> saveBook(TeacherBook b) =>
+      _books.doc(b.id).set(b.toMap(), SetOptions(merge: true));
+
+  Future<void> saveChapter(TeacherChapter c) => _books
+      .doc(c.bookId)
+      .collection('chapters')
+      .doc(c.id)
+      .set(c.toMap(), SetOptions(merge: true));
+
   Future<List<TeacherChapter>> fetchAuthorizedChapters(
       String bookId, StudentAuth auth) async {
     final col = _books.doc(bookId).collection('chapters');

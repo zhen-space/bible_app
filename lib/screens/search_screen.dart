@@ -4,15 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/entities.dart';
-import '../data/topics.dart';
-import '../models/knowledge.dart';
 import '../models/models.dart';
+import '../models/study_content.dart';
 import '../providers/providers.dart';
-import '../services/app_links.dart';
+import '../services/qa_service.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
-import 'topics_screen.dart';
+import 'qa_screen.dart' show QuestionDetailScreen;
+import 'study_content_screen.dart';
 
 /// 全文搜尋 + 節位快速跳轉（約3:16）+ 搜尋歷史。
 class SearchScreen extends ConsumerStatefulWidget {
@@ -25,7 +25,10 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   List<VerseRef> _results = [];
-  List<Topic> _topics = [];
+  // Church/Teacher R1：「內容」＝授權後的 study content（含 teacher teaching）＋Q&A。
+  // **不再依賴 legacy knowledge/data 或 hard-coded topics。**
+  List<StudyContentItem> _content = [];
+  List<Question> _qa = [];
   List<BibleEntity> _entities = [];
   ({int bookId, int chapter, int? verse})? _jump;
   bool _searched = false;
@@ -45,33 +48,38 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _search(String q) async {
     final books = await ref.read(booksProvider.future);
+    final term = q.trim();
+    // 「內容」＝**已授權 universe FIRST**（public ∪ my-church）→ 再 client 端文字比對。
+    // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
+    final universe = await ref.read(authorizedStudyContentProvider.future);
+    final questions = await ref.read(publishedQuestionsProvider('').future);
     if (!mounted) return;
+    bool hit(String s) => term.isNotEmpty && s.contains(term);
     setState(() {
       _jump = VerseLocator.parse(q, books);
-      _topics = [
-        for (final t in [...topics, ...situations])
-          if (t.name.contains(q.trim()) || q.trim().contains(t.name)) t,
-      ];
       _entities = searchEntities(q);
-      // 濾掉「只是更長人名一部分」的誤配（搜「以利亞」不列「以利亞撒」的節）
+      _content = term.isEmpty
+          ? const []
+          : universe
+              .where((i) =>
+                  hit(i.title) ||
+                  hit(i.body) ||
+                  i.tags.any(hit) ||
+                  i.scriptureRefs.any(hit))
+              .toList();
+      _qa = term.isEmpty
+          ? const []
+          : questions
+              .where((question) =>
+                  hit(question.title) || hit(question.body))
+              .toList();
       _results = ref
           .read(bibleRepositoryProvider)
           .search(q)
-          .where((r) => !queryOnlyInsideLongerName(r.text, q.trim()))
+          .where((r) => !queryOnlyInsideLongerName(r.text, term))
           .toList();
-      _searched = q.trim().isNotEmpty;
+      _searched = term.isNotEmpty;
     });
-  }
-
-  /// 原子化關聯：搜尋到的「人物」若在知識庫（knowledge.people）有同名/別名
-  /// 條目，回傳其唯一 id，讓結果列一鍵跨到人物生平頁。
-  String? _personIdFor(BibleEntity e) {
-    if (e.type != EntityType.person) return null;
-    final kb = ref.read(knowledgeProvider).value ?? KnowledgeBase.empty;
-    for (final p in kb.people) {
-      if (p.name == e.name || p.aka.contains(e.name)) return p.id;
-    }
-    return null;
   }
 
   void _openChapter(int bookId, int chapter, {int? verse}) {
@@ -113,6 +121,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 _controller.clear();
                 setState(() {
                   _results = [];
+                  _content = [];
+                  _qa = [];
+                  _entities = [];
                   _jump = null;
                   _searched = false;
                 });
@@ -132,7 +143,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           }
           if (_jump == null &&
               _results.isEmpty &&
-              _topics.isEmpty &&
+              _content.isEmpty &&
+              _qa.isEmpty &&
               _entities.isEmpty) {
             return const Center(child: Text('沒有找到符合的結果'));
           }
@@ -146,22 +158,41 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       _jump!.bookId, _jump!.chapter,
                       verse: _jump!.verse),
                 ),
-              // 主題
-              if (_topics.isNotEmpty) ...[
-                const _SectionLabel('主題'),
-                for (final t in _topics)
+              // 內容（授權後的研讀內容／老師教導；church B 不會出現）
+              if (_content.isNotEmpty) ...[
+                const _SectionLabel('內容'),
+                for (final i in _content)
                   ListTile(
-                    leading: Text(t.emoji,
-                        style: const TextStyle(fontSize: 22)),
-                    title: Text(t.name),
+                    leading: const Icon(Icons.auto_stories_outlined),
+                    title: Text(i.title.isEmpty ? '(未命名)' : i.title),
+                    subtitle: Text([
+                      studyTypeLabel(i.contentType),
+                      if (i.teacherChapterId.isNotEmpty) '老師專區',
+                      if (i.audience == Audience.church) '教會專屬',
+                    ].join('・')),
                     onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => TopicDetailScreen(topic: t)),
-                    ),
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                StudentStudyContentDetail(item: i))),
                   ),
               ],
-              // 人物／地點／事件（人物若在知識庫有生平頁，可一鍵跨過去）
+              // 問答
+              if (_qa.isNotEmpty) ...[
+                const _SectionLabel('問答'),
+                for (final question in _qa)
+                  ListTile(
+                    leading: const Icon(Icons.forum_outlined),
+                    title: Text(question.title),
+                    subtitle: const Text('聖經／信仰問答'),
+                    onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) =>
+                                QuestionDetailScreen(id: question.id))),
+                  ),
+              ],
+              // 人物・地點・事件（名稱索引；非 knowledge/data）
               if (_entities.isNotEmpty) ...[
                 const _SectionLabel('人物・地點・事件'),
                 for (final e in _entities)
@@ -169,14 +200,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     leading: Icon(_entityIcon(e.type)),
                     title: Text(e.name),
                     subtitle: Text('${entityTypeLabel(e.type)}　找出全部出現處'),
-                    trailing: _personIdFor(e) != null
-                        ? IconButton(
-                            icon: const Icon(Icons.person_search),
-                            tooltip: '人物生平頁',
-                            onPressed: () => AppLinks.openPerson(
-                                context, _personIdFor(e)!),
-                          )
-                        : null,
                     onTap: () {
                       _controller.text = e.name;
                       _search(e.name);

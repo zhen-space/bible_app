@@ -17,6 +17,7 @@ import '../services/study_content_repository.dart';
 import '../services/church_repository.dart';
 import '../models/study_content.dart';
 import '../models/church.dart';
+import '../models/teacher.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
 import '../services/qa_service.dart';
@@ -446,6 +447,65 @@ final myAuthProvider = FutureProvider<StudentAuth>((ref) async {
   return StudentAuth.from(m);
 });
 
+// ---- 老師專區（授權 aware）----
+
+final authorizedTeacherBooksProvider =
+    FutureProvider<List<TeacherBook>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref.watch(teacherRepositoryProvider).fetchAuthorizedBooks(auth);
+});
+
+final authorizedTeacherChaptersProvider =
+    FutureProvider.family<List<TeacherChapter>, String>((ref, bookId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref
+      .watch(teacherRepositoryProvider)
+      .fetchAuthorizedChapters(bookId, auth);
+});
+
+final authorizedTeachingsProvider =
+    FutureProvider.family<List<StudyContentItem>, String>((ref, chapterId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .fetchAuthorizedTeachings(chapterId, auth);
+});
+
+/// 老師專區入口是否顯示：**至少存在一個完整 authorized hierarchy**
+/// （authorized book → authorized chapter → authorized teaching）。
+/// 只有 unauthorized 資料時**不顯示**（不因 private metadata 曝光入口）。
+final teacherEntryVisibleProvider = FutureProvider<bool>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return false;
+  final auth = await ref.watch(myAuthProvider.future);
+  final scRepo = ref.watch(studyContentRepositoryProvider);
+  final tRepo = ref.watch(teacherRepositoryProvider);
+  final books = await tRepo.fetchAuthorizedBooks(auth);
+  for (final b in books) {
+    final chapters = await tRepo.fetchAuthorizedChapters(b.id, auth);
+    for (final c in chapters) {
+      final teachings = await scRepo.fetchAuthorizedTeachings(c.id, auth);
+      if (teachings.isNotEmpty) return true;
+    }
+  }
+  return false;
+});
+
+// Admin 老師專區。
+final adminTeacherBooksProvider =
+    FutureProvider<List<TeacherBook>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(teacherRepositoryProvider).adminListBooks();
+});
+
+final adminTeacherChaptersProvider =
+    FutureProvider.family<List<TeacherChapter>, String>((ref, bookId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(teacherRepositoryProvider).adminListChapters(bookId);
+});
+
 /// active churches（Picker）。
 final activeChurchesProvider = FutureProvider<List<Church>>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
@@ -616,25 +676,32 @@ Future<void> _writeCache(String key, Map<String, dynamic> data) async {
   } catch (_) {} // 快取失敗不影響功能
 }
 
-/// 雲端內容層：annotations collection 的 **Published** doc（#8/#10 fail-closed）。
-/// 線上只抓 `status=='published'`，抓到就把「已確認 Published 的版本」寫入快取；
-/// 離線退回上次的 Published 快取；都沒有 → 空（**不得退回未驗證的 asset/草稿**）。
+/// 雲端內容層：annotations collection 的**授權後** doc（Church/Teacher R1）。
+/// 線上取 public ∪ my-active-church；**只把 public 子集寫入快取**（church-private 不落地，
+/// 符合「offline 不得存取 church-private」）。離線 → 只回快取 public。Reader core 不變，
+/// 只是資料來源改為 authorized（無 membership／offline → 只有 public）。
 final cloudAnnotationsProvider =
     FutureProvider<Map<String, Map<String, dynamic>>>((ref) async {
-  const cacheKey = 'cache_annotations_published';
+  const cacheKey = 'cache_annotations_public';
   if (ref.watch(firebaseReadyProvider)) {
     try {
-      final fresh = await ref.watch(contentServiceProvider).fetchAllPublished();
-      await _writeCache(cacheKey, fresh); // 只快取 Published
+      final auth = await ref.watch(myAuthProvider.future);
+      final fresh =
+          await ref.watch(contentServiceProvider).fetchAuthorizedAnnotations(auth);
+      // 只快取 public（church-private 絕不落地）。
+      final publicOnly = <String, Map<String, dynamic>>{
+        for (final e in fresh.entries)
+          if (e.value['audience'] == 'public') e.key: e.value,
+      };
+      await _writeCache(cacheKey, publicOnly);
       return fresh;
     } catch (_) {
-      // 落到下方 Published 快取
+      // 落到下方 public 快取
     }
   }
   final cached = await _readCache(cacheKey);
   if (cached == null) return const {};
-  return cached.map((k, v) =>
-      MapEntry(k, (v as Map).cast<String, dynamic>()));
+  return cached.map((k, v) => MapEntry(k, (v as Map).cast<String, dynamic>()));
 });
 
 /// 整卷書的導讀＋統整（獨立標籤方格用）。**只用雲端 Published**；

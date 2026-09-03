@@ -43,6 +43,15 @@ class TeacherBook {
             .map((e) => e.toString())
             .toList(),
       );
+
+  Map<String, dynamic> toMap() => {
+        'title': title,
+        'description': description,
+        'order': order,
+        'status': status.name,
+        if (audience != null) 'audience': audience!.name,
+        'allowed_church_ids': allowedChurchIds,
+      };
 }
 
 class TeacherChapter {
@@ -83,4 +92,13 @@ class TeacherChapter {
             .map((e) => e.toString())
             .toList(),
       );
+
+  Map<String, dynamic> toMap() => {
+        'book_id': bookId,
+        'title': title,
+        'order': order,
+        'status': status.name,
+        if (audience != null) 'audience': audience!.name,
+        'allowed_church_ids': allowedChurchIds,
+      };
 }

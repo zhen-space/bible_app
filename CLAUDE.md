@@ -255,7 +255,17 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **Student**：`me_screen` 加「教會」→ `church_screen.dart`（`ChurchMembershipScreen` 五狀態 none/pending/active/rejected/revoked，前端不得 self-approve/switch/revoke；`ChurchPickerScreen` 只列 active、確認文案「申請加入」非立即授權）。研讀內容/主題**正式 cutover 到 authorized providers**（`authorizedStudyContentProvider`/`authorizedTopicsProvider`/`authorizedStudyContentByTopicProvider`，不再用 legacy visibility universe）；church item 顯示「教會專屬」badge（不暴露 allowedChurchIds）。Saved：Detail 加書籤 toggle（`users/{uid}/saved_study_content`，非 verse Bookmark）＋`SavedStudyContentScreen`（live authorized resolve，revoked→「目前無法存取」＋可移除，不回 cache 全文）＋My Content 入口。Q&A open-path 已走 authorized by-id。
 - **Admin**：dashboard 加「教會與教師」→ `admin_church_screen.dart`（Churches list/create/edit/active toggle；Membership Requests approve/reject，doc-id=uid 結構性防第二 active）。Study Content 編輯器**audience 選擇器**（public/church/internal＋active-church multi-picker），audience 為 authoring authority、visibility 由 audience 派生；church+空 church submit 阻擋（UI＋service 雙層）；public 發布 exposure warning。
 - 測試：`test/church_admin_test.dart`。flutter test 123／rules 91（未改）／analyze clean／兩 build 通過。
-- **仍未做（下一增量）**：Teacher Area（student+admin）、Search 正式 cutover、Reader annotation 呈現、onboarding church step、Admin Topics/annotation audience 編輯器、Q&A admin source badge、offline/logout cache UI 硬化、widget 層測試。皆 foundation fail-closed 保護，非阻斷。
+- **UI COMPLETION 已補**（見下）。
+
+### UI COMPLETION（Teacher Area／Search cutover／Reader annotation／Q&A church／Admin Topic audience）
+- **Teacher Area（Student）**：`teacher_area_screen.dart`＝TeacherAreaScreen/BookDetail/ChapterScreen；teaching 點擊 reuse StudentStudyContentDetail（不建第二套）。Bible Hub「理解」入口 **conditional**（`teacherEntryVisibleProvider`：至少一個完整 authorized book→chapter→teaching 才顯示；只有 unauthorized 資料時不顯示）。church badge。
+- **Admin Teacher**：`admin_teacher_screen.dart`＝Books/Chapters CRUD＋order＋audience（public/church/internal，church 只從 Active Churches picker、空 church 阻擋）；**Add Teaching＝建立 Study Content Draft**（帶 teacher_book_id/teacher_chapter_id，走既有 Draft→Review→Published，不建 teacher_teachings CMS）。
+- **Reader annotation**：`cloudAnnotationsProvider` 改讀 `fetchAuthorizedAnnotations`（public ∪ my-church）；**只快取 public**（church-private 不落地 → offline 只有 public）。**Reader core 完全未動**（只換資料來源）。
+- **Search cutover**：`search_screen.dart` 新增「內容」＝authorized study content（含 teacher teaching）＋Q&A（authorized universe FIRST → 文字比對，church B 永不進 count/title/preview）；**移除 legacy 硬編 topics 與 knowledge person-link**（entities 名稱索引保留）。
+- **Q&A church citation**：AnswerSource.access 依 audience 快照（public/church/internal）；student 端 church source **open-time live-resolve**（授權→可點「教會專屬」；否則「目前無法存取」不可點，不 pre-render body）；admin picker 顯示 audience badge。
+- **Admin Topic audience**：TopicEditor 改 audience 選擇器＋church picker（同 Study Content；service `_assertChurchPublishable` 已擋 church+空）。
+- 測試：church_admin_test 加 teacher。flutter test 124／rules 91／analyze clean／兩 build 通過。
+- **仍未做（明確 deferred，皆 foundation fail-closed 保護、無 leak）**：Admin **annotation audience 編輯器**（cloud annotation 授權 rules/migration 已就緒，但無 church annotation 撰寫 UI）、onboarding church step、Saved/annotation 的 **offline vs revoked 文案區分**（目前統一「無法存取」）、logout/account-switch 顯式清 cache 測試、完整 widget-test matrix、Reader 同節 public+church **雙區塊**呈現（annotation 模型為每節單 doc，雙區塊需 schema 擴充——已標記為 contract gap）。
 
 ## 開發守則（歷史教訓）
 

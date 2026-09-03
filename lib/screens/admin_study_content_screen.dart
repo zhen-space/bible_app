@@ -996,7 +996,8 @@ class _TopicEditorState extends ConsumerState<TopicEditor> {
   late final TextEditingController _slug;
   late final TextEditingController _desc;
   late final TextEditingController _sort;
-  late Visibility _visibility;
+  late Audience _audience;
+  late Set<String> _churchIds;
   bool _busy = false;
 
   StudyTopic? get t => widget.row?.editorial;
@@ -1014,7 +1015,9 @@ class _TopicEditorState extends ConsumerState<TopicEditor> {
     _slug = TextEditingController(text: t?.id ?? '');
     _desc = TextEditingController(text: t?.description ?? '');
     _sort = TextEditingController(text: '${t?.sortOrder ?? 0}');
-    _visibility = t?.visibility ?? Visibility.internal;
+    _audience = t?.audience ??
+        (t?.visibility == Visibility.student ? Audience.public : Audience.internal);
+    _churchIds = {...(t?.allowedChurchIds ?? const [])};
   }
 
   @override
@@ -1061,17 +1064,22 @@ class _TopicEditorState extends ConsumerState<TopicEditor> {
         _tf(_desc, '描述', enabled: !_readOnly, lines: 3),
         _tf(_sort, '排序（數字）', enabled: !_readOnly),
         const SizedBox(height: 12),
-        const Text('學生可見度', style: TextStyle(fontWeight: FontWeight.w600)),
+        const Text('對象（audience）', style: TextStyle(fontWeight: FontWeight.w600)),
         const SizedBox(height: 4),
-        SegmentedButton<Visibility>(
+        SegmentedButton<Audience>(
           segments: const [
-            ButtonSegment(value: Visibility.internal, label: Text('學生不可瀏覽')),
-            ButtonSegment(value: Visibility.student, label: Text('學生可瀏覽')),
+            ButtonSegment(value: Audience.public, label: Text('公開')),
+            ButtonSegment(value: Audience.church, label: Text('教會')),
+            ButtonSegment(value: Audience.internal, label: Text('內部')),
           ],
-          selected: {_readOnly ? (t!.visibility ?? Visibility.internal) : _visibility},
+          selected: {_readOnly ? (t!.audience ?? Audience.internal) : _audience},
           onSelectionChanged:
-              _readOnly ? null : (s) => setState(() => _visibility = s.first),
+              _readOnly ? null : (s) => setState(() => _audience = s.first),
         ),
+        if (!_readOnly && _audience == Audience.church) ...[
+          const SizedBox(height: 6),
+          _topicChurchPicker(),
+        ],
         const SizedBox(height: 20),
         ..._actions(),
       ]),
@@ -1188,6 +1196,34 @@ class _TopicEditorState extends ConsumerState<TopicEditor> {
     ];
   }
 
+  Widget _topicChurchPicker() {
+    final churchesAsync = ref.watch(adminAllChurchesProvider);
+    return churchesAsync.when(
+      loading: () => const LinearProgressIndicator(),
+      error: (e, _) => Text('教會載入失敗：$e'),
+      data: (all) {
+        final active = all.where((c) => c.active).toList();
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('授權教會（只列 Active）',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          Wrap(spacing: 6, children: [
+            for (final c in active)
+              FilterChip(
+                label: Text(c.name.isEmpty ? c.id : c.name),
+                selected: _churchIds.contains(c.id),
+                onSelected: (sel) => setState(() =>
+                    sel ? _churchIds.add(c.id) : _churchIds.remove(c.id)),
+              ),
+          ]),
+          if (_churchIds.isEmpty)
+            Text('⚠️ 教會對象需至少一間，否則無法送審／發布。',
+                style: TextStyle(
+                    color: Theme.of(context).colorScheme.error, fontSize: 12)),
+        ]);
+      },
+    );
+  }
+
   Future<String> _save(StudyContentRepository repo, String email,
       {bool snack = false}) async {
     final id = _isNew
@@ -1203,7 +1239,10 @@ class _TopicEditorState extends ConsumerState<TopicEditor> {
         'sort_order': int.tryParse(_sort.text.trim()) ?? 0,
       },
       editorEmail: email,
-      visibility: _visibility,
+      audience: _audience,
+      allowedChurchIds: _audience == Audience.church ? _churchIds.toList() : const [],
+      visibility:
+          _audience == Audience.public ? Visibility.student : Visibility.internal,
     );
     ref.invalidate(adminTopicListProvider);
     if (snack && mounted) {

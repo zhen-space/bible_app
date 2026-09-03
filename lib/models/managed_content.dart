@@ -235,8 +235,12 @@ class AnswerSource {
       this.access = '',
       this.ref = ''});
 
+  /// scripture 一律可開；study_content 的 **public**（或 legacy 'student'）可開；
+  /// **church** 需 open-time 依現時授權 live-resolve（見學生端）；internal 不可開。
   bool get isStudentOpenable =>
-      kind == 'scripture' || (kind == 'study_content' && access == 'student');
+      kind == 'scripture' ||
+      (kind == 'study_content' && (access == 'public' || access == 'student'));
+  bool get isChurchSource => kind == 'study_content' && access == 'church';
 
   factory AnswerSource.fromMap(Map<String, dynamic> m) => AnswerSource(
         contentId: (m['content_id'] as String?) ?? '',

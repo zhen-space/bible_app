@@ -552,6 +552,34 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         ),
       );
     }
+    // church：**open-time live-resolve**（不 pre-render body）。授權→可點「教會專屬」；
+    // revoked/未授權→「目前無法存取」不可點；皆只用公開 title 快照，不讀文件內文。
+    if (s.isChurchSource) {
+      return FutureBuilder<StudyContentItem?>(
+        future: _resolveChurchSource(s.contentId),
+        builder: (context, snap) {
+          final authorized = snap.data != null;
+          return Card(
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            child: ListTile(
+              dense: true,
+              enabled: authorized,
+              leading: Icon(authorized ? Icons.article_outlined : Icons.lock_outline),
+              title: Text(title),
+              subtitle: Text(authorized ? '教會專屬' : '教會專屬 · 目前無法存取'),
+              trailing: authorized ? const Icon(Icons.chevron_right) : null,
+              onTap: authorized
+                  ? () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) =>
+                              StudentStudyContentDetail(item: snap.data!)))
+                  : null,
+            ),
+          );
+        },
+      );
+    }
     // internal：顯示 title（來自公開快照）＋標示，不可點；不讀 internal 文件。
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 3),
@@ -563,6 +591,13 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         subtitle: const Text('已審核內容 · 內部參考'),
       ),
     );
+  }
+
+  Future<StudyContentItem?> _resolveChurchSource(String contentId) async {
+    final auth = await ref.read(myAuthProvider.future);
+    return ref
+        .read(studyContentRepositoryProvider)
+        .fetchAuthorizedStudyContentById(contentId, auth);
   }
 
   Future<void> _openStudyContent(BuildContext context, String contentId) async {
@@ -964,13 +999,13 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
                       subtitle: Row(children: [
                         Text('${it.contentType?.label ?? ''} · '),
                         Text(
-                          it.visibility == Visibility.student
-                              ? 'Published · Student'
-                              : 'Published · Internal',
+                          'Published · ${(it.audience ?? Audience.internal).label}',
                           style: TextStyle(
-                            color: it.visibility == Visibility.student
+                            color: it.audience == Audience.public
                                 ? Colors.green.shade700
-                                : Colors.blueGrey,
+                                : (it.audience == Audience.church
+                                    ? Colors.indigo
+                                    : Colors.blueGrey),
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -988,8 +1023,9 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
         contentId: chosen.id,
         version: chosen.version,
         kind: 'study_content',
-        evidence: chosen.title, // 公開快照 label：學生端不必讀 internal 文件即可顯示
-        access: chosen.visibility == Visibility.student ? 'student' : 'internal',
+        evidence: chosen.title, // 公開快照 label：學生端不必讀文件即可顯示
+        // access 依 **audience** 快照（public/church/internal）；非 authorization authority。
+        access: (chosen.audience ?? Audience.internal).name,
       ));
     });
   }

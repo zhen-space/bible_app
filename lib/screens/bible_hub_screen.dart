@@ -7,6 +7,7 @@ import 'chapter_screen.dart';
 import 'qa_screen.dart';
 import 'search_screen.dart';
 import 'study_content_screen.dart';
+import 'teacher_area_screen.dart';
 
 /// 「聖經」主頁：閱讀（進 Reader／搜尋）＋理解（問答／研讀內容）。
 /// 只負責把人帶到既有畫面，不重寫任何底層功能。
@@ -73,6 +74,10 @@ class BibleHubScreen extends ConsumerWidget {
               '人工整理的已發布問答', () => const QaScreen()),
           _tile(context, Icons.auto_stories, '研讀內容',
               '主題、平行經文、預表、時間軸、人物', () => const StudentStudyContentScreen()),
+          // 老師專區入口：**只有存在完整 authorized hierarchy 時才顯示**（不曝光 private 結構）。
+          if (ref.watch(teacherEntryVisibleProvider).value == true)
+            _tile(context, Icons.school_outlined, '老師專區',
+                '老師整理的書卷與教導內容', () => const TeacherAreaScreen()),
         ],
       ),
     );
