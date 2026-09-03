@@ -506,6 +506,27 @@ final adminTeacherChaptersProvider =
   return ref.watch(teacherRepositoryProvider).adminListChapters(bookId);
 });
 
+/// Optional onboarding church prompt：登入、無 membership、未略過時才顯示。
+/// **可略過、不阻塞**；略過寫入 SharedPreferences。
+const _churchPromptKey = 'church_prompt_dismissed';
+final churchPromptDismissedProvider = FutureProvider<bool>((ref) async {
+  final p = await SharedPreferences.getInstance();
+  return p.getBool(_churchPromptKey) ?? false;
+});
+final churchOnboardingVisibleProvider = FutureProvider<bool>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return false;
+  if (ref.watch(authUserProvider).value == null) return false;
+  final m = await ref.watch(myMembershipProvider.future);
+  if (m != null) return false; // 任何 membership 狀態都不再提示
+  return !(await ref.watch(churchPromptDismissedProvider.future));
+});
+Future<void> dismissChurchPrompt(WidgetRef ref) async {
+  final p = await SharedPreferences.getInstance();
+  await p.setBool(_churchPromptKey, true);
+  ref.invalidate(churchPromptDismissedProvider);
+  ref.invalidate(churchOnboardingVisibleProvider);
+}
+
 /// active churches（Picker）。
 final activeChurchesProvider = FutureProvider<List<Church>>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
@@ -559,16 +580,30 @@ final savedStudyContentIdsProvider = FutureProvider<List<String>>((ref) async {
 });
 
 /// 已儲存研讀內容的 **live authorized resolve**（relationship 保留、access 現查）。
-/// 回 (id, item?)：item==null ＝目前無權存取（revoked/未授權）→ UI 顯示「目前無法存取」。
+/// 回 (id, item?, online)：
+///  - item!=null → 可開；
+///  - item==null && online → **revoked/未授權**（「目前無法存取」）；
+///  - item==null && !online → **無法驗證**（「目前無法驗證教會存取權」，offline≠revoked）。
 final resolvedSavedStudyContentProvider =
-    FutureProvider<List<({String id, StudyContentItem? item})>>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
+    FutureProvider<List<({String id, StudyContentItem? item, bool online})>>(
+        (ref) async {
+  final online = ref.watch(firebaseReadyProvider);
   final ids = await ref.watch(savedStudyContentIdsProvider.future);
+  if (!online) {
+    return [for (final id in ids) (id: id, item: null, online: false)];
+  }
   final auth = await ref.watch(myAuthProvider.future);
   final repo = ref.watch(studyContentRepositoryProvider);
-  final out = <({String id, StudyContentItem? item})>[];
+  final out = <({String id, StudyContentItem? item, bool online})>[];
   for (final id in ids) {
-    out.add((id: id, item: await repo.fetchAuthorizedStudyContentById(id, auth)));
+    StudyContentItem? item;
+    var ok = true;
+    try {
+      item = await repo.fetchAuthorizedStudyContentById(id, auth);
+    } catch (_) {
+      ok = false; // 連線／驗證失敗 → 當作無法驗證（非 revoked）
+    }
+    out.add((id: id, item: item, online: ok));
   }
   return out;
 });

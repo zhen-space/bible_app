@@ -267,6 +267,13 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - 測試：church_admin_test 加 teacher。flutter test 124／rules 91／analyze clean／兩 build 通過。
 - **仍未做（明確 deferred，皆 foundation fail-closed 保護、無 leak）**：Admin **annotation audience 編輯器**（cloud annotation 授權 rules/migration 已就緒，但無 church annotation 撰寫 UI）、onboarding church step、Saved/annotation 的 **offline vs revoked 文案區分**（目前統一「無法存取」）、logout/account-switch 顯式清 cache 測試、完整 widget-test matrix、Reader 同節 public+church **雙區塊**呈現（annotation 模型為每節單 doc，雙區塊需 schema 擴充——已標記為 contract gap）。
 
+### CLOSURE R1（onboarding／offline-vs-revoked／殘留 gap 正式定位，branch `claude/bible-app-setup-xi8bvd`）
+本輪只落**低風險、不動已驗證 Reader** 的收尾，並把 annotation 多 doc 共存精確定位為殘留：
+- **Onboarding church step**（`student_home_screen.dart` `_ChurchOnboardingCard`＋`churchOnboardingVisibleProvider`/`churchPromptDismissedProvider`/`dismissChurchPrompt`）：登入且**無 membership**且未 dismiss 才顯示；可「選擇教會」→ `ChurchPickerScreen`，或「稍後再說」→ 寫 SharedPreferences dismiss。**可略過、非阻塞**（provider error/loading → `.value==true` 為 false → 不顯示）。
+- **Offline vs revoked 文案區分**（`resolvedSavedStudyContentProvider` 改回 `(id,item,online)`）：`item!=null`→可開；`item==null&&online`→**revoked/未授權**「目前無法存取」；`item==null&&!online`→**無法驗證**「目前無法驗證教會存取權」。`SavedStudyContentScreen` 依 online 分文案；**offline 絕不顯示成 revoked**。offline 完全不碰 repo（不落地 church-private）。
+- 測試：`test/saved_offline_revoked_test.dart`（3 案：online-未授權=無存取／offline=無法驗證／online-授權=可開）。flutter test 127／rules 91／analyze clean／兩 build 通過。
+- ⛔ **仍未完成（precise residual，contract §8/§16；items 35/36 非 NONE → 尚未 production-ready）**：**annotation 同節 public+church 共存**需要 (a) 每節多 doc 的 id 方案（現為單 doc `verse_{b}_{c}_{v}`）、(b) `chapterAnnotationProvider` 每節回 **list**（含 audience/churchName）、(c) Reader 節面板**雙區塊呈現**（現面板吃單一 `VerseAnnotation`）、(d) **Admin annotation audience 編輯器**（可寫 church 註解而不覆蓋 public）。backend `fetchAuthorizedAnnotations` 已能回多個授權 doc（fetch 層已支援共存），缺的是**每節分組＋Reader 雙區塊＋admin 撰寫 UI＋migration/rules/indexes/測試**。此塊**Reader-invasive**，本輪為保護已驗證 Reader 未動——列為下一輪唯一 R1 gap。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

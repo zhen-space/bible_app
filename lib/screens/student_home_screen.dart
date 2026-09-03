@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import 'chapter_screen.dart';
+import 'church_screen.dart';
 import 'reading_plans_screen.dart';
 import 'notes_screen.dart';
 import 'search_screen.dart';
@@ -42,6 +43,11 @@ class StudentHomeScreen extends ConsumerWidget {
                 icon: const Icon(Icons.search),
               ),
             ]),
+            // Optional onboarding：教會設定（可略過、不阻塞）。
+            if (ref.watch(churchOnboardingVisibleProvider).value == true) ...[
+              const SizedBox(height: 20),
+              _ChurchOnboardingCard(),
+            ],
             const SizedBox(height: 28),
             _sectionLabel(context, '繼續閱讀'),
             const SizedBox(height: 10),
@@ -252,4 +258,39 @@ class _InlineError extends StatelessWidget {
   Widget build(BuildContext context) => Card(
     child: ListTile(title: Text(label), trailing: TextButton(onPressed: onRetry, child: const Text('再試一次'))),
   );
+}
+
+/// Optional 教會 onboarding 卡片：可略過、不阻塞、provider error 不擋首頁。
+class _ChurchOnboardingCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('你的教會',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 6),
+          const Text('如果你所屬的教會有提供研讀內容，可以選擇教會並提出加入申請。'
+              '你也可以略過，之後再到「我的 → 教會」設定。'),
+          const SizedBox(height: 12),
+          Row(children: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => const ChurchPickerScreen())),
+              child: const Text('選擇教會'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => dismissChurchPrompt(ref),
+              child: const Text('稍後再說'),
+            ),
+          ]),
+        ]),
+      ),
+    );
+  }
 }

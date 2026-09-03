@@ -383,8 +383,9 @@ class SavedStudyContentScreen extends ConsumerWidget {
                                 : (r.item == null ? '（此內容）' : '(未命名)'),
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                         subtitle: r.item == null
-                            ? const Text('目前無法存取',
-                                style: TextStyle(fontStyle: FontStyle.italic))
+                            ? Text(r.online ? '目前無法存取' : '目前無法驗證教會存取權',
+                                style: const TextStyle(
+                                    fontStyle: FontStyle.italic))
                             : (r.item!.audience == Audience.church
                                 ? churchBadge(context)
                                 : null),
@@ -406,8 +407,10 @@ class SavedStudyContentScreen extends ConsumerWidget {
                         ]),
                         onTap: r.item == null
                             ? () => ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('你目前沒有這項研讀內容的存取權。')))
+                                SnackBar(
+                                    content: Text(r.online
+                                        ? '你目前沒有這項研讀內容的存取權。'
+                                        : '目前無法驗證教會存取權，請確認連線後再試。')))
                             : () => Navigator.push(
                                 context,
                                 MaterialPageRoute(
