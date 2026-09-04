@@ -13,6 +13,9 @@
     "migrate:audience:dryrun": "node migrate_audience.mjs",
     "migrate:audience:apply": "node migrate_audience.mjs --apply",
     "test:migrate": "node migrate_audience_test.mjs",
+    "test:backfill-qa": "node backfill_qa_audience_test.mjs",
+    "backfill:qa:dryrun": "node backfill_qa_audience.mjs",
+    "backfill:qa:apply": "node backfill_qa_audience.mjs --apply",
     "test:rules": "firebase emulators:exec --only firestore \"node rules_test.mjs\""
   },
   "dependencies": {
