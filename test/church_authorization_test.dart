@@ -221,6 +221,62 @@ void main() {
       await fs.collection('churches').doc('X').set({'name': 'X', 'active': false});
       expect((await repo.fetchActiveChurches()).map((c) => c.id), ['A']);
     });
+
+    test('Teacher Area capability：只有 active membership + active church + true', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = ChurchRepository(fs);
+      await fs.collection('churches').doc('A').set({'active': true});
+      await fs.collection('churches').doc('A').collection('private')
+          .doc('capabilities').set({'teacher_area': true});
+
+      expect(await repo.hasTeacherAreaForActiveChurch('none'), isFalse);
+      for (final status in ['pending', 'rejected', 'revoked', 'unknown']) {
+        await fs.collection('memberships').doc(status).set({
+          'uid': status, 'church_id': 'A', 'status': status,
+        });
+        expect(await repo.hasTeacherAreaForActiveChurch(status), isFalse,
+            reason: '$status 不得取得 Teacher Area capability');
+      }
+
+      await fs.collection('memberships').doc('active').set({
+        'uid': 'active', 'church_id': 'A', 'status': 'active',
+      });
+      expect(await repo.hasTeacherAreaForActiveChurch('active'), isTrue);
+    });
+
+    test('Teacher Area capability 缺欄位／false／inactive church 均 fail closed', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = ChurchRepository(fs);
+      await fs.collection('memberships').doc('u').set({
+        'uid': 'u', 'church_id': 'A', 'status': 'active',
+      });
+      await fs.collection('churches').doc('A').set({'active': true});
+      final cap = fs.collection('churches').doc('A').collection('private')
+          .doc('capabilities');
+
+      expect(await repo.hasTeacherAreaForActiveChurch('u'), isFalse);
+      await cap.set({'some_future_capability': true});
+      expect(await repo.hasTeacherAreaForActiveChurch('u'), isFalse);
+      await cap.set({'teacher_area': false});
+      expect(await repo.hasTeacherAreaForActiveChurch('u'), isFalse);
+      await fs.collection('churches').doc('A').set({'active': false});
+      expect(await repo.hasTeacherAreaForActiveChurch('u'), isFalse);
+    });
+
+    test('capability=true 且 0 篇 Teacher content：入口 eligibility 仍為 true', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = ChurchRepository(fs);
+      await fs.collection('churches').doc('A').set({'active': true});
+      await fs.collection('memberships').doc('u').set({
+        'uid': 'u', 'church_id': 'A', 'status': 'active',
+      });
+      await repo.saveChurchCapabilities(
+          const ChurchCapabilities(churchId: 'A', teacherArea: true));
+
+      expect(await TeacherRepository(fs).fetchAuthorizedBooks(const StudentAuth('A')),
+          isEmpty);
+      expect(await repo.hasTeacherAreaForActiveChurch('u'), isTrue);
+    });
   });
 
   group('Saved relationship 不授予 access', () {

@@ -1,7 +1,9 @@
 /// Church / Membership domain（Church/Teacher R1 backend contract §2.1–§2.2）。
 ///
-/// - `churches/{churchId}`：**只放公開欄位**（Picker 用）；私有資料在
-///   `churches/{churchId}/private/admin`（Student 永不讀）。
+/// - `churches/{churchId}`：**只放公開欄位**（Picker 用）。
+/// - `churches/{churchId}/private/capabilities`：Church-specific capability；Student
+///   只能讀自己 Active Membership 對應的這一份，不得枚舉其他 Church。
+/// - 其他 `churches/{churchId}/private/*`：Student 永不讀。
 /// - `memberships/{uid}`（**doc id = uid**）：使用者唯一 membership 記錄 →
 ///   結構性保證「一人至多一 membership、至多一個 Active」。狀態由 Admin-authoritative
 ///   write 控制；Student 只能建立自己的 pending、不得 self-approve。
@@ -63,6 +65,33 @@ class Church {
         'active': active,
         'created_at': createdAt,
       };
+}
+
+/// Church 的私有 capability 文件。
+///
+/// 正式位置：`churches/{churchId}/private/capabilities`。
+/// 缺文件、缺欄位、型別錯誤或未知欄位一律不授權（fail closed）。這個 capability
+/// 只決定「老師專區入口是否存在」，不取代 Teacher/Study Content 的 audience authorization。
+class ChurchCapabilities {
+  final String churchId;
+  final bool teacherArea;
+
+  const ChurchCapabilities({
+    required this.churchId,
+    this.teacherArea = false,
+  });
+
+  factory ChurchCapabilities.disabled([String churchId = '']) =>
+      ChurchCapabilities(churchId: churchId);
+
+  factory ChurchCapabilities.fromDoc(
+          String churchId, Map<String, dynamic> m) =>
+      ChurchCapabilities(
+        churchId: churchId,
+        teacherArea: m['teacher_area'] == true,
+      );
+
+  Map<String, dynamic> toMap() => {'teacher_area': teacherArea};
 }
 
 /// 使用者的 membership 記錄（doc id = uid）。

@@ -46,6 +46,37 @@ class ChurchRepository {
   Future<void> setChurchActive(String id, bool active) =>
       _churches.doc(id).set({'active': active}, SetOptions(merge: true));
 
+  DocumentReference<Map<String, dynamic>> _capabilities(String churchId) =>
+      _churches.doc(churchId).collection('private').doc('capabilities');
+
+  /// Student-safe Teacher Area capability lookup。
+  ///
+  /// 只從使用者自己的 authoritative membership 取得 church id；非 Active、空 church id、
+  /// church 不存在／inactive、capability 文件或 `teacher_area` 缺失都回 false。
+  /// 不 scan churches，也不以 Teacher Book／Published Teaching 數量推導 capability。
+  Future<ChurchCapabilities> fetchCapabilitiesForActiveChurch(
+      String uid) async {
+    final membership = await fetchMembership(uid);
+    final churchId = membership?.activeChurchId;
+    if (churchId == null) return ChurchCapabilities.disabled();
+
+    final church = await fetchChurch(churchId);
+    if (church?.active != true) return ChurchCapabilities.disabled(churchId);
+
+    final d = await _capabilities(churchId).get();
+    return d.exists
+        ? ChurchCapabilities.fromDoc(churchId, d.data()!)
+        : ChurchCapabilities.disabled(churchId);
+  }
+
+  Future<bool> hasTeacherAreaForActiveChurch(String uid) async =>
+      (await fetchCapabilitiesForActiveChurch(uid)).teacherArea;
+
+  /// Admin-only（Rules enforcement）：設定 capability，不寫入公開 Church picker document。
+  Future<void> saveChurchCapabilities(ChurchCapabilities capabilities) =>
+      _capabilities(capabilities.churchId)
+          .set(capabilities.toMap(), SetOptions(merge: true));
+
   // ---- Membership ----
 
   /// 讀自己的 membership（無 doc = no membership）。

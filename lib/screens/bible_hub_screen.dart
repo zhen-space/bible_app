@@ -74,7 +74,7 @@ class BibleHubScreen extends ConsumerWidget {
               '人工整理的已發布問答', () => const QaScreen()),
           _tile(context, Icons.auto_stories, '研讀內容',
               '主題、平行經文、預表、時間軸、人物', () => const StudentStudyContentScreen()),
-          // 老師專區入口：**只有存在完整 authorized hierarchy 時才顯示**（不曝光 private 結構）。
+          // 老師專區入口：只依 Active Church private capability；不以內容數量推導。
           if (ref.watch(teacherEntryVisibleProvider).value == true)
             _tile(context, Icons.school_outlined, '老師專區',
                 '老師整理的書卷與教導內容', () => const TeacherAreaScreen()),
