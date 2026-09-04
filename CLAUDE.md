@@ -285,6 +285,19 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **測試**：`test/annotation_coexistence_test.dart`（10：provider 分組次序 CASE A/B/C/D/E、fetchAuthorized 同節 public+chA/chB 過濾、Admin 同節雙 doc 不覆寫、church publishable 驗證、draft→送審→發布→授權讀）＋`test/annotation_presentation_test.dart`（6：label／dual-section 次序）＋rules coexistence 9 案（同節 public+chA+chB、by-id 不 bypass、no-membership public-only、church 空 deny）。**flutter test 143／rules 100／analyze clean／兩 build 通過／migration 純函式 20／dry-run fail-closed。**
 - **Offline/cache**：`cloudAnnotationsProvider` **只快取 public**（church-private 不落地）；offline → 只回 public 快取。logout/account-switch 沿用既有 auth-scoped 失效（private 不跨 user）。
 
+## Daily Verse Admin R1 ＋ Q&A AnswerSource Admin R1（branch `claude/bible-app-setup-xi8bvd`，baseline f2f0da2）
+
+**Daily Verse Admin**（`screens/admin_daily_verse_screen.dart`，沿用 ContentWorkflowService type=`daily_verses`、contentId=日期）：List 加 Today/Future/Past ＋「有新版草稿」指示；Create=日期＋節位（VerseLocator authority）＋選填 title/content；Draft→送審（summary 確認）→Review（唯讀，發布前**最終確認**／退回修改）→Published（唯讀→建立替代草稿，日期 identity lock）→Archive；**版本紀錄**（唯讀，`adminListDailyVerses` 帶 `_versions`/`_published_*`）；**預覽學生首頁**（不寫、不改狀態、用草稿 snapshot＋Bible 經文）。學生 `_DailyVerseCard` 渲染選填 title/content（`publishedDailyVerseProvider` 擴充帶 title/content）。學生顯示＝`dailyVerseVisibleToday`（published 且 date==今天，未來不提前、過去不 auto-archive、無則 fail-closed、**不 fallback**）。
+
+**Q&A AnswerSource Admin**（Church-sourced answer confidentiality）：核心 invariant＝**鎖 source link 不足以保護 church 內容；使用 church source 的 Answer 本身也要 audience-authorized**。
+- **model**（`models/managed_content.dart`）：`AnswerSource` 加 `allowedChurchIds`（church source 授權快照，供交集）；`services/qa_service.dart` `Question` 加 `audience`/`allowedChurchIds`＋`studentReadable(activeChurchId)`（published 且 public∪church∩active；missing/internal→fail-closed）。
+- **derive**（純函式，`DerivedAnswerAudience.derive`，B9/B10）：scripture/public→Public；任一 church source→Church，allowedChurchIds＝所有 church source 的**交集**；交集空／internal source→**不可發布**。`sourceProblem(...)`＝發布前單源重驗（非 Published／版本漂移／Internal → 阻止）。
+- **service**：`publishAnswer(id,audience,allowedChurchIds)` 寫入推導後 audience（管理員不得放寬）；`setPublished(true)` 封鎖（必走 publishAnswer）；`publishedQuestions/retrieveApproved/ask` 加 `StudentAuth?` 過濾（防禦性同源，rules 為真正邊界）。
+- **admin UI**（`qa_screen.dart`）：按鈕文案「儲存回答並公開」→**「儲存回答」**（saveAnswer≠publish）；picker 只列 Published、Internal **disabled**（B6）、church 顯示教會名（B5）；**發布範圍預覽**（依 sources 自動推導，read-only）；發布走 `_publishWithSourceValidation`＝逐源 LIVE 重驗（版本 exact／不 drift）＋推導 audience＋church 空交集擋＋**最終確認**（Public/指定教會文案）。學生 source tile：exact-version authorized 可點；stale「引用版本 vN·來源已有新版」不可點；archived「來源已封存」；church 未授權「目前無法存取」；internal fail-closed 不可點。
+- **rules**（`firestore.rules`）：`questions` 讀改 `qaAudienceOK()`（published 且 public∪church∩active-membership；missing/internal→fail-closed）＋本人/admin。**無新 index 需求**。
+- **schema 影響（additive）**：questions 加 `audience`/`allowed_church_ids`（由 publishAnswer 寫）；AnswerSource 加 `allowed_church_ids`。**⚠️ 既有 published Q&A 無 audience → 部署新 rules 後對學生 fail-closed 隱藏**，需另開 backfill stage（本輪未做、未 deploy）。
+- **測試**：`test/qa_answersource_test.dart`（20：derive 矩陣／studentReadable／publishedQuestions 授權過濾／publishAnswer 寫入／sourceProblem cases 10-14／序列化）＋`test/daily_verse_admin_test.dart`（11：date gate／workflow／replacement 版本＋one-active-per-date／published 唯讀／archive fail-closed／title-content）＋rules Q&A audience 8 案。**flutter test 174／rules 108／analyze clean／兩 build 通過。** Q&A safety contract 未改（human-curated／no LLM／no Web／insufficient／pending 不入語料）。無 deploy／無 migration apply／無 production 觸碰。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

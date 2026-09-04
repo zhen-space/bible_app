@@ -45,6 +45,10 @@ class AdminDailyVerseScreen extends ConsumerWidget {
                   final when = date.compareTo(todayYmd) == 0
                       ? '今天'
                       : (date.compareTo(todayYmd) > 0 ? '未來' : '過去');
+                  // 有新版草稿：已有 published，但編輯真相（workspace）尚在 draft/review/rejected。
+                  final hasReplacementDraft = r['_has_published'] == true &&
+                      status != ContentStatus.published &&
+                      status != ContentStatus.archived;
                   return ListTile(
                     title: Text('$date · $when',
                         style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -53,6 +57,11 @@ class AdminDailyVerseScreen extends ConsumerWidget {
                       child: Wrap(spacing: 6, runSpacing: 4, children: [
                         statusBadge(context, status),
                         Text(_scriptureText(r)),
+                        if (hasReplacementDraft)
+                          Text('· 有新版草稿',
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  fontWeight: FontWeight.w600)),
                       ]),
                     ),
                     trailing: const Icon(Icons.chevron_right),
@@ -194,8 +203,116 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
             child: Text('此日期已有發布版本；發布此草稿將取代它（版本 +1，舊版入版本紀錄）。',
                 style: Theme.of(context).textTheme.bodySmall),
           ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.visibility_outlined),
+          label: const Text('預覽學生首頁'),
+          onPressed: _preview,
+        ),
         const SizedBox(height: 20),
         ..._actions(),
+        _versionHistory(),
+      ]),
+    );
+  }
+
+  /// A17 學生首頁預覽（不寫入、不改狀態、不發布；用目前草稿 snapshot＋正式 Bible 經文）。
+  Future<void> _preview() async {
+    final books = ref.read(booksProvider).value ?? const [];
+    final parsed = VerseLocator.parse(_ref.text.trim(), books);
+    String verseText = '（無法解析經文節位）';
+    String refDisplay = _ref.text.trim();
+    if (parsed != null && parsed.verse != null) {
+      final book = books.firstWhere((b) => b.id == parsed.bookId,
+          orElse: () => books.first);
+      final ci = parsed.chapter - 1, vi = parsed.verse! - 1;
+      if (ci >= 0 &&
+          ci < book.chapters.length &&
+          vi >= 0 &&
+          vi < book.chapters[ci].length) {
+        verseText = book.chapters[ci][vi];
+      }
+      refDisplay = '${book.name} ${parsed.chapter}:${parsed.verse}';
+    }
+    if (!mounted) return;
+    final title = _title.text.trim();
+    final content = _content.text.trim();
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('學生首頁預覽',
+                style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (title.isNotEmpty) ...[
+                      Text(title,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 8),
+                    ],
+                    Text(verseText,
+                        style: const TextStyle(fontSize: 16, height: 1.6)),
+                    const SizedBox(height: 8),
+                    Text(refDisplay,
+                        style: Theme.of(context).textTheme.bodySmall),
+                    if (content.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(content, style: const TextStyle(height: 1.6)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// A16 版本紀錄（唯讀）。
+  Widget _versionHistory() {
+    final versions = (row?['_versions'] as List?) ?? const [];
+    final curV = row?['_published_version'];
+    if (versions.isEmpty && curV == null) return const SizedBox.shrink();
+    String d(dynamic ms) => ms is int && ms > 0
+        ? DateTime.fromMillisecondsSinceEpoch(ms)
+            .toString()
+            .substring(0, 16)
+        : '—';
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('版本紀錄', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        if (curV != null)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.verified, size: 18),
+            title: Text('v$curV（現行 Published）'),
+            subtitle: Text(
+                '發布：${row?['_published_by'] ?? '—'} · ${d(row?['_published_at'])}'),
+          ),
+        for (final v in versions.reversed)
+          ListTile(
+            dense: true,
+            leading: const Icon(Icons.history, size: 18),
+            title: Text('v${(v as Map)['version'] ?? '?'} · ${v['status'] ?? '—'}'),
+            subtitle: Text(
+                '經文 ${v['ref_text'] ?? '書${v['book_id']} ${v['chapter']}:${v['verse']}'} · 發布 ${d(v['published_at'])}'),
+          ),
       ]),
     );
   }
@@ -252,6 +369,8 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
           onPressed: _busy
               ? null
               : () => _run(() async {
+                    final ok = await _confirmPublish();
+                    if (ok != true) return;
                     await wf.approveAndPublish(type, _ymd,
                         publisherEmail: email);
                     if (mounted) Navigator.pop(context);
@@ -260,7 +379,8 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           icon: const Icon(Icons.undo),
-          label: const Text('退回草稿'),
+          // A9：Review→Rejected 是「退回修改」（Rejected 為正式 status，可再改回 Draft）。
+          label: const Text('退回修改'),
           onPressed: _busy
               ? null
               : () => _run(() async {
@@ -271,6 +391,12 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
       ];
     }
     return [
+      if (_status == ContentStatus.rejected)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text('此版本已退回修改，可編輯後重新送審。',
+              style: TextStyle(color: Theme.of(context).colorScheme.error)),
+        ),
       FilledButton.icon(
         icon: const Icon(Icons.save_outlined),
         label: const Text('儲存草稿'),
@@ -284,12 +410,67 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
             ? null
             : () => _run(() async {
                   await _saveDraft(wf, email);
+                  final ok = await _confirmSubmit();
+                  if (ok != true) return;
                   await wf.submitForReview(type, _ymd, email);
                   if (mounted) Navigator.pop(context);
                 }),
       ),
     ];
   }
+
+  /// A7 送審前 summary。
+  Future<bool?> _confirmSubmit() => showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('送出審核'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('日期：$_ymd'),
+              Text('經文：${_ref.text.trim()}'),
+              if (_title.text.trim().isNotEmpty) Text('標題：${_title.text.trim()}'),
+              const SizedBox(height: 8),
+              const Text('審核通過並發布後，只會在指定日期顯示於學生首頁。'),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('送出審核')),
+          ],
+        ),
+      );
+
+  /// A10 發布前最終確認。
+  Future<bool?> _confirmPublish() => showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('確認發布'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('發布日期：$_ymd'),
+              Text('經文：${_ref.text.trim()}'),
+              const SizedBox(height: 8),
+              Text('此版本將成為正式 Published 每日經文。學生首頁只有在 $_ymd 才會顯示。'),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('確認發布')),
+          ],
+        ),
+      );
 
   Future<void> _saveDraft(dynamic wf, String email, {bool snack = false}) async {
     final books = ref.read(booksProvider).value ?? const [];

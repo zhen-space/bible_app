@@ -364,14 +364,22 @@ String _todayYmd() {
 
 /// 官方每日經文（管理者發佈，Firestore `daily_verses`）。
 /// **正式來源**；抓到就快取；離線退回快取。都沒有回 null（由 dailyVerseProvider 決定退路）。
-final publishedDailyVerseProvider =
-    FutureProvider<({int bookId, int chapter, int verse})?>((ref) async {
+final publishedDailyVerseProvider = FutureProvider<
+    ({int bookId, int chapter, int verse, String title, String content})?>(
+    (ref) async {
   final ymd = _todayYmd();
   final cacheKey = 'cache_daily_$ymd';
-  ({int bookId, int chapter, int verse})? parse(Map<String, dynamic> m) {
+  ({int bookId, int chapter, int verse, String title, String content})? parse(
+      Map<String, dynamic> m) {
     final b = m['book_id'], c = m['chapter'], v = m['verse'];
     if (b is int && c is int && v is int) {
-      return (bookId: b, chapter: c, verse: v);
+      return (
+        bookId: b,
+        chapter: c,
+        verse: v,
+        title: (m['title'] as String?) ?? '',
+        content: (m['content'] as String?) ?? '',
+      );
     }
     return null;
   }
@@ -702,9 +710,10 @@ final adminDailyVerseListProvider =
 final qaRetrievalProvider = FutureProvider.family<QaRetrievalResult,
     ({String query, String category})>((ref, args) async {
   if (!ref.watch(firebaseReadyProvider)) return const QaRetrievalResult([]);
+  final auth = await ref.watch(myAuthProvider.future);
   return ref
       .watch(qaServiceProvider)
-      .retrieveApproved(args.query, category: args.category);
+      .retrieveApproved(args.query, category: args.category, auth: auth);
 });
 
 /// 混合式快取：雲端內容抓到就存 SharedPreferences；離線或抓取失敗時
@@ -929,7 +938,12 @@ final qaServiceProvider = Provider((ref) => QaService());
 final publishedQuestionsProvider =
     FutureProvider.family<List<Question>, String>((ref, category) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
-  return ref.watch(qaServiceProvider).publishedQuestions(category: category);
+  // Church-sourced answer confidentiality：以目前授權過濾（public∪my-church），
+  // missing/internal audience → fail-closed（不外流）。rules 為真正邊界。
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref
+      .watch(qaServiceProvider)
+      .publishedQuestions(category: category, auth: auth);
 });
 
 /// 管理者：已回答但尚未發布的佇列（供發布）。非學生端來源。

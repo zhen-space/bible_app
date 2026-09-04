@@ -269,6 +269,11 @@ class ContentService {
       editorial['_date'] = id;
       editorial['_has_published'] = published.containsKey(id);
       editorial['_published_status'] = published[id]?['status'];
+      // 版本紀錄（唯讀）＋現行 published 版本資訊，供後台版本紀錄顯示（A16）。
+      editorial['_versions'] = published[id]?['versions'] ?? const [];
+      editorial['_published_version'] = published[id]?['version'];
+      editorial['_published_by'] = published[id]?['published_by'];
+      editorial['_published_at'] = published[id]?['published_at'];
       rows.add(editorial);
     }
     rows.sort((a, b) => (b['_date'] as String).compareTo(a['_date'] as String));

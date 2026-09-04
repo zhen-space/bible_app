@@ -447,28 +447,59 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
     }
   }
 
-  /// 發布前**重新驗證**回答依據：任何 study content source 若已非 published
-  /// （在草稿建立後失效：被退回/封存/改草稿），阻止發布——不得只依賴 picker 當下狀態。
+  /// 發布前**逐一重新驗證**回答依據（B13/B27），並由 **LIVE source** 推導 serving audience
+  /// （B9/B26）。任一 managed source 若：不存在 / 非 Published（被退回/封存/改草稿）/
+  /// 版本已漂移（引用 v3 但現為 v4）/ 目前為 Internal → 阻止發布（不得 silent drift）。
+  /// church sources 交集為空 → 阻止。全部通過後以推導 audience 發布（管理員不得手動放寬）。
   Future<void> _publishWithSourceValidation(Question q) async {
     final m = ScaffoldMessenger.of(context);
     final repo = ref.read(studyContentRepositoryProvider);
-    final sources =
-        (q.answer?.sources ?? const <AnswerSource>[]).where((s) => s.kind == 'study_content');
-    final invalid = <String>[];
-    for (final s in sources) {
-      if (!await repo.isPublishedNow(s.contentId)) {
-        invalid.add(s.evidence.isEmpty ? s.contentId : s.evidence);
+    final answer = q.answer;
+    if (answer == null) return;
+    final studySources =
+        answer.sources.where((s) => s.kind == 'study_content').toList();
+    final scriptureSources =
+        answer.sources.where((s) => s.kind == 'scripture').toList();
+    final problems = <String>[];
+    final revalidated = <AnswerSource>[];
+    for (final s in studySources) {
+      final label = s.evidence.isEmpty ? s.contentId : s.evidence;
+      final live = await repo.adminGetContentPublished(s.contentId);
+      final problem = DerivedAnswerAudience.sourceProblem(
+        label: label,
+        citedVersion: s.version,
+        livePublished: live != null,
+        liveVersion: live?.version,
+        liveAudience: live?.audience,
+      );
+      if (problem != null) {
+        problems.add(problem);
+        continue;
       }
+      final aud = live!.audience ?? Audience.internal;
+      revalidated.add(AnswerSource(
+        contentId: s.contentId,
+        version: live.version,
+        kind: 'study_content',
+        evidence: s.evidence,
+        access: aud.name,
+        allowedChurchIds:
+            aud == Audience.church ? live.allowedChurchIds : const [],
+      ));
     }
+    final derived =
+        DerivedAnswerAudience.derive([...scriptureSources, ...revalidated]);
     if (!mounted) return;
-    if (invalid.isNotEmpty) {
+    if (problems.isNotEmpty || !derived.publishable) {
       await showDialog<void>(
         context: context,
         builder: (_) => AlertDialog(
-          title: const Text('無法發布：回答依據已失效'),
-          content: Text(
-              '以下「已發布內容」依據目前已不是 Published 狀態，請先在回答編輯器移除或更換後再發布：\n\n'
-              '${invalid.join("\n")}'),
+          title: const Text('無法發布'),
+          content: Text([
+            if (problems.isNotEmpty) '回答依據需重新確認：\n${problems.join("\n")}',
+            if (!derived.publishable && derived.blockReason != null)
+              derived.blockReason!,
+          ].join('\n\n')),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(context),
@@ -476,10 +507,44 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
           ],
         ),
       );
-      m.showSnackBar(const SnackBar(content: Text('發布已中止：回答依據需為已發布內容')));
+      m.showSnackBar(const SnackBar(content: Text('發布已中止：請先更新回答依據')));
       return;
     }
-    await _admin(() => ref.read(qaServiceProvider).setPublished(q.id, true), q.id);
+    // 最終確認：明確顯示 serving audience 與依據。
+    final isChurch = derived.audience == Audience.church;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(isChurch ? '發布給指定教會' : '發布為 Public Q&A'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('學生可讀範圍：${isChurch ? 'Church（${derived.allowedChurchIds.join('、')}）' : 'Public（全體學生）'}',
+                style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            const Text('回答依據：'),
+            for (final s in scriptureSources) Text('· 經文 ${s.ref}'),
+            for (final s in revalidated)
+              Text('· ${s.evidence.isEmpty ? s.contentId : s.evidence} · v${s.version} · ${_QaAnswerEditorState._accessLabel(s.access)}'),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(isChurch ? '發布給指定教會' : '發布為 Public Q&A')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await _admin(
+        () => ref.read(qaServiceProvider).publishAnswer(q.id,
+            audience: derived.audience,
+            allowedChurchIds: derived.allowedChurchIds),
+        q.id);
   }
 
   Future<void> _toggleSave(String uid, String id, bool saved) async {
@@ -538,58 +603,57 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
     ];
   }
 
-  Widget _studySourceTile(BuildContext context, AnswerSource s) {
-    final title = s.evidence.isNotEmpty ? s.evidence : s.contentId;
-    if (s.isStudentOpenable) {
-      return Card(
+  Widget _sourceCard(String title, String subtitle,
+          {required bool enabled, VoidCallback? onTap}) =>
+      Card(
         margin: const EdgeInsets.symmetric(vertical: 3),
         child: ListTile(
           dense: true,
-          leading: const Icon(Icons.article_outlined),
+          enabled: enabled,
+          leading:
+              Icon(enabled ? Icons.article_outlined : Icons.lock_outline),
           title: Text(title),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _openStudyContent(context, s.contentId),
+          subtitle: Text(subtitle),
+          trailing: enabled ? const Icon(Icons.chevron_right) : null,
+          onTap: onTap,
         ),
       );
+
+  Widget _studySourceTile(BuildContext context, AnswerSource s) {
+    final title = s.evidence.isNotEmpty ? s.evidence : s.contentId;
+    // internal：**fail-closed**，不可點、不讀文件（新回答不應有；legacy 相容）。
+    if (s.access == 'internal') {
+      return _sourceCard(title, '已審核內容 · 內部參考', enabled: false);
     }
-    // church：**open-time live-resolve**（不 pre-render body）。授權→可點「教會專屬」；
-    // revoked/未授權→「目前無法存取」不可點；皆只用公開 title 快照，不讀文件內文。
-    if (s.isChurchSource) {
-      return FutureBuilder<StudyContentItem?>(
-        future: _resolveChurchSource(s.contentId),
-        builder: (context, snap) {
-          final authorized = snap.data != null;
-          return Card(
-            margin: const EdgeInsets.symmetric(vertical: 3),
-            child: ListTile(
-              dense: true,
-              enabled: authorized,
-              leading: Icon(authorized ? Icons.article_outlined : Icons.lock_outline),
-              title: Text(title),
-              subtitle: Text(authorized ? '教會專屬' : '教會專屬 · 目前無法存取'),
-              trailing: authorized ? const Icon(Icons.chevron_right) : null,
-              onTap: authorized
-                  ? () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) =>
-                              StudentStudyContentDetail(item: snap.data!)))
-                  : null,
-            ),
-          );
-        },
-      );
-    }
-    // internal：顯示 title（來自公開快照）＋標示，不可點；不讀 internal 文件。
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 3),
-      child: ListTile(
-        dense: true,
-        enabled: false,
-        leading: const Icon(Icons.lock_outline),
-        title: Text(title),
-        subtitle: const Text('已審核內容 · 內部參考'),
-      ),
+    // public / church：open-time **live authorization + exact-version** 驗證（不 pre-render body）。
+    final churchLabel = s.isChurchSource ? '教會專屬' : '已發布內容';
+    return FutureBuilder<StudyContentItem?>(
+      future: _resolveChurchSource(s.contentId), // authorized by-id（public 也走此路徑）
+      builder: (context, snap) {
+        if (snap.connectionState != ConnectionState.done) {
+          return _sourceCard(title, '載入中…', enabled: false);
+        }
+        final item = snap.data;
+        if (item == null) {
+          // church：未授權/revoked 或已封存 → 不揭露細節；public：已封存/撤下。
+          final sub = s.isChurchSource
+              ? '$churchLabel · 目前無法存取'
+              : '引用版本 v${s.version} · 來源已封存';
+          return _sourceCard(title, sub, enabled: false);
+        }
+        if (item.version != s.version) {
+          // R1 不開放讀歷史 managed-content snapshot → stale 不可 deep-link（B15）。
+          return _sourceCard(
+              title, '$churchLabel · 引用版本 v${s.version} · 來源目前已有新版',
+              enabled: false);
+        }
+        // exact version + authorized → 可點（開的即為被引用的版本）。
+        return _sourceCard(title, churchLabel, enabled: true,
+            onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => StudentStudyContentDetail(item: item))));
+      },
     );
   }
 
@@ -600,22 +664,6 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         .fetchAuthorizedStudyContentById(contentId, auth);
   }
 
-  Future<void> _openStudyContent(BuildContext context, String contentId) async {
-    final m = ScaffoldMessenger.of(context);
-    // **開啟一律走 authorization-aware（audience）by-id，不用 visibility-only 舊路徑**：
-    // 以目前使用者的授權（Active Membership）live resolve；revoked/未授權 → null（不回 payload）。
-    final auth = await ref.read(myAuthProvider.future);
-    final item = await ref
-        .read(studyContentRepositoryProvider)
-        .fetchAuthorizedStudyContentById(contentId, auth);
-    if (!context.mounted) return;
-    if (item == null) {
-      m.showSnackBar(const SnackBar(content: Text('此內容目前無法瀏覽。')));
-      return;
-    }
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => StudentStudyContentDetail(item: item)));
-  }
 }
 
 /// 提問表單。
@@ -806,6 +854,8 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
           ),
           const SizedBox(height: 20),
           _sourcesSection(),
+          const SizedBox(height: 12),
+          _audiencePreview(),
           const SizedBox(height: 16),
           FilledButton.icon(
             icon: _saving
@@ -813,9 +863,14 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
                     width: 16,
                     height: 16,
                     child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.cloud_upload),
-            label: Text(_saving ? '儲存中…' : '儲存回答並公開'),
+                : const Icon(Icons.save_outlined),
+            label: Text(_saving ? '儲存中…' : '儲存回答'),
             onPressed: _saving ? null : _save,
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text('儲存後仍不會出現在學生端；需另於管理區「發布」才會公開。',
+                style: TextStyle(fontSize: 12, color: Colors.grey)),
           ),
         ],
       ),
@@ -875,8 +930,49 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
               _studySources[i].evidence.isEmpty
                   ? _studySources[i].contentId
                   : _studySources[i].evidence,
-              '${_studySources[i].contentId} · v${_studySources[i].version} · ${_studySources[i].access == 'student' ? '學生可見' : '內部'}'),
+              '${_studySources[i].contentId} · v${_studySources[i].version} · ${_accessLabel(_studySources[i].access)}'),
     ]);
+  }
+
+  /// access 快照（audience）友善標籤：public/church/internal（取代舊 student/internal 二分）。
+  static String _accessLabel(String access) => switch (access) {
+        'public' || 'student' => '公開',
+        'church' => '教會專屬',
+        'internal' => '內部 · 不可作學生依據',
+        _ => access,
+      };
+
+  /// 發布範圍預覽（B24）：由目前 sources **自動推導**（read-only；管理員不得手動放寬）。
+  Widget _audiencePreview() {
+    final d = DerivedAnswerAudience.derive(
+        [..._scriptureSources, ..._studySources]);
+    final scheme = Theme.of(context).colorScheme;
+    final Color c;
+    final String text;
+    if (!d.publishable) {
+      c = scheme.error;
+      text = '目前無法發布：${d.blockReason}';
+    } else if (d.audience == Audience.public) {
+      c = Colors.green.shade700;
+      text = '此回答若發布：Public（全體學生可讀）';
+    } else {
+      c = Colors.indigo;
+      text = '此回答若發布：Church（僅 ${d.allowedChurchIds.join('、')} 的 Active 會員可讀）';
+    }
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: c.withValues(alpha: 0.4))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('發布範圍預覽（依來源自動推導）',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+        const SizedBox(height: 4),
+        Text(text, style: TextStyle(color: c, fontWeight: FontWeight.w600)),
+      ]),
+    );
   }
 
   Widget _reorderTile(
@@ -994,24 +1090,40 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
                         style: TextStyle(fontWeight: FontWeight.w700)),
                   ),
                   for (final it in items)
-                    ListTile(
-                      title: Text(it.title.isEmpty ? it.id : it.title),
-                      subtitle: Row(children: [
-                        Text('${it.contentType?.label ?? ''} · '),
-                        Text(
-                          'Published · ${(it.audience ?? Audience.internal).label}',
-                          style: TextStyle(
-                            color: it.audience == Audience.public
-                                ? Colors.green.shade700
-                                : (it.audience == Audience.church
-                                    ? Colors.indigo
-                                    : Colors.blueGrey),
-                            fontWeight: FontWeight.w600,
+                    Builder(builder: (bctx) {
+                      final scheme = Theme.of(bctx).colorScheme;
+                      final aud = it.audience ?? Audience.internal;
+                      // B6：Internal 不可作為學生 Q&A 依據 → disabled。
+                      final internal = aud == Audience.internal;
+                      final churchNames = aud == Audience.church
+                          ? it.allowedChurchIds.join('、')
+                          : '';
+                      return ListTile(
+                        enabled: !internal,
+                        title: Text(it.title.isEmpty ? it.id : it.title),
+                        subtitle: Row(children: [
+                          Text('${it.contentType?.label ?? ''} · v${it.version} · '),
+                          Flexible(
+                            child: Text(
+                              internal
+                                  ? 'Internal · 不可作為學生 Q&A 發布依據'
+                                  : (aud == Audience.church
+                                      ? 'Church · $churchNames'
+                                      : 'Public'),
+                              style: TextStyle(
+                                color: aud == Audience.public
+                                    ? Colors.green.shade700
+                                    : (aud == Audience.church
+                                        ? Colors.indigo
+                                        : scheme.error),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ),
-                        ),
-                      ]),
-                      onTap: () => Navigator.pop(context, it),
-                    ),
+                        ]),
+                        onTap: internal ? null : () => Navigator.pop(context, it),
+                      );
+                    }),
                 ],
               ),
       ),
@@ -1026,6 +1138,10 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
         evidence: chosen.title, // 公開快照 label：學生端不必讀文件即可顯示
         // access 依 **audience** 快照（public/church/internal）；非 authorization authority。
         access: (chosen.audience ?? Audience.internal).name,
+        // church 授權集合快照（供 Answer audience 交集推導）。
+        allowedChurchIds: chosen.audience == Audience.church
+            ? chosen.allowedChurchIds
+            : const [],
       ));
     });
   }

@@ -201,17 +201,29 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // ---- 疑問 Q&A（#9）----
-    // **只有 published == true 才對外可讀**（approved/reviewed 不算發布，pending/
-    // rejected 永不外流）；本人可讀自己的、管理員可讀全部。
+    // ---- 疑問 Q&A（#9 + Church/Teacher R1 B19）----
+    // 學生可讀 ⇔ published==true **且 audience 授權通過**（Church-sourced answer 機密性）：
+    //   public → 全體；church → Active Membership churchId ∈ allowed_church_ids。
+    //   audience 缺失/'internal'/未知 → **fail-closed**（只有本人/管理員可讀）。
+    //   → 鎖 source link 不足以保護 church 內容；answer 本身也必須 audience-authorized。
+    // 本人可讀自己的（含未發佈，看狀態）、管理員可讀全部。
     // 提問者只能建立 status=='pending' 且 published==false 的自己的問題（不得自我發佈/回答）。
     // 審核／回答／發布／精選只有管理員能寫。提問者可刪自己的問題。
+    function qaAudienceOK() {
+      return resource.data.published == true && (
+        resource.data.audience == 'public'
+        || (resource.data.audience == 'church'
+            && resource.data.allowed_church_ids is list
+            && activeChurchId() != null
+            && (activeChurchId() in resource.data.allowed_church_ids))
+      );
+    }
     match /questions/{id} {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'pending'
         && request.resource.data.published == false;
-      allow read: if (resource.data.published == true)
+      allow read: if qaAudienceOK()
         || (isSignedIn() && resource.data.uid == request.auth.uid)
         || isAdmin();
       allow update: if isAdmin();

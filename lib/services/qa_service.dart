@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../models/church.dart';
 import '../models/managed_content.dart';
 
 /// 疑問 Q&A（白板「六、疑問 Q&A」）——**全人工，無 AI**。
@@ -59,8 +60,9 @@ class QaService {
   ///
   /// 只做檢索（無模型知識／Web／LLM）。呼叫端先 `ask`，若 insufficient 再由使用者
   /// 決定是否 `submitQuestion` → 之後以回傳 id 包成 pendingQuestionCreated。
-  Future<QaAskResult> ask(String query, {String? category}) async {
-    final r = await retrieveApproved(query, category: category);
+  Future<QaAskResult> ask(String query,
+      {String? category, StudentAuth? auth}) async {
+    final r = await retrieveApproved(query, category: category, auth: auth);
     if (r.insufficientApprovedContent) {
       return const QaAskResult(QaOutcome.insufficientApprovedContent);
     }
@@ -73,16 +75,21 @@ class QaService {
     return Question.fromDoc(d.id, d.data()!);
   }
 
-  /// **學生端可取得的內容＝只有已發布（published）者。**
+  /// **學生端可取得的內容＝只有已發布（published）且授權者。**
   /// approved/reviewed 不算 published；沒有已發布資料就回空清單（不得回答）。
   /// 另加 isAnswered 防呆：即使誤設 published，未回答的也不外流。
+  /// **Church-sourced answer confidentiality（B17/B20）**：以 [auth] 過濾 audience——
+  /// public 全可；church 僅 Active Membership churchId ∈ allowedChurchIds；
+  /// missing/internal audience → fail-closed（不外流）。rules 為真正邊界，此為防禦性同源過濾。
   /// featured 置頂、其餘依更新時間新到舊。
-  Future<List<Question>> publishedQuestions({String? category}) async {
+  Future<List<Question>> publishedQuestions(
+      {String? category, StudentAuth? auth}) async {
     final snap =
         await _questions.where('published', isEqualTo: true).get();
+    final activeChurch = auth?.activeChurchId;
     final list = snap.docs
         .map((d) => Question.fromDoc(d.id, d.data()))
-        .where((q) => q.isAnswered)
+        .where((q) => q.isAnswered && q.studentReadable(activeChurch))
         .toList();
     final filtered = category == null || category.isEmpty
         ? list
@@ -100,11 +107,11 @@ class QaService {
   /// 沒有相符 → 回傳 `insufficientApprovedContent`（呼叫端據此顯示，不得以任何
   /// 未經核准/未發布內容或 AI 回答代替）。
   Future<QaRetrievalResult> retrieveApproved(String query,
-      {String? category}) async {
+      {String? category, StudentAuth? auth}) async {
     final q = query.trim();
     if (q.isEmpty) return const QaRetrievalResult([]);
-    // 語料 = 只有 Published（且已回答）的問答。
-    final corpus = await publishedQuestions(category: category);
+    // 語料 = 只有 Published（且已回答、**且對本使用者授權**）的問答。
+    final corpus = await publishedQuestions(category: category, auth: auth);
     final words =
         q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     final matches = corpus.where((question) {
@@ -160,13 +167,30 @@ class QaService {
   Future<void> setFeatured(String id, bool featured) =>
       _questions.doc(id).update({'featured': featured});
 
-  /// 發布／取消發布（管理者）。發布後學生端才取得得到；取消發布立即撤下。
-  /// approved/回答不會自動發布——這是刻意分離的獨立動作。
-  Future<void> setPublished(String id, bool published) =>
-      _questions.doc(id).update({
-        'published': published,
+  /// 取消發布（管理者）：立即撤下，學生端讀不到。audience 欄位保留（下次發布會重推導）。
+  Future<void> unpublish(String id) => _questions.doc(id).update({
+        'published': false,
         'updated_at': DateTime.now().millisecondsSinceEpoch,
       });
+
+  /// 發布（管理者）：**同時寫入由 AnswerSource 推導出的 serving audience**（B18/B19）。
+  /// 管理員不得手動放寬；audience/allowedChurchIds 一律由呼叫端以 [deriveAudience]
+  /// 於「發布前重新驗證的 live source」推導後帶入。church 空交集不得走到這裡（呼叫端擋）。
+  Future<void> publishAnswer(String id,
+          {required Audience audience,
+          required List<String> allowedChurchIds}) =>
+      _questions.doc(id).update({
+        'published': true,
+        'audience': audience.name,
+        'allowed_church_ids':
+            audience == Audience.church ? allowedChurchIds : const [],
+        'updated_at': DateTime.now().millisecondsSinceEpoch,
+      });
+
+  /// 相容保留：僅供測試/舊路徑取消發布用。發布請走 [publishAnswer]。
+  Future<void> setPublished(String id, bool published) => published
+      ? throw StateError('發布請走 publishAnswer（需帶推導後的 audience）')
+      : unpublish(id);
 
   /// 儲存／更新回答。更新時把「舊回答」推進 answer_versions（回答更新紀錄），
   /// 並把問題設為已審核（approved）。**注意：approved ≠ published**——
@@ -248,6 +272,81 @@ class QaService {
 /// Q&A 分類（爭議＝有不同立場、需謹慎的題目）。
 const List<String> kQaCategories = ['神學', '生活', '爭議', '其他'];
 
+/// Answer serving audience 推導結果（B9/B10）。**由 AnswerSource 自動推導，管理員不得放寬。**
+class DerivedAnswerAudience {
+  final Audience audience;
+  final List<String> allowedChurchIds; // church 時＝所有 church source 的交集
+  final bool publishable;
+  final String? blockReason; // publishable==false 時的原因（供 UI 顯示）
+
+  const DerivedAnswerAudience({
+    required this.audience,
+    required this.allowedChurchIds,
+    required this.publishable,
+    this.blockReason,
+  });
+
+  /// 發布前**單一 managed source 重新驗證**（純函式，可測；B13/B27）。
+  /// [livePublished]＝該 source 現在是否為 Published mirror（adminGetContentPublished != null）；
+  /// 回傳問題字串（可顯示）或 null（通過）。順序：不 Published → 版本漂移 → Internal。
+  static String? sourceProblem({
+    required String label,
+    required int citedVersion,
+    required bool livePublished,
+    required int? liveVersion,
+    required Audience? liveAudience,
+  }) {
+    if (!livePublished) {
+      return '$label：目前不是 Published（可能被退回／封存／刪除）';
+    }
+    if (liveVersion != citedVersion) {
+      return '$label：回答依據已更新，引用 v$citedVersion，但目前正式版本為 v$liveVersion';
+    }
+    if (liveAudience == null || liveAudience == Audience.internal) {
+      return '$label：目前為 Internal，不可作為學生 Q&A 發布依據';
+    }
+    return null;
+  }
+
+  /// 純函式推導（可測，無 IO）：
+  /// - 任一 source access=='internal' → **不可發布**（Internal 不得作學生依據，B6）。
+  /// - 無 church source → Public。
+  /// - 有 church source → Church，allowedChurchIds＝所有 church source allowedChurchIds 的**交集**；
+  ///   交集為空 → **不可發布**（B10：不存在能同時合法存取全部來源的學生）。
+  /// scripture / public source 不縮小 audience。空 sources → Public（純經文或無依據）。
+  static DerivedAnswerAudience derive(List<AnswerSource> sources) {
+    final managed = sources.where((s) => s.kind == 'study_content').toList();
+    if (managed.any((s) => s.access == 'internal')) {
+      return const DerivedAnswerAudience(
+          audience: Audience.public,
+          allowedChurchIds: [],
+          publishable: false,
+          blockReason: 'Internal 內容不可作為學生 Q&A 發布依據，請移除或更換。');
+    }
+    final church = managed.where((s) => s.access == 'church').toList();
+    if (church.isEmpty) {
+      return const DerivedAnswerAudience(
+          audience: Audience.public, allowedChurchIds: [], publishable: true);
+    }
+    // 交集
+    Set<String>? inter;
+    for (final s in church) {
+      final ids = s.allowedChurchIds.toSet();
+      inter = inter == null ? ids : inter.intersection(ids);
+    }
+    final list = (inter ?? <String>{}).toList()..sort();
+    if (list.isEmpty) {
+      return const DerivedAnswerAudience(
+          audience: Audience.church,
+          allowedChurchIds: [],
+          publishable: false,
+          blockReason: '所選 Church sources 沒有共同可閱讀的教會，無法發布。');
+    }
+    return DerivedAnswerAudience(
+        audience: Audience.church, allowedChurchIds: list, publishable: true);
+  }
+}
+
 /// #9 檢索結果。[matches] 只含 Published approved 內容；空＝
 /// **insufficient_approved_content**（呼叫端顯示「目前沒有已核准的解答」，
 /// 並可讓使用者送出 Pending Question；不得以任何未發布內容/AI 代替）。
@@ -291,6 +390,10 @@ class Question {
   final int updatedAt;
   final QaAnswer? answer;
   final List<QaAnswer> answerVersions; // 歷史版本（不含目前）
+  // Q&A serving 授權（Church/Teacher R1 B18）：由 AnswerSource 於發布時推導，
+  // **管理員不得手動放寬**。null＝尚未發布/未推導（學生端 fail-closed）。
+  final Audience? audience;
+  final List<String> allowedChurchIds;
 
   const Question({
     required this.id,
@@ -306,9 +409,22 @@ class Question {
     required this.updatedAt,
     required this.answer,
     required this.answerVersions,
+    this.audience,
+    this.allowedChurchIds = const [],
   });
 
   bool get isAnswered => answer != null;
+
+  /// 學生端可讀（授權，非只 published）：published 且（public，或 church 且
+  /// activeChurchId ∈ allowedChurchIds）。missing/internal audience → fail-closed。
+  bool studentReadable(String? activeChurchId) {
+    if (!published) return false;
+    if (audience == Audience.public) return true;
+    if (audience == Audience.church) {
+      return activeChurchId != null && allowedChurchIds.contains(activeChurchId);
+    }
+    return false; // internal / null → fail-closed
+  }
 
   factory Question.fromDoc(String id, Map<String, dynamic> m) => Question(
         id: id,
@@ -327,6 +443,10 @@ class Question {
             : QaAnswer.fromMap((m['answer'] as Map).cast<String, dynamic>()),
         answerVersions: ((m['answer_versions'] as List?) ?? const [])
             .map((e) => QaAnswer.fromMap((e as Map).cast<String, dynamic>()))
+            .toList(),
+        audience: Audience.fromName(m['audience'] as String?),
+        allowedChurchIds: ((m['allowed_church_ids'] as List?) ?? const [])
+            .map((e) => e.toString())
             .toList(),
       );
 }

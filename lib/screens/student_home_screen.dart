@@ -178,16 +178,29 @@ class _DailyVerseCard extends StatelessWidget {
   final Book book;
   final WidgetRef parentRef;
   @override
-  Widget build(BuildContext context) => Card(
+  Widget build(BuildContext context) {
+    // A18：官方發佈的（選填）標題與內容／引言（來自 published 每日經文 doc）。
+    final extra = parentRef.read(publishedDailyVerseProvider).value;
+    final title = extra?.title ?? '';
+    final content = extra?.content ?? '';
+    return Card(
     child: InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChapterScreen(bookId: daily.bookId, chapter: daily.chapter, focusVerse: daily.verse, updateReadingPosition: false))),
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          if (title.isNotEmpty) ...[
+            Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 10),
+          ],
           Text(daily.text, style: Theme.of(context).textTheme.bodyLarge?.copyWith(height: 1.8)),
           const SizedBox(height: 12),
           Text('${book.name} ${daily.chapter}:${daily.verse}', style: Theme.of(context).textTheme.labelLarge?.copyWith(color: Theme.of(context).colorScheme.primary)),
+          if (content.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(content, style: Theme.of(context).textTheme.bodyMedium?.copyWith(height: 1.6)),
+          ],
           const SizedBox(height: 4),
           Row(children: [
             const Text('查看上下文 →'),
@@ -203,6 +216,7 @@ class _DailyVerseCard extends StatelessWidget {
       ),
     ),
   );
+  }
 }
 
 /// 沒有官方發佈每日經文時的狀態卡（fail-closed，不顯示任何未驗證內容）。

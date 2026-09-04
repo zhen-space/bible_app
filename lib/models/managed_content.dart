@@ -226,6 +226,9 @@ class AnswerSource {
   final String access;
   // scripture source 的節位字串（kind=='scripture' 時；點了跳臨時 Reader）。
   final String ref;
+  // access=='church' 時，該來源建立當時的授權教會集合快照（供 Answer audience 交集推導）。
+  // 其餘 access 不作 authority。
+  final List<String> allowedChurchIds;
 
   const AnswerSource(
       {required this.contentId,
@@ -233,7 +236,8 @@ class AnswerSource {
       this.kind = '',
       this.evidence = '',
       this.access = '',
-      this.ref = ''});
+      this.ref = '',
+      this.allowedChurchIds = const []});
 
   /// scripture 一律可開；study_content 的 **public**（或 legacy 'student'）可開；
   /// **church** 需 open-time 依現時授權 live-resolve（見學生端）；internal 不可開。
@@ -249,6 +253,9 @@ class AnswerSource {
         evidence: (m['evidence'] as String?) ?? '',
         access: (m['access'] as String?) ?? '',
         ref: (m['ref'] as String?) ?? '',
+        allowedChurchIds: ((m['allowed_church_ids'] as List?) ?? const [])
+            .map((e) => e.toString())
+            .toList(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -258,5 +265,6 @@ class AnswerSource {
         'evidence': evidence,
         'access': access,
         'ref': ref,
+        if (allowedChurchIds.isNotEmpty) 'allowed_church_ids': allowedChurchIds,
       };
 }
