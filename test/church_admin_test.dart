@@ -51,6 +51,19 @@ void main() {
       expect(doc.data()!.containsKey('members'), isFalse);
     });
 
+    test('saveChurchCapabilities 寫 private doc，缺 teacher_area 預設 false', () async {
+      final fs = FakeFirebaseFirestore();
+      final repo = ChurchRepository(fs);
+      await repo.saveChurchCapabilities(
+          const ChurchCapabilities(churchId: 'a', teacherArea: true));
+      final doc = await fs.collection('churches').doc('a').collection('private')
+          .doc('capabilities').get();
+      expect(doc.data(), {'teacher_area': true});
+      expect(ChurchCapabilities.fromDoc('a', const {}).teacherArea, isFalse);
+      expect(ChurchCapabilities.fromDoc('a', const {'teacher_area': 'true'}).teacherArea,
+          isFalse);
+    });
+
     test('requestMembership → pending；pendingMemberships 佇列；approve→active', () async {
       final fs = FakeFirebaseFirestore();
       final repo = ChurchRepository(fs);

@@ -67,9 +67,16 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   // Church/Teacher R1：audience 授權（study_content / study_topics / teacher / church / membership）。
   await setDoc(doc(db, 'churches/A'), { name: 'A教會', active: true });
   await setDoc(doc(db, 'churches/B'), { name: 'B教會', active: true });
+  await setDoc(doc(db, 'churches/C'), { name: 'C教會', active: true });
   await setDoc(doc(db, 'churches/X'), { name: 'X停用', active: false });
+  await setDoc(doc(db, 'churches/A/private/capabilities'), { teacher_area: true });
+  await setDoc(doc(db, 'churches/B/private/capabilities'), { teacher_area: false });
+  await setDoc(doc(db, 'churches/C/private/capabilities'), { future_capability: true });
+  await setDoc(doc(db, 'churches/X/private/capabilities'), { teacher_area: true });
   await setDoc(doc(db, 'memberships/sA'), { uid: 'sA', church_id: 'A', status: 'active' });
   await setDoc(doc(db, 'memberships/sB'), { uid: 'sB', church_id: 'B', status: 'active' });
+  await setDoc(doc(db, 'memberships/sC'), { uid: 'sC', church_id: 'C', status: 'active' });
+  await setDoc(doc(db, 'memberships/sX'), { uid: 'sX', church_id: 'X', status: 'active' });
   await setDoc(doc(db, 'memberships/sP'), { uid: 'sP', church_id: 'A', status: 'pending' });
   await setDoc(doc(db, 'memberships/sR'), { uid: 'sR', church_id: 'A', status: 'revoked' });
   await setDoc(doc(db, 'memberships/sG'), { uid: 'sG', church_id: 'A', status: 'pending' });
@@ -99,6 +106,8 @@ const claimAdmin = env.authenticatedContext('admin2', { email: 'other@example.co
 const sNone = env.authenticatedContext('sNone', { email: 'n@e.com' }).firestore();
 const sA = env.authenticatedContext('sA', { email: 'a@e.com' }).firestore();
 const sB = env.authenticatedContext('sB', { email: 'b@e.com' }).firestore();
+const sC = env.authenticatedContext('sC', { email: 'c@e.com' }).firestore();
+const sX = env.authenticatedContext('sX', { email: 'x@e.com' }).firestore();
 const sP = env.authenticatedContext('sP', { email: 'p@e.com' }).firestore();
 const sR = env.authenticatedContext('sR', { email: 'r@e.com' }).firestore();
 
@@ -239,6 +248,31 @@ await ok('21 inactive church 非 admin 不可讀', assertFails(getDoc(doc(sNone,
 await ok('admin 可讀 inactive church', assertSucceeds(getDoc(doc(admin, 'churches/X'))));
 await ok('student 不可讀 church private', assertFails(getDoc(doc(sA, 'churches/A/private/admin'))));
 await ok('student 不可寫 church', assertFails(setDoc(doc(sA, 'churches/A'), { active: true })));
+
+// ---- Teacher Area capability（private、只限自己的 Active Church）----
+await ok('active Church A 可讀 A capability',
+  assertSucceeds(getDoc(doc(sA, 'churches/A/private/capabilities'))));
+await ok('active Church A 不可讀 B capability',
+  assertFails(getDoc(doc(sA, 'churches/B/private/capabilities'))));
+await ok('pending 不可讀 capability',
+  assertFails(getDoc(doc(sP, 'churches/A/private/capabilities'))));
+const sRejCapability = env.authenticatedContext('sRej', { email: 'j@e.com' }).firestore();
+await ok('rejected 不可讀 capability',
+  assertFails(getDoc(doc(sRejCapability, 'churches/A/private/capabilities'))));
+await ok('revoked 不可讀 capability',
+  assertFails(getDoc(doc(sR, 'churches/A/private/capabilities'))));
+await ok('no membership 不可讀 capability',
+  assertFails(getDoc(doc(sNone, 'churches/A/private/capabilities'))));
+await ok('自己的 capability 缺 teacher_area 仍可讀（client fail-closed 為 false）',
+  assertSucceeds(getDoc(doc(sC, 'churches/C/private/capabilities'))));
+await ok('inactive Church 即使 membership active 仍不可讀 capability',
+  assertFails(getDoc(doc(sX, 'churches/X/private/capabilities'))));
+await ok('student 不可寫 capability',
+  assertFails(setDoc(doc(sA, 'churches/A/private/capabilities'), { teacher_area: false })));
+await ok('admin 可讀 capability',
+  assertSucceeds(getDoc(doc(admin, 'churches/A/private/capabilities'))));
+await ok('admin 可寫 capability',
+  assertSucceeds(setDoc(doc(admin, 'churches/B/private/capabilities'), { teacher_area: true })));
 
 // ---- Membership（self-read / legal pending / no self-approve）----
 await ok('student 可讀自己的 membership', assertSucceeds(getDoc(doc(sA, 'memberships/sA'))));

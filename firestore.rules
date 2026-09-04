@@ -123,9 +123,19 @@ service cloud.firestore {
     }
 
     // ---- Church / Membership（Church/Teacher R1）----
-    // churches：只讀 active 的公開表示；私有資料在 churches/{id}/private/**（admin-only）。
+    // churches：只讀 active 的公開表示。Teacher Area capability 放在 private 子文件，
+    // Student 只能 direct-get 自己 Active Membership 對應的 capability；不得讀其他
+    // Church，也不得藉 public picker 枚舉哪些 Church 有 private Teacher Area。
     match /churches/{churchId} {
       allow read: if resource.data.active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+    match /churches/{churchId}/private/capabilities {
+      allow read: if isAdmin()
+        || (isSignedIn()
+            && activeChurchId() == churchId
+            && exists(/databases/$(database)/documents/churches/$(churchId))
+            && get(/databases/$(database)/documents/churches/$(churchId)).data.active == true);
       allow write: if isAdmin();
     }
     match /churches/{churchId}/private/{doc} {

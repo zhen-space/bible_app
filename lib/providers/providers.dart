@@ -483,23 +483,18 @@ final authorizedTeachingsProvider =
       .fetchAuthorizedTeachings(chapterId, auth);
 });
 
-/// 老師專區入口是否顯示：**至少存在一個完整 authorized hierarchy**
-/// （authorized book → authorized chapter → authorized teaching）。
-/// 只有 unauthorized 資料時**不顯示**（不因 private metadata 曝光入口）。
+/// 老師專區入口 eligibility 的唯一 authority：
+/// Active Membership + 該 Active Church private `teacher_area` capability。
+///
+/// capability 與 Published Teaching 數量完全分離；即使目前沒有任何 authorized
+/// teaching，只要 capability=true，入口仍存在並由 TeacherAreaScreen 顯示 empty state。
 final teacherEntryVisibleProvider = FutureProvider<bool>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return false;
-  final auth = await ref.watch(myAuthProvider.future);
-  final scRepo = ref.watch(studyContentRepositoryProvider);
-  final tRepo = ref.watch(teacherRepositoryProvider);
-  final books = await tRepo.fetchAuthorizedBooks(auth);
-  for (final b in books) {
-    final chapters = await tRepo.fetchAuthorizedChapters(b.id, auth);
-    for (final c in chapters) {
-      final teachings = await scRepo.fetchAuthorizedTeachings(c.id, auth);
-      if (teachings.isNotEmpty) return true;
-    }
-  }
-  return false;
+  final uid = ref.watch(authUserProvider).value?.uid;
+  if (uid == null) return false;
+  return ref
+      .watch(churchRepositoryProvider)
+      .hasTeacherAreaForActiveChurch(uid);
 });
 
 // Admin 老師專區。

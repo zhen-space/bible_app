@@ -51,6 +51,17 @@ created_at: int
 ```
 私有欄位（member 統計、營運）一律放 `churches/{churchId}/private/admin`，Student 永不讀。
 
+Teacher Area capability 另存為精確的私有子文件：
+```
+churches/{churchId}/private/capabilities
+teacher_area: bool
+```
+- 這是「Teacher Area 入口是否存在」的 authority，**不是**內容授權，也不由 Published
+  Teaching count 推導。
+- Student 只能 direct-get 自己 Active Membership 對應的 Church capability，不可 list／scan，
+  也不可讀其他 Church；其餘 private 文件仍為 Admin-only。
+- 缺 doc、缺 `teacher_area`、非 bool 或未知值一律視為 false（fail-closed）。
+
 ### 2.2 `memberships/{uid}`（doc id = uid → 結構性保證每人至多一筆 → 至多一個 Active）
 ```
 uid: string                  // = doc id
@@ -124,6 +135,7 @@ saved_at: int
 | 目前 active churchId | **`memberships/{uid}`（Admin-authoritative，Student 不可自寫 status/church_id）** |
 | Membership 狀態 | `memberships/{uid}.status` |
 | Church 是否可申請/發佈 | `churches/{churchId}.active` |
+| Teacher Area 入口是否存在 | Active Membership＋Active Church＋該 Church private `capabilities.teacher_area==true` |
 | Saved 能否開啟 | **open-time** 走 authorization-aware repo（saved doc 不是 authority） |
 | Q&A citation 能否開啟 | open-time re-resolve（snapshot 不是 authority） |
 
@@ -289,7 +301,8 @@ audienceOK() = resource.data.audience=='public'
 | collection | Student read | write |
 |---|---|---|
 | `churches/{id}` | `resource.data.active==true` 或 isAdmin() | isAdmin() |
-| `churches/{id}/private/**` | **deny** | isAdmin() |
+| `churches/{id}/private/capabilities` | 本人 `activeChurchId()==id` 且 parent Church active；否則 deny | isAdmin() |
+| `churches/{id}/private/{other}` | **deny** | isAdmin() |
 | `memberships/{uid}` | `request.auth.uid==uid` 或 isAdmin() | **create**：本人且 `status=='pending'` 且未設 reviewed/rejected/revoked 且 target church `active==true`；**update/delete（approve/reject/revoke/set active/church）**：isAdmin() |
 | `memberships/{uid}/history/**` | **deny** | isAdmin() |
 | `study_content/{id}` | `(isPub() && audienceOK())` 或 isAdmin() | isAdmin() |
