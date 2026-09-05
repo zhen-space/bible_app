@@ -24,16 +24,22 @@ class AdminChurchesScreen extends ConsumerWidget {
         data: (churches) => churches.isEmpty
             ? const Center(
                 child: Padding(
-                    padding: EdgeInsets.all(32), child: Text('尚無教會。右下角可新增。')))
+                  padding: EdgeInsets.all(32),
+                  child: Text('尚無教會。右下角可新增。'),
+                ),
+              )
             : ListView(
                 children: [
                   for (final c in churches)
                     ListTile(
                       leading: const Icon(Icons.church_outlined),
-                      title: Text(c.name.isEmpty ? c.id : c.name,
-                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      title: Text(
+                        c.name.isEmpty ? c.id : c.name,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
                       subtitle: Text(
-                          '${c.region.isEmpty ? '' : '${c.region} · '}${c.active ? 'Active' : 'Inactive'}'),
+                        '${c.region.isEmpty ? '' : '${c.region} · '}${c.active ? 'Active' : 'Inactive'}',
+                      ),
                       trailing: Switch(
                         value: c.active,
                         onChanged: (v) async {
@@ -51,57 +57,87 @@ class AdminChurchesScreen extends ConsumerWidget {
     );
   }
 
-  void _edit(BuildContext context, WidgetRef ref, Church? c) {
+  Future<void> _edit(BuildContext context, WidgetRef ref, Church? c) async {
+    final repo = ref.read(churchRepositoryProvider);
+    final capabilities = c == null
+        ? ChurchCapabilities.disabled()
+        : await repo.fetchChurchCapabilities(c.id);
+    if (!context.mounted) return;
     final id = TextEditingController(text: c?.id ?? '');
     final name = TextEditingController(text: c?.name ?? '');
     final region = TextEditingController(text: c?.region ?? '');
     bool active = c?.active ?? false;
+    bool teacherArea = capabilities.teacherArea;
     showDialog<void>(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setLocal) => AlertDialog(
           title: Text(c == null ? '新增教會' : '編輯教會'),
           content: SingleChildScrollView(
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextField(
-                controller: id,
-                enabled: c == null,
-                decoration: const InputDecoration(
-                    labelText: 'ID / slug（建立後不可改）', isDense: true),
-              ),
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: '教會名稱', isDense: true),
-              ),
-              TextField(
-                controller: region,
-                decoration:
-                    const InputDecoration(labelText: '地區（選填，可公開）', isDense: true),
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Active（可申請／可作為發佈對象）'),
-                value: active,
-                onChanged: (v) => setLocal(() => active = v),
-              ),
-            ]),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: id,
+                  enabled: c == null,
+                  decoration: const InputDecoration(
+                    labelText: 'ID / slug（建立後不可改）',
+                    isDense: true,
+                  ),
+                ),
+                TextField(
+                  controller: name,
+                  decoration: const InputDecoration(
+                    labelText: '教會名稱',
+                    isDense: true,
+                  ),
+                ),
+                TextField(
+                  controller: region,
+                  decoration: const InputDecoration(
+                    labelText: '地區（選填，可公開）',
+                    isDense: true,
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Active（可申請／可作為發佈對象）'),
+                  value: active,
+                  onChanged: (v) => setLocal(() => active = v),
+                ),
+                SwitchListTile(
+                  key: const Key('church-teacher-area-switch'),
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('老師專區'),
+                  subtitle: const Text('開放此教會的老師專區入口'),
+                  value: teacherArea,
+                  onChanged: (v) => setLocal(() => teacherArea = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('取消')),
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
             FilledButton(
               onPressed: () async {
                 final cid = id.text.trim();
                 if (cid.isEmpty) return;
-                await ref.read(churchRepositoryProvider).saveChurch(Church(
-                      id: cid,
-                      name: name.text.trim(),
-                      region: region.text.trim(),
-                      active: active,
-                      createdAt: c?.createdAt ??
-                          DateTime.now().millisecondsSinceEpoch,
-                    ));
+                await repo.saveChurch(
+                  Church(
+                    id: cid,
+                    name: name.text.trim(),
+                    region: region.text.trim(),
+                    active: active,
+                    createdAt:
+                        c?.createdAt ?? DateTime.now().millisecondsSinceEpoch,
+                  ),
+                );
+                await repo.saveChurchCapabilities(
+                  ChurchCapabilities(churchId: cid, teacherArea: teacherArea),
+                );
                 ref.invalidate(adminAllChurchesProvider);
                 if (context.mounted) Navigator.pop(context);
               },
@@ -131,7 +167,10 @@ class AdminMembershipRequestsScreen extends ConsumerWidget {
         data: (list) => list.isEmpty
             ? const Center(
                 child: Padding(
-                    padding: EdgeInsets.all(32), child: Text('目前沒有待審申請。')))
+                  padding: EdgeInsets.all(32),
+                  child: Text('目前沒有待審申請。'),
+                ),
+              )
             : ListView(
                 children: [
                   for (final m in list)
@@ -139,29 +178,41 @@ class AdminMembershipRequestsScreen extends ConsumerWidget {
                       margin: const EdgeInsets.all(8),
                       child: ListTile(
                         title: Text('使用者 ${m.uid}'),
-                        subtitle: Text('申請加入：${m.churchId}｜狀態：${m.status?.label ?? ''}'),
-                        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                          TextButton(
-                            onPressed: () => _act(ref, () => ref
-                                .read(churchRepositoryProvider)
-                                .approveMembership(m.uid, email)),
-                            child: const Text('通過'),
-                          ),
-                          TextButton(
-                            onPressed: () => _act(ref, () => ref
-                                .read(churchRepositoryProvider)
-                                .rejectMembership(m.uid, email)),
-                            child: const Text('退回'),
-                          ),
-                        ]),
+                        subtitle: Text(
+                          '申請加入：${m.churchId}｜狀態：${m.status?.label ?? ''}',
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextButton(
+                              onPressed: () => _act(
+                                ref,
+                                () => ref
+                                    .read(churchRepositoryProvider)
+                                    .approveMembership(m.uid, email),
+                              ),
+                              child: const Text('通過'),
+                            ),
+                            TextButton(
+                              onPressed: () => _act(
+                                ref,
+                                () => ref
+                                    .read(churchRepositoryProvider)
+                                    .rejectMembership(m.uid, email),
+                              ),
+                              child: const Text('退回'),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   const Padding(
                     padding: EdgeInsets.all(16),
                     child: Text(
-                        '註：每位使用者最多一筆會籍（doc-id=uid）。已有 Active 教會者不能被核准第二間；'
-                        '需先 Revoke 目前會籍。',
-                        style: TextStyle(fontSize: 12)),
+                      '註：每位使用者最多一筆會籍（doc-id=uid）。已有 Active 教會者不能被核准第二間；'
+                      '需先 Revoke 目前會籍。',
+                      style: TextStyle(fontSize: 12),
+                    ),
                   ),
                 ],
               ),
