@@ -21,7 +21,9 @@ void main() {
     final hub = File('lib/screens/bible_hub_screen.dart').readAsStringSync();
 
     expect(
-        hub, contains('ref.watch(teacherEntryVisibleProvider).value == true'));
+      hub,
+      contains('ref.watch(teacherEntryVisibleProvider).value == true'),
+    );
     expect(hub, contains("'聖經／信仰問答'"));
     expect(hub, contains("'研讀內容'"));
     expect(hub, contains("'閱讀聖經'"));
@@ -29,10 +31,11 @@ void main() {
   });
 
   test('capability=true 但 0 authorized books 時仍有 Teacher Area empty state', () {
-    final screen =
-        File('lib/screens/teacher_area_screen.dart').readAsStringSync();
+    final screen = File(
+      'lib/screens/teacher_area_screen.dart',
+    ).readAsStringSync();
 
     expect(screen, contains('books.isEmpty'));
-    expect(screen, contains('目前沒有可瀏覽的老師專區內容。'));
+    expect(screen, contains('目前還沒有可閱讀的內容。'));
   });
 }
