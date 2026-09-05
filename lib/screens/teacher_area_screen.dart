@@ -20,7 +20,7 @@ class TeacherAreaScreen extends ConsumerWidget {
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => const _Empty('目前無法載入老師專區。'),
         data: (books) => books.isEmpty
-            ? const _Empty('目前沒有可瀏覽的老師專區內容。')
+            ? const _Empty('目前還沒有可閱讀的內容。')
             : ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
@@ -29,23 +29,30 @@ class TeacherAreaScreen extends ConsumerWidget {
                       margin: const EdgeInsets.symmetric(vertical: 4),
                       child: ListTile(
                         leading: const Icon(Icons.menu_book_outlined),
-                        title: Text(b.title.isEmpty ? b.id : b.title,
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        title: Text(
+                          b.title.isEmpty ? b.id : b.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (b.audience == Audience.church)
                               churchBadge(context),
                             if (b.description.isNotEmpty)
-                              Text(b.description,
-                                  maxLines: 2, overflow: TextOverflow.ellipsis),
+                              Text(
+                                b.description,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                           ],
                         ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => TeacherBookDetailScreen(book: b))),
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => TeacherBookDetailScreen(book: b),
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -73,23 +80,30 @@ class TeacherBookDetailScreen extends ConsumerWidget {
             if (book.description.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.all(8),
-                child: Text(book.description,
-                    style: Theme.of(context).textTheme.bodyMedium),
+                child: Text(
+                  book.description,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
               ),
             if (chapters.isEmpty) const _Empty('此書卷目前沒有可瀏覽的章。'),
             for (final c in chapters)
               Card(
                 margin: const EdgeInsets.symmetric(vertical: 4),
                 child: ListTile(
-                  title: Text(c.title.isEmpty ? c.id : c.title,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                  subtitle:
-                      c.audience == Audience.church ? churchBadge(context) : null,
+                  title: Text(
+                    c.title.isEmpty ? c.id : c.title,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  subtitle: c.audience == Audience.church
+                      ? churchBadge(context)
+                      : null,
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => TeacherChapterScreen(chapter: c))),
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => TeacherChapterScreen(chapter: c),
+                    ),
+                  ),
                 ),
               ),
           ],
@@ -121,18 +135,21 @@ class TeacherChapterScreen extends ConsumerWidget {
                       margin: const EdgeInsets.symmetric(vertical: 4),
                       child: ListTile(
                         leading: const Icon(Icons.article_outlined),
-                        title: Text(t.title.isEmpty ? '(未命名)' : t.title,
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                        title: Text(
+                          t.title.isEmpty ? '(未命名)' : t.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
                         subtitle: t.audience == Audience.church
                             ? churchBadge(context)
                             : null,
                         trailing: const Icon(Icons.chevron_right),
                         // Teaching 本體＝Study Content → reuse detail。
                         onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) =>
-                                    StudentStudyContentDetail(item: t))),
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => StudentStudyContentDetail(item: t),
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -147,14 +164,15 @@ class _Empty extends StatelessWidget {
   const _Empty(this.message);
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Text(message,
-              textAlign: TextAlign.center,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Theme.of(context).colorScheme.outline)),
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Text(
+        message,
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: Theme.of(context).colorScheme.outline,
         ),
-      );
+      ),
+    ),
+  );
 }
