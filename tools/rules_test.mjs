@@ -62,6 +62,9 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   // Q&A audience gate（B19）：church-sourced answer confidentiality。
   await setDoc(doc(db, 'questions/q_chA'), { uid: 'someone', status: 'approved', published: true, audience: 'church', allowed_church_ids: ['A'], answer: { content: 'a' } });
   await setDoc(doc(db, 'questions/q_noaud'), { uid: 'someone', status: 'approved', published: true, answer: { content: 'a' } }); // 缺 audience → fail-closed
+  // Teacher Area capability gate（§B7）：required_capabilities 含 teacher_area。
+  await setDoc(doc(db, 'questions/q_ta_A'), { uid: 'someone', status: 'approved', published: true, audience: 'church', allowed_church_ids: ['A'], required_capabilities: ['teacher_area'], answer: { content: 'a' } });
+  await setDoc(doc(db, 'questions/q_ta_B'), { uid: 'someone', status: 'approved', published: true, audience: 'church', allowed_church_ids: ['B'], required_capabilities: ['teacher_area'], answer: { content: 'a' } });
   await setDoc(doc(db, 'questions/q_mine_unpub'), { uid: 'sNone', status: 'pending', published: false });
   // Study Content：學生可讀 ⇔ published && visibility==student（兩者缺一不可、fail-closed）。
   // Church/Teacher R1：audience 授權（study_content / study_topics / teacher / church / membership）。
@@ -178,6 +181,11 @@ await ok('Q&A published 缺 audience → 非本人 fail-closed', assertFails(get
 await ok('Q&A published 缺 audience → guest fail-closed', assertFails(getDoc(doc(guest, 'questions/q_noaud'))));
 await ok('Q&A 本人可讀自己未發布問題', assertSucceeds(getDoc(doc(sNone, 'questions/q_mine_unpub'))));
 await ok('Q&A admin 可讀缺 audience question', assertSucceeds(getDoc(doc(admin, 'questions/q_noaud'))));
+// Teacher Area capability gate（§B7）
+await ok('Q&A teacher_area church A → active A + capability 可讀', assertSucceeds(getDoc(doc(sA, 'questions/q_ta_A'))));
+await ok('Q&A teacher_area church B → active B 但無 capability → 不可讀', assertFails(getDoc(doc(sB, 'questions/q_ta_B'))));
+await ok('Q&A teacher_area church A → active B 不可讀（audience 先擋）', assertFails(getDoc(doc(sB, 'questions/q_ta_A'))));
+await ok('Q&A teacher_area church A → no membership 不可讀', assertFails(getDoc(doc(sNone, 'questions/q_ta_A'))));
 
 // 提問者不可自我發佈：create 必須 pending + published:false。
 await ok('student 建立問題必須 pending+published:false',

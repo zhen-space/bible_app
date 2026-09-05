@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../services/bible_repository.dart';
+import '../utils/date_key.dart';
 import '../services/content_service.dart';
 import '../services/content_workflow_service.dart';
 import '../services/annotation_admin_repository.dart';
@@ -355,12 +356,8 @@ final chapterCompleteProvider =
 });
 
 /// 今天的日期字串 YYYY-MM-DD（每日經文 doc id）。
-String _todayYmd() {
-  final n = DateTime.now();
-  return '${n.year.toString().padLeft(4, '0')}-'
-      '${n.month.toString().padLeft(2, '0')}-'
-      '${n.day.toString().padLeft(2, '0')}';
-}
+/// **權威日期鍵＝Asia/Taipei（§A5）**，非裝置本地時區；與 Admin/Preview 共用同一 helper。
+String _todayYmd() => taipeiTodayYmd();
 
 /// 官方每日經文（管理者發佈，Firestore `daily_verses`）。
 /// **正式來源**；抓到就快取；離線退回快取。都沒有回 null（由 dailyVerseProvider 決定退路）。
@@ -706,9 +703,9 @@ final qaRetrievalProvider = FutureProvider.family<QaRetrievalResult,
     ({String query, String category})>((ref, args) async {
   if (!ref.watch(firebaseReadyProvider)) return const QaRetrievalResult([]);
   final auth = await ref.watch(myAuthProvider.future);
-  return ref
-      .watch(qaServiceProvider)
-      .retrieveApproved(args.query, category: args.category, auth: auth);
+  final hasTa = await ref.watch(teacherEntryVisibleProvider.future);
+  return ref.watch(qaServiceProvider).retrieveApproved(args.query,
+      category: args.category, auth: auth, activeChurchHasTeacherArea: hasTa);
 });
 
 /// 混合式快取：雲端內容抓到就存 SharedPreferences；離線或抓取失敗時
@@ -934,11 +931,12 @@ final publishedQuestionsProvider =
     FutureProvider.family<List<Question>, String>((ref, category) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
   // Church-sourced answer confidentiality：以目前授權過濾（public∪my-church），
-  // missing/internal audience → fail-closed（不外流）。rules 為真正邊界。
+  // missing/internal audience → fail-closed（不外流）；Teacher Area 來源另需 capability。
+  // rules 為真正邊界，此為防禦性同源過濾。
   final auth = await ref.watch(myAuthProvider.future);
-  return ref
-      .watch(qaServiceProvider)
-      .publishedQuestions(category: category, auth: auth);
+  final hasTa = await ref.watch(teacherEntryVisibleProvider.future);
+  return ref.watch(qaServiceProvider).publishedQuestions(
+      category: category, auth: auth, activeChurchHasTeacherArea: hasTa);
 });
 
 /// 管理者：已回答但尚未發布的佇列（供發布）。非學生端來源。

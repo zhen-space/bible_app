@@ -47,6 +47,13 @@ service cloud.firestore {
         ? get(/databases/$(database)/documents/memberships/$(request.auth.uid)).data.church_id
         : null;
     }
+    // 目前 Active Church 是否具 teacher_area capability（private/capabilities，fail-closed）。
+    // 缺 membership／非 active／缺 capability doc／缺欄位／型別錯 → false。
+    function activeChurchHasTeacherArea() {
+      return activeChurchId() != null
+        && exists(/databases/$(database)/documents/churches/$(activeChurchId())/private/capabilities)
+        && get(/databases/$(database)/documents/churches/$(activeChurchId())/private/capabilities).data.teacher_area == true;
+    }
     // Student 可讀 ⇔ published 且（public，或 church 且 activeChurchId ∈ allowedChurchIds）。
     // audience 缺失/'internal'、church 但 allowedChurchIds 空/無授權 → 全 false（fail-closed）。
     function audienceOK() {
@@ -219,14 +226,24 @@ service cloud.firestore {
     // 本人可讀自己的（含未發佈，看狀態）、管理員可讀全部。
     // 提問者只能建立 status=='pending' 且 published==false 的自己的問題（不得自我發佈/回答）。
     // 審核／回答／發布／精選只有管理員能寫。提問者可刪自己的問題。
+    // Teacher Area 來源的 Answer（required_capabilities 含 'teacher_area'）另需 Active Church
+    // 具 teacher_area capability（§B7）；缺欄位視為空清單（不加限制）。
+    function qaCapabilitiesOK() {
+      return !('required_capabilities' in resource.data)
+        || !(resource.data.required_capabilities is list)
+        || !('teacher_area' in resource.data.required_capabilities)
+        || activeChurchHasTeacherArea();
+    }
     function qaAudienceOK() {
-      return resource.data.published == true && (
-        resource.data.audience == 'public'
-        || (resource.data.audience == 'church'
-            && resource.data.allowed_church_ids is list
-            && activeChurchId() != null
-            && (activeChurchId() in resource.data.allowed_church_ids))
-      );
+      return resource.data.published == true
+        && qaCapabilitiesOK()
+        && (
+          resource.data.audience == 'public'
+          || (resource.data.audience == 'church'
+              && resource.data.allowed_church_ids is list
+              && activeChurchId() != null
+              && (activeChurchId() in resource.data.allowed_church_ids))
+        );
     }
     match /questions/{id} {
       allow create: if isSignedIn()

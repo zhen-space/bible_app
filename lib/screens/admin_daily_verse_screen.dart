@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/managed_content.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
+import '../utils/date_key.dart';
 import 'admin_study_content_screen.dart' show statusBadge;
 
 /// 每日經文後台。workflow：Draft→Review→Published（+Rejected/Archived），
@@ -11,15 +12,25 @@ import 'admin_study_content_screen.dart' show statusBadge;
 /// doc id＝日期 ⇒ **每個日期至多一筆對外版本（one active per date 為結構不變量）**；
 /// 要換內容＝從現行版本「建立替代草稿」→審核→發布（版本 +1、舊版入 versions）。
 /// 學生端只在 date==today 且 published 顯示；未來日期先發布不會提前出現（fail-closed）。
-class AdminDailyVerseScreen extends ConsumerWidget {
+class AdminDailyVerseScreen extends ConsumerStatefulWidget {
   const AdminDailyVerseScreen({super.key});
 
   static const _type = 'daily_verses';
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AdminDailyVerseScreen> createState() =>
+      _AdminDailyVerseScreenState();
+}
+
+class _AdminDailyVerseScreenState extends ConsumerState<AdminDailyVerseScreen> {
+  String _filter = 'all';
+
+  @override
+  Widget build(BuildContext context) {
+    final ref = this.ref;
     final listAsync = ref.watch(adminDailyVerseListProvider);
-    final todayYmd = _ymd(DateTime.now());
+    final filter = _filter;
+    final todayYmd = taipeiTodayYmd(); // §A5：權威日期鍵＝Asia/Taipei（非裝置時區）
     return Scaffold(
       appBar: AppBar(title: const Text('每日經文')),
       floatingActionButton: FloatingActionButton.extended(
@@ -30,53 +41,111 @@ class AdminDailyVerseScreen extends ConsumerWidget {
       body: listAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (rows) => rows.isEmpty
-            ? const Center(
-                child: Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Text('尚無每日經文。右下角可新增。')))
-            : ListView.separated(
-                itemCount: rows.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (_, i) {
-                  final r = rows[i];
-                  final date = r['_date'] as String;
-                  final status = ContentStatus.fromName(r['status'] as String?);
-                  final when = date.compareTo(todayYmd) == 0
-                      ? '今天'
-                      : (date.compareTo(todayYmd) > 0 ? '未來' : '過去');
-                  // 有新版草稿：已有 published，但編輯真相（workspace）尚在 draft/review/rejected。
-                  final hasReplacementDraft = r['_has_published'] == true &&
-                      status != ContentStatus.published &&
-                      status != ContentStatus.archived;
-                  return ListTile(
-                    title: Text('$date · $when',
-                        style: const TextStyle(fontWeight: FontWeight.w600)),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Wrap(spacing: 6, runSpacing: 4, children: [
-                        statusBadge(context, status),
-                        Text(_scriptureText(r)),
-                        if (hasReplacementDraft)
-                          Text('· 有新版草稿',
-                              style: TextStyle(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  fontWeight: FontWeight.w600)),
-                      ]),
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => _openEditor(context, ref, r),
-                  );
-                },
+        data: (rows) {
+          // §A11：今日無服務中 Published（date==today 且 status==published）→ 高可見度警示。
+          final hasTodayPublished = rows.any((r) =>
+              r['_date'] == todayYmd && r['_published_status'] == 'published');
+          final filtered =
+              rows.where((r) => _matchesFilter(r, filter)).toList();
+          return Column(children: [
+            _FilterBar(
+                value: _filter,
+                onChanged: (v) => setState(() => _filter = v)),
+            if (!hasTodayPublished)
+              Container(
+                width: double.infinity,
+                color: Theme.of(context).colorScheme.errorContainer,
+                padding: const EdgeInsets.all(12),
+                child: Text('⚠️ 今日（$todayYmd，台北）尚無服務中的 Published 每日經文，學生首頁將顯示「今日經文尚未提供」。',
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer)),
               ),
+            Expanded(
+              child: filtered.isEmpty
+                  ? const Center(
+                      child: Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Text('此篩選下沒有每日經文。')))
+                  : ListView.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, i) =>
+                          _row(context, ref, filtered[i], todayYmd),
+                    ),
+            ),
+          ]);
+        },
       ),
     );
+  }
+
+  Widget _row(BuildContext context, WidgetRef ref, Map<String, dynamic> r,
+      String todayYmd) {
+    final date = r['_date'] as String;
+    final status = ContentStatus.fromName(r['status'] as String?);
+    final when = date.compareTo(todayYmd) == 0
+        ? '今天'
+        : (date.compareTo(todayYmd) > 0 ? '未來' : '過去');
+    final hasReplacementDraft = r['_has_published'] == true &&
+        status != ContentStatus.published &&
+        status != ContentStatus.archived;
+    final pubVer = r['_published_version'];
+    final pubBy = r['_published_by'];
+    final pubAt = r['_published_at'];
+    String d(dynamic ms) => ms is int && ms > 0
+        ? DateTime.fromMillisecondsSinceEpoch(ms).toString().substring(0, 16)
+        : '—';
+    return ListTile(
+      title: Text('$date · $when',
+          style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(spacing: 6, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            statusBadge(context, status),
+            Text(_scriptureText(r)),
+            if (hasReplacementDraft)
+              Text('· 有新版草稿（服務中仍為現行 Published）',
+                  style: TextStyle(
+                      color: Theme.of(context).colorScheme.primary,
+                      fontWeight: FontWeight.w600)),
+          ]),
+          // 現行服務中的 Published 版本 + publishedAt/publisher。
+          if (r['_published_status'] == 'published' && pubVer != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('服務中 Published v$pubVer · ${pubBy ?? '—'} · ${d(pubAt)}',
+                  style: Theme.of(context).textTheme.bodySmall),
+            ),
+        ]),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () => _openEditor(context, ref, r),
+    );
+  }
+
+  /// 依編輯真相 status（+ 是否有服務中 Published）過濾。
+  bool _matchesFilter(Map<String, dynamic> r, String filter) {
+    final status = (r['status'] as String?) ?? 'draft';
+    switch (filter) {
+      case 'draft_review':
+        return status == 'draft' || status == 'review';
+      case 'published':
+        return r['_published_status'] == 'published';
+      case 'rejected':
+        return status == 'rejected';
+      case 'archived':
+        return status == 'archived' || r['_published_status'] == 'archived';
+      default:
+        return true;
+    }
   }
 
   static String _scriptureText(Map<String, dynamic> r) {
     final b = r['book_id'], c = r['chapter'], v = r['verse'];
     if (b == null) return '(未設定經文)';
-    return '書$b $c:$v';
+    final rt = r['ref_text'];
+    return (rt is String && rt.isNotEmpty) ? rt : '書$b $c:$v';
   }
 
   void _openEditor(
@@ -86,9 +155,38 @@ class AdminDailyVerseScreen extends ConsumerWidget {
       MaterialPageRoute(builder: (_) => DailyVerseEditor(row: row)),
     ).then((_) => ref.invalidate(adminDailyVerseListProvider));
   }
+}
 
-  static String _ymd(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+/// 清單狀態過濾列（全部／草稿·審核／已發布／已退回／已封存）。
+class _FilterBar extends StatelessWidget {
+  const _FilterBar({required this.value, required this.onChanged});
+  final String value;
+  final ValueChanged<String> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    const opts = [
+      ('all', '全部'),
+      ('draft_review', '草稿/審核'),
+      ('published', '已發布'),
+      ('rejected', '已退回'),
+      ('archived', '已封存'),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(children: [
+        for (final (val, label) in opts)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text(label),
+              selected: value == val,
+              onSelected: (_) => onChanged(val),
+            ),
+          ),
+      ]),
+    );
+  }
 }
 
 class DailyVerseEditor extends ConsumerStatefulWidget {
@@ -121,7 +219,8 @@ class _DailyVerseEditorState extends ConsumerState<DailyVerseEditor> {
   void initState() {
     super.initState();
     final d = row?['_date'] as String?;
-    _date = d != null ? DateTime.parse(d) : DateTime.now();
+    // 新建預設＝台北今日（非裝置時區；避免跨午夜選錯日）。
+    _date = d != null ? DateTime.parse(d) : DateTime.parse(taipeiTodayYmd());
     // 以既存的節位字串回填（若無則空，等使用者輸入）。
     _ref = TextEditingController(text: (row?['ref_text'] as String?) ?? '');
     _title = TextEditingController(text: (row?['title'] as String?) ?? '');

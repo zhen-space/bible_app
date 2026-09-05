@@ -229,6 +229,9 @@ class AnswerSource {
   // access=='church' 時，該來源建立當時的授權教會集合快照（供 Answer audience 交集推導）。
   // 其餘 access 不作 authority。
   final List<String> allowedChurchIds;
+  // 此來源要求的教會 capability（Teacher Area 來源＝['teacher_area']）；供 Answer 推導
+  // required_capabilities 聯集，學生需其 Active Church 具備該 capability 才可讀（§B7）。
+  final List<String> requiredCapabilities;
 
   const AnswerSource(
       {required this.contentId,
@@ -237,7 +240,8 @@ class AnswerSource {
       this.evidence = '',
       this.access = '',
       this.ref = '',
-      this.allowedChurchIds = const []});
+      this.allowedChurchIds = const [],
+      this.requiredCapabilities = const []});
 
   /// scripture 一律可開；study_content 的 **public**（或 legacy 'student'）可開；
   /// **church** 需 open-time 依現時授權 live-resolve（見學生端）；internal 不可開。
@@ -256,6 +260,10 @@ class AnswerSource {
         allowedChurchIds: ((m['allowed_church_ids'] as List?) ?? const [])
             .map((e) => e.toString())
             .toList(),
+        requiredCapabilities:
+            ((m['required_capabilities'] as List?) ?? const [])
+                .map((e) => e.toString())
+                .toList(),
       );
 
   Map<String, dynamic> toMap() => {
@@ -266,5 +274,7 @@ class AnswerSource {
         'access': access,
         'ref': ref,
         if (allowedChurchIds.isNotEmpty) 'allowed_church_ids': allowedChurchIds,
+        if (requiredCapabilities.isNotEmpty)
+          'required_capabilities': requiredCapabilities,
       };
 }

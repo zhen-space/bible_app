@@ -305,6 +305,16 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 - **schema 影響（additive）**：questions 加 `audience`/`allowed_church_ids`（由 publishAnswer 寫）；AnswerSource 加 `allowed_church_ids`。**⚠️ 既有 published Q&A 無 audience → 部署新 rules 後對學生 fail-closed 隱藏**，需另開 backfill stage（本輪未做、未 deploy）。
 - **測試**：`test/qa_answersource_test.dart`（20：derive 矩陣／studentReadable／publishedQuestions 授權過濾／publishAnswer 寫入／sourceProblem cases 10-14／序列化）＋`test/daily_verse_admin_test.dart`（11：date gate／workflow／replacement 版本＋one-active-per-date／published 唯讀／archive fail-closed／title-content）＋rules Q&A audience 8 案。**flutter test 174／rules 108／analyze clean／兩 build 通過。** Q&A safety contract 未改（human-curated／no LLM／no Web／insufficient／pending 不入語料）。無 deploy／無 migration apply／無 production 觸碰。
 
+## Admin R1 收尾（Daily Verse timezone/list ＋ Q&A Teacher Area capability，baseline 0eae880）
+
+只補 partial/missing gap，不重寫既有（大部分 A/B 已於 4df42ce 完成、Teacher Area capability contract 已於 PR#6 完成，皆沿用）。
+- **§A5 權威日期鍵＝Asia/Taipei**：新 `utils/date_key.dart`（`taipeiTodayYmd`/`taipeiYmd`，UTC+8 固定）。Student `_todayYmd`、Admin list `todayYmd`、新建預設日、Preview 一律共用，**不再用裝置時區**。`test/date_key_test.dart`（3）。
+- **§A2/§A11 Daily Verse list**：加狀態 filter（全部/草稿·審核/已發布/已退回/已封存）、現行服務中 Published 版本＋publishedAt/publisher、「有新版草稿（服務中仍為現行 Published）」、**今日無服務中 Published 高可見度警示**。screen 改 ConsumerStatefulWidget（Riverpod 3 無 StateProvider，用 local state）。
+- **§B7 Q&A Teacher Area capability**：`AnswerSource.requiredCapabilities`＋`Question.requiredCapabilities`；`DerivedAnswerAudience` 聯集 requiredCapabilities（teacher-area source＝`['teacher_area']`，以 live `teacher_book_id` 判定）；`studentReadable(activeChurchId,{activeChurchHasTeacherArea})` 加 capability gate；`publishAnswer` 寫 `required_capabilities`；`publishedQuestions/retrieveApproved/ask` 吃 `activeChurchHasTeacherArea`（provider 由 `teacherEntryVisibleProvider` 提供）。picker 標「老師專區 · Church · …」；audience 預覽標「該教會須具老師專區權限」。
+- **rules**：`qaCapabilitiesOK()`（required_capabilities 含 teacher_area → 需 `activeChurchHasTeacherArea()` get capabilities doc；缺欄位 `in` guard 不加限制）併入 `qaAudienceOK()`。additive schema（questions 加 `required_capabilities`；AnswerSource 加 `required_capabilities`），無新 index。
+- **測試**：qa_answersource_test 加 Teacher Area capability（8）；rules 加 teacher_area gate（4，用既有 churches/A cap=true、churches/B cap=false 種子）。**flutter test 190／rules 123／analyze clean／兩 build 通過。**
+- **未做（partial/deferred，gap matrix 已列）**：Daily Verse structured Book→Chapter→Verse selector＋range（§A3；目前 ref-text＋VerseLocator，結構 locator 已存，input 仍文字、無範圍）；one-active-per-date 顯式 transaction（§A6；結構 doc-id=date 已保證單一 active，無 runTransaction 併發拒絕）。無 deploy／migration／backfill／production 觸碰。
+
 ## 開發守則（歷史教訓）
 
 1. **深色模式**：顏色一律走 Theme / `AppTheme.highlightColor(c, isDark)`，不寫死

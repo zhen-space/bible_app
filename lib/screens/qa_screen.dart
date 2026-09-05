@@ -485,6 +485,9 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
         access: aud.name,
         allowedChurchIds:
             aud == Audience.church ? live.allowedChurchIds : const [],
+        // Teacher Area 來源以 **live** teacher_book_id 判定（不信任舊快照）。
+        requiredCapabilities:
+            live.teacherBookId.isNotEmpty ? const ['teacher_area'] : const [],
       ));
     }
     final derived =
@@ -543,7 +546,8 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
     await _admin(
         () => ref.read(qaServiceProvider).publishAnswer(q.id,
             audience: derived.audience,
-            allowedChurchIds: derived.allowedChurchIds),
+            allowedChurchIds: derived.allowedChurchIds,
+            requiredCapabilities: derived.requiredCapabilities),
         q.id);
   }
 
@@ -957,7 +961,10 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
       text = '此回答若發布：Public（全體學生可讀）';
     } else {
       c = Colors.indigo;
-      text = '此回答若發布：Church（僅 ${d.allowedChurchIds.join('、')} 的 Active 會員可讀）';
+      final ta = d.requiredCapabilities.contains('teacher_area')
+          ? '，且該教會須具老師專區權限'
+          : '';
+      text = '此回答若發布：Church（僅 ${d.allowedChurchIds.join('、')} 的 Active 會員$ta可讀）';
     }
     return Container(
       width: double.infinity,
@@ -1095,9 +1102,15 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
                       final aud = it.audience ?? Audience.internal;
                       // B6：Internal 不可作為學生 Q&A 依據 → disabled。
                       final internal = aud == Audience.internal;
+                      final teacher = it.teacherBookId.isNotEmpty; // §B4 老師專區來源
                       final churchNames = aud == Audience.church
                           ? it.allowedChurchIds.join('、')
                           : '';
+                      final scope = internal
+                          ? 'Internal · 不可作為學生 Q&A 發布依據'
+                          : (aud == Audience.church
+                              ? '${teacher ? '老師專區 · ' : ''}Church · $churchNames'
+                              : 'Public');
                       return ListTile(
                         enabled: !internal,
                         title: Text(it.title.isEmpty ? it.id : it.title),
@@ -1105,11 +1118,7 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
                           Text('${it.contentType?.label ?? ''} · v${it.version} · '),
                           Flexible(
                             child: Text(
-                              internal
-                                  ? 'Internal · 不可作為學生 Q&A 發布依據'
-                                  : (aud == Audience.church
-                                      ? 'Church · $churchNames'
-                                      : 'Public'),
+                              scope,
                               style: TextStyle(
                                 color: aud == Audience.public
                                     ? Colors.green.shade700
@@ -1142,6 +1151,9 @@ class _QaAnswerEditorState extends ConsumerState<QaAnswerEditor> {
         allowedChurchIds: chosen.audience == Audience.church
             ? chosen.allowedChurchIds
             : const [],
+        // Teacher Area 來源（掛在 teacher book）→ 需 teacher_area capability（§B7）。
+        requiredCapabilities:
+            chosen.teacherBookId.isNotEmpty ? const ['teacher_area'] : const [],
       ));
     });
   }

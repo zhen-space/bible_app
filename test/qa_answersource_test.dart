@@ -86,6 +86,63 @@ void main() {
     });
   });
 
+  group('Teacher Area capability（§B7）', () {
+    AnswerSource teacher(String church) => AnswerSource(
+        contentId: 't',
+        version: 1,
+        kind: 'study_content',
+        access: 'church',
+        allowedChurchIds: [church],
+        requiredCapabilities: const ['teacher_area']);
+
+    test('teacher-area source → church + requiredCapabilities=[teacher_area]', () {
+      final d = DerivedAnswerAudience.derive([teacher('A')]);
+      expect(d.audience, Audience.church);
+      expect(d.allowedChurchIds, ['A']);
+      expect(d.requiredCapabilities, ['teacher_area']);
+      expect(d.publishable, isTrue);
+    });
+
+    test('teacher-area + plain church（同教會）→ 交集保留、capability 聯集', () {
+      final plain = AnswerSource(
+          contentId: 'c', version: 1, kind: 'study_content',
+          access: 'church', allowedChurchIds: const ['A']);
+      final d = DerivedAnswerAudience.derive([teacher('A'), plain]);
+      expect(d.allowedChurchIds, ['A']);
+      expect(d.requiredCapabilities, ['teacher_area']);
+    });
+
+    Question q({List<String> caps = const []}) => Question.fromDoc('id', {
+          'published': true,
+          'audience': 'church',
+          'allowed_church_ids': ['A'],
+          'required_capabilities': caps,
+          'answer': {'content': 'a', 'answered_at': 1, 'updated_at': 1},
+        });
+
+    test('需 teacher_area：active A + capability → 可讀', () {
+      expect(
+          q(caps: ['teacher_area'])
+              .studentReadable('A', activeChurchHasTeacherArea: true),
+          isTrue);
+    });
+    test('需 teacher_area：active A 但無 capability → 不可讀（fail-closed）', () {
+      expect(
+          q(caps: ['teacher_area'])
+              .studentReadable('A', activeChurchHasTeacherArea: false),
+          isFalse);
+    });
+    test('需 teacher_area：非本教會（active B）→ 不可讀（audience 先擋）', () {
+      expect(
+          q(caps: ['teacher_area'])
+              .studentReadable('B', activeChurchHasTeacherArea: true),
+          isFalse);
+    });
+    test('不需 capability 的 church answer：有無 capability 皆依 audience', () {
+      expect(q().studentReadable('A', activeChurchHasTeacherArea: false), isTrue);
+    });
+  });
+
   group('Question.studentReadable（B18 audience gate）', () {
     Question q(String? audience, List<String> churches) => Question.fromDoc('id', {
           'status': 'approved',
