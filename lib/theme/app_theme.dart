@@ -87,8 +87,6 @@ class AppTheme {
     ),
     listTileTheme: const ListTileThemeData(iconColor: _gold),
     dividerTheme: const DividerThemeData(color: _cardBorder, thickness: 1),
-    bottomAppBarTheme: const BottomAppBarTheme(
-        color: Colors.white, elevation: 0, surfaceTintColor: Colors.transparent),
   );
 
   static final ThemeData dark = ThemeData(

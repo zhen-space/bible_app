@@ -55,7 +55,8 @@ class ChurchRepository {
   /// church 不存在／inactive、capability 文件或 `teacher_area` 缺失都回 false。
   /// 不 scan churches，也不以 Teacher Book／Published Teaching 數量推導 capability。
   Future<ChurchCapabilities> fetchCapabilitiesForActiveChurch(
-      String uid) async {
+    String uid,
+  ) async {
     final membership = await fetchMembership(uid);
     final churchId = membership?.activeChurchId;
     if (churchId == null) return ChurchCapabilities.disabled();
@@ -72,10 +73,20 @@ class ChurchRepository {
   Future<bool> hasTeacherAreaForActiveChurch(String uid) async =>
       (await fetchCapabilitiesForActiveChurch(uid)).teacherArea;
 
+  /// Admin-only（Rules enforcement）：讀取指定 Church 的私有 capability。
+  /// 缺文件或缺欄位時維持 fail-closed，回傳全部關閉。
+  Future<ChurchCapabilities> fetchChurchCapabilities(String churchId) async {
+    final d = await _capabilities(churchId).get();
+    return d.exists
+        ? ChurchCapabilities.fromDoc(churchId, d.data()!)
+        : ChurchCapabilities.disabled(churchId);
+  }
+
   /// Admin-only（Rules enforcement）：設定 capability，不寫入公開 Church picker document。
   Future<void> saveChurchCapabilities(ChurchCapabilities capabilities) =>
-      _capabilities(capabilities.churchId)
-          .set(capabilities.toMap(), SetOptions(merge: true));
+      _capabilities(
+        capabilities.churchId,
+      ).set(capabilities.toMap(), SetOptions(merge: true));
 
   // ---- Membership ----
 
@@ -93,14 +104,16 @@ class ChurchRepository {
   /// 不得自設 reviewed/active）。doc id=uid → 一人一 membership 記錄。
   Future<void> requestMembership(String uid, String churchId) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    await _memberships.doc(uid).set(
-      Membership(
-        uid: uid,
-        churchId: churchId,
-        status: MembershipStatus.pending,
-        requestedAt: now,
-      ).toMap(),
-    );
+    await _memberships
+        .doc(uid)
+        .set(
+          Membership(
+            uid: uid,
+            churchId: churchId,
+            status: MembershipStatus.pending,
+            requestedAt: now,
+          ).toMap(),
+        );
   }
 
   // Admin authoritative transitions（＋稽核 history）。
@@ -112,7 +125,10 @@ class ChurchRepository {
       _setStatus(uid, MembershipStatus.revoked, adminEmail);
 
   Future<void> _setStatus(
-      String uid, MembershipStatus to, String adminEmail) async {
+    String uid,
+    MembershipStatus to,
+    String adminEmail,
+  ) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final ref = _memberships.doc(uid);
     final prev = await ref.get();
@@ -154,18 +170,22 @@ class TeacherRepository {
 
   Future<List<TeacherBook>> fetchAuthorizedBooks(StudentAuth auth) async {
     final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    docs.addAll((await _books
-            .where('status', isEqualTo: _pub)
-            .where('audience', isEqualTo: Audience.public.name)
-            .get())
-        .docs);
-    if (auth.hasChurch) {
-      docs.addAll((await _books
+    docs.addAll(
+      (await _books
               .where('status', isEqualTo: _pub)
-              .where('audience', isEqualTo: Audience.church.name)
-              .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+              .where('audience', isEqualTo: Audience.public.name)
               .get())
-          .docs);
+          .docs,
+    );
+    if (auth.hasChurch) {
+      docs.addAll(
+        (await _books
+                .where('status', isEqualTo: _pub)
+                .where('audience', isEqualTo: Audience.church.name)
+                .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+                .get())
+            .docs,
+      );
     }
     final seen = <String>{};
     final out = <TeacherBook>[];
@@ -201,21 +221,27 @@ class TeacherRepository {
       .set(c.toMap(), SetOptions(merge: true));
 
   Future<List<TeacherChapter>> fetchAuthorizedChapters(
-      String bookId, StudentAuth auth) async {
+    String bookId,
+    StudentAuth auth,
+  ) async {
     final col = _books.doc(bookId).collection('chapters');
     final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    docs.addAll((await col
-            .where('status', isEqualTo: _pub)
-            .where('audience', isEqualTo: Audience.public.name)
-            .get())
-        .docs);
-    if (auth.hasChurch) {
-      docs.addAll((await col
+    docs.addAll(
+      (await col
               .where('status', isEqualTo: _pub)
-              .where('audience', isEqualTo: Audience.church.name)
-              .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+              .where('audience', isEqualTo: Audience.public.name)
               .get())
-          .docs);
+          .docs,
+    );
+    if (auth.hasChurch) {
+      docs.addAll(
+        (await col
+                .where('status', isEqualTo: _pub)
+                .where('audience', isEqualTo: Audience.church.name)
+                .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+                .get())
+            .docs,
+      );
     }
     final seen = <String>{};
     final out = <TeacherChapter>[];
@@ -237,7 +263,8 @@ class SavedStudyContentRepository {
   CollectionReference<Map<String, dynamic>> _col(String uid) =>
       _fs.collection('users').doc(uid).collection('saved_study_content');
 
-  Future<void> save(String uid, String contentId) => _col(uid).doc(contentId).set({
+  Future<void> save(String uid, String contentId) =>
+      _col(uid).doc(contentId).set({
         'content_id': contentId,
         'saved_at': DateTime.now().millisecondsSinceEpoch,
       });
@@ -250,7 +277,7 @@ class SavedStudyContentRepository {
     final s = await _col(uid).get();
     final rows = [
       for (final d in s.docs)
-        (id: d.id, at: (d.data()['saved_at'] as int?) ?? 0)
+        (id: d.id, at: (d.data()['saved_at'] as int?) ?? 0),
     ]..sort((a, b) => b.at.compareTo(a.at));
     return [for (final r in rows) r.id];
   }
