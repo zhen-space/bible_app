@@ -25,8 +25,8 @@ class SearchScreen extends ConsumerStatefulWidget {
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
   List<VerseRef> _results = [];
-  // Church/Teacher R1：「內容」＝授權後的 study content（含 teacher teaching）＋Q&A。
-  // **不再依賴 legacy knowledge/data 或 hard-coded topics。**
+  // 「內容」＝授權後的 Study Content + Q&A。
+  // Teacher Books/Chapters 已不再是 Student product surface；Study Content 本體仍照常可搜尋。
   List<StudyContentItem> _content = [];
   List<Question> _qa = [];
   List<BibleEntity> _entities = [];
@@ -158,7 +158,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       _jump!.bookId, _jump!.chapter,
                       verse: _jump!.verse),
                 ),
-              // 內容（授權後的研讀內容／老師教導；church B 不會出現）
               if (_content.isNotEmpty) ...[
                 const _SectionLabel('內容'),
                 for (final i in _content)
@@ -167,7 +166,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     title: Text(i.title.isEmpty ? '(未命名)' : i.title),
                     subtitle: Text([
                       studyTypeLabel(i.contentType),
-                      if (i.teacherChapterId.isNotEmpty) '老師專區',
                       if (i.audience == Audience.church) '教會專屬',
                     ].join('・')),
                     onTap: () => Navigator.push(
@@ -177,7 +175,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                 StudentStudyContentDetail(item: i))),
                   ),
               ],
-              // 問答
               if (_qa.isNotEmpty) ...[
                 const _SectionLabel('問答'),
                 for (final question in _qa)
@@ -192,7 +189,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                                 QuestionDetailScreen(id: question.id))),
                   ),
               ],
-              // 人物・地點・事件（名稱索引；非 knowledge/data）
               if (_entities.isNotEmpty) ...[
                 const _SectionLabel('人物・地點・事件'),
                 for (final e in _entities)
@@ -206,16 +202,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              // 經文（高亮關鍵詞）
               if (_results.isNotEmpty) const _SectionLabel('經文'),
               for (final r in _results)
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     ListTile(
-                      // 只顯示「含關鍵詞的那一句」（斷句），保持乾淨易讀。
-                      // 私名號與關鍵詞強調只在讀經頁呈現；搜尋片段用純文字，
-                      // 避免在密集清單中的 Rich text 造成過重/破圖的呈現。
                       title: Text(sentenceWithMatch(
                           r.text, _controller.text.trim())),
                       subtitle: Text(
