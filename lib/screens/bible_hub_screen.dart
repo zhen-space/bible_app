@@ -4,13 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/providers.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
+import 'private_study_screen.dart';
 import 'qa_screen.dart';
 import 'search_screen.dart';
 import 'study_content_screen.dart';
-import 'teacher_area_screen.dart';
 
-/// 「聖經」主頁：閱讀（進 Reader／搜尋）＋理解（問答／研讀內容）。
-/// 只負責把人帶到既有畫面，不重寫任何底層功能。
+/// 「聖經」主頁：閱讀（進 Reader／搜尋）＋理解（導讀／問答／研讀／我的研讀）。
+/// Reader 與 Church authorization contract 都由既有路徑維持，不在此重寫。
 class BibleHubScreen extends ConsumerWidget {
   const BibleHubScreen({super.key});
 
@@ -70,14 +70,14 @@ class BibleHubScreen extends ConsumerWidget {
           // ---- 理解 ----
           _sectionTitle(context, '理解'),
           const SizedBox(height: 10),
+          _tile(context, Icons.chrome_reader_mode_outlined, '書卷／章節導讀',
+              '從書卷進入導讀、章節與統整', () => const BooksScreen()),
           _tile(context, Icons.forum_outlined, '聖經／信仰問答',
               '人工整理的已發布問答', () => const QaScreen()),
           _tile(context, Icons.auto_stories, '研讀內容',
               '主題、平行經文、預表、時間軸、人物', () => const StudentStudyContentScreen()),
-          // 老師專區入口：只依 Active Church private capability；不以內容數量推導。
-          if (ref.watch(teacherEntryVisibleProvider).value == true)
-            _tile(context, Icons.school_outlined, '老師專區',
-                '老師整理的書卷與教導內容', () => const TeacherAreaScreen()),
+          _tile(context, Icons.library_books_outlined, '我的研讀',
+              '整理自己閱讀的書籍、話語與心得', () => const PrivateStudyHomeScreen()),
         ],
       ),
     );
