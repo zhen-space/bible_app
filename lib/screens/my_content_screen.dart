@@ -6,6 +6,7 @@ import 'bookmarks_screen.dart';
 import 'chapter_screen.dart';
 import 'notes_screen.dart';
 import 'prayers_screen.dart';
+import 'private_study_screen.dart';
 import 'sermon_notes_screen.dart';
 import 'study_content_screen.dart';
 import 'todos_screen.dart';
@@ -45,6 +46,8 @@ class MyContentScreen extends ConsumerWidget {
           _tile(context, Icons.record_voice_over_outlined, '主日證道筆記',
               c(sermons), '結構化證道筆記，可匯入匯出',
               () => const SermonNotesScreen()),
+          _tile(context, Icons.library_books_outlined, '我的研讀', '',
+              '整理自己閱讀的書籍、話語與心得', () => const PrivateStudyHomeScreen()),
           _tile(context, Icons.volunteer_activism_outlined, '禱告事項', c(prayers),
               '正在禱告的事情', () => const PrayersScreen()),
           _tile(context, Icons.checklist, '信仰生活代辦', c(todos),
