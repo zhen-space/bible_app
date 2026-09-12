@@ -2,20 +2,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/download_stub.dart'
     if (dart.library.js_interop) '../services/download_web.dart';
 import '../theme/app_theme.dart';
-import '../utils/text_utils.dart';
+import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'faith_map_screen.dart';
+import 'notes_screen.dart';
 import 'sermon_notes_screen.dart';
 
-/// 書籤 / 螢光筆 / 筆記 總覽。[initialTab] 0=書籤 1=螢光筆 2=筆記。
 class BookmarksScreen extends ConsumerWidget {
-  final int initialTab;
-
   const BookmarksScreen({super.key, this.initialTab = 0});
+  final int initialTab;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -26,37 +26,27 @@ class BookmarksScreen extends ConsumerWidget {
         appBar: AppBar(
           title: const Text('我的標記'),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.map_outlined),
-              tooltip: '我的信仰地圖',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const FaithMapScreen()),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.church_outlined),
-              tooltip: '主日・證道筆記',
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                    builder: (_) => const SermonNotesScreen()),
-              ),
-            ),
             PopupMenuButton<String>(
-              icon: const Icon(Icons.ios_share),
-              tooltip: '匯出筆記',
-              onSelected: (v) {
-                if (v == 'md') _exportNotes(context, ref);
-                if (v == 'html') _exportNotesHtml(context, ref);
+              tooltip: '更多',
+              onSelected: (value) {
+                if (value == 'map') {
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const FaithMapScreen()));
+                } else if (value == 'sermon') {
+                  Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const SermonNotesScreen()));
+                } else if (value == 'copy') {
+                  _exportNotes(context, ref);
+                } else if (value == 'html') {
+                  _exportNotesHtml(context, ref);
+                }
               },
               itemBuilder: (_) => const [
-                PopupMenuItem(
-                    value: 'md', child: Text('複製 Markdown')),
-                PopupMenuItem(
-                    value: 'html',
-                    child: Text('下載檔案（可存 PDF／用 Word 開）')),
+                PopupMenuItem(value: 'map', child: Text('我的信仰地圖')),
+                PopupMenuItem(value: 'sermon', child: Text('證道筆記')),
+                PopupMenuDivider(),
+                PopupMenuItem(value: 'copy', child: Text('複製筆記 Markdown')),
+                PopupMenuItem(value: 'html', child: Text('下載筆記檔案')),
               ],
             ),
           ],
@@ -64,23 +54,325 @@ class BookmarksScreen extends ConsumerWidget {
             tabs: [Tab(text: '書籤'), Tab(text: '螢光筆'), Tab(text: '筆記')],
           ),
         ),
-        body: Column(
-          children: const [
-            _StatsCard(),
-            Expanded(
-              child: TabBarView(
-                children: [_BookmarkTab(), _HighlightTab(), _NoteTab()],
-              ),
-            ),
-          ],
+        body: const TabBarView(
+          children: [_BookmarkTab(), _HighlightTab(), _NoteTab()],
         ),
       ),
     );
   }
 }
 
-/// 把全部筆記整理成 Markdown 複製到剪貼簿（白板「筆記匯出」的第一步；
-/// PDF/Word 匯出之後再加）。
+String _verseText(Book book, int chapter, int verse) =>
+    book.chapters[chapter - 1][verse - 1];
+
+String _humanVerse(Book book, int chapter, int verse) =>
+    '${_verseText(book, chapter, verse)}\n${book.name} $chapter:$verse';
+
+void _openChapter(BuildContext context, int bookId, int chapter, int verse) {
+  Navigator.push(
+    context,
+    MaterialPageRoute(
+      builder: (_) => ChapterScreen(
+        bookId: bookId,
+        chapter: chapter,
+        focusVerse: verse,
+        updateReadingPosition: false,
+      ),
+    ),
+  );
+}
+
+class _BookmarkTab extends ConsumerStatefulWidget {
+  const _BookmarkTab();
+  @override
+  ConsumerState<_BookmarkTab> createState() => _BookmarkTabState();
+}
+
+class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
+  final SelectionController<String> selection = SelectionController<String>();
+
+  String keyOf(Bookmark b) => '${b.bookId}:${b.chapter}:${b.verse}';
+
+  @override
+  void initState() {
+    super.initState();
+    selection.addListener(_refreshState);
+  }
+
+  void _refreshState() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    selection
+      ..removeListener(_refreshState)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> remove(Iterable<Bookmark> items) async {
+    final db = ref.read(databaseServiceProvider);
+    for (final item in items) {
+      await db.toggleBookmark(item.bookId, item.chapter, item.verse);
+    }
+    selection.cancel();
+    ref.invalidate(allBookmarksProvider);
+    ref.invalidate(chapterMarksProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final booksAsync = ref.watch(booksProvider);
+    final itemsAsync = ref.watch(allBookmarksProvider);
+    if (booksAsync.hasError || itemsAsync.hasError) {
+      return StudentErrorState(onRetry: () {
+        ref.invalidate(booksProvider);
+        ref.invalidate(allBookmarksProvider);
+      });
+    }
+    final books = booksAsync.value;
+    final items = itemsAsync.value;
+    if (books == null || items == null) return const StudentCompactLoading();
+    if (items.isEmpty) {
+      return const StudentEmptyState(
+          title: '還沒有書籤', subtitle: '在 Reader 選取經文即可加入書籤。', icon: Icons.bookmark_outline);
+    }
+    final chosen = items.where((b) => selection.contains(keyOf(b))).toList();
+    final keys = items.map(keyOf).toList();
+    return Column(children: [
+      _SelectionHeader(
+        active: selection.active,
+        count: selection.count,
+        total: items.length,
+        onSelect: selection.start,
+        onCancel: selection.cancel,
+        onAll: () => selection.selectAll(keys),
+      ),
+      Expanded(
+        child: ListView.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
+          itemBuilder: (context, i) {
+            final b = items[i];
+            final book = books[b.bookId - 1];
+            final key = keyOf(b);
+            final row = ListTile(
+              leading: selection.active
+                  ? Checkbox(value: selection.contains(key), onChanged: (_) => selection.toggle(key))
+                  : const Icon(Icons.bookmark),
+              title: Text(_verseText(book, b.chapter, b.verse), maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${book.name} ${b.chapter}:${b.verse}'),
+              onLongPress: () => selection.start(key),
+              onTap: selection.active
+                  ? () => selection.toggle(key)
+                  : () => _openChapter(context, b.bookId, b.chapter, b.verse),
+            );
+            if (selection.active) return row;
+            return StudentSwipeRow(
+              dismissKey: ValueKey('bookmark_$key'),
+              startLabel: '複製',
+              startIcon: Icons.copy_outlined,
+              endLabel: '移除',
+              onSwipeStartToEnd: () => copyHumanReadable(context, _humanVerse(book, b.chapter, b.verse)),
+              onSwipeEndToStart: () => remove([b]),
+              child: row,
+            );
+          },
+        ),
+      ),
+      if (selection.active)
+        StudentBatchActionBar(actions: [
+          StudentBatchAction(
+            label: '複製',
+            icon: Icons.copy_outlined,
+            onPressed: chosen.isEmpty
+                ? null
+                : () => copyHumanReadable(
+                      context,
+                      joinHumanReadable(chosen.map((b) => _humanVerse(books[b.bookId - 1], b.chapter, b.verse))),
+                      success: '已複製 ${chosen.length} 則經文',
+                    ),
+          ),
+          StudentBatchAction(
+            label: '移除',
+            icon: Icons.delete_outline,
+            destructive: true,
+            onPressed: chosen.isEmpty ? null : () => remove(chosen),
+          ),
+        ]),
+    ]);
+  }
+}
+
+class _HighlightTab extends ConsumerStatefulWidget {
+  const _HighlightTab();
+  @override
+  ConsumerState<_HighlightTab> createState() => _HighlightTabState();
+}
+
+class _HighlightTabState extends ConsumerState<_HighlightTab> {
+  final SelectionController<String> selection = SelectionController<String>();
+  String keyOf(Highlight h) => '${h.bookId}:${h.chapter}:${h.verse}';
+
+  @override
+  void initState() {
+    super.initState();
+    selection.addListener(_refreshState);
+  }
+
+  void _refreshState() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    selection
+      ..removeListener(_refreshState)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> remove(Iterable<Highlight> items) async {
+    final db = ref.read(databaseServiceProvider);
+    for (final item in items) {
+      await db.setHighlight(item.bookId, item.chapter, item.verse, null);
+    }
+    selection.cancel();
+    ref.invalidate(allHighlightsProvider);
+    ref.invalidate(chapterMarksProvider);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final booksAsync = ref.watch(booksProvider);
+    final itemsAsync = ref.watch(allHighlightsProvider);
+    final labels = ref.watch(highlightLabelsProvider);
+    if (booksAsync.hasError || itemsAsync.hasError) {
+      return StudentErrorState(onRetry: () {
+        ref.invalidate(booksProvider);
+        ref.invalidate(allHighlightsProvider);
+      });
+    }
+    final books = booksAsync.value;
+    final items = itemsAsync.value;
+    if (books == null || items == null) return const StudentCompactLoading();
+    if (items.isEmpty) {
+      return const StudentEmptyState(
+          title: '還沒有螢光筆', subtitle: '在 Reader 選取經文即可標記。', icon: Icons.brush_outlined);
+    }
+    final chosen = items.where((h) => selection.contains(keyOf(h))).toList();
+    return Column(children: [
+      _SelectionHeader(
+        active: selection.active,
+        count: selection.count,
+        total: items.length,
+        onSelect: selection.start,
+        onCancel: selection.cancel,
+        onAll: () => selection.selectAll(items.map(keyOf)),
+      ),
+      Expanded(
+        child: ListView.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
+          itemBuilder: (context, i) {
+            final h = items[i];
+            final book = books[h.bookId - 1];
+            final key = keyOf(h);
+            final label = labels[h.color];
+            final row = ListTile(
+              leading: selection.active
+                  ? Checkbox(value: selection.contains(key), onChanged: (_) => selection.toggle(key))
+                  : CircleAvatar(radius: 9, backgroundColor: AppTheme.highlightSwatch(h.color)),
+              title: Text(_verseText(book, h.chapter, h.verse), maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text('${book.name} ${h.chapter}:${h.verse}${label == null ? '' : ' · $label'}'),
+              onLongPress: () => selection.start(key),
+              onTap: selection.active
+                  ? () => selection.toggle(key)
+                  : () => _openChapter(context, h.bookId, h.chapter, h.verse),
+            );
+            if (selection.active) return row;
+            return StudentSwipeRow(
+              dismissKey: ValueKey('highlight_$key'),
+              startLabel: '複製',
+              startIcon: Icons.copy_outlined,
+              endLabel: '移除',
+              onSwipeStartToEnd: () => copyHumanReadable(context, _humanVerse(book, h.chapter, h.verse)),
+              onSwipeEndToStart: () => remove([h]),
+              child: row,
+            );
+          },
+        ),
+      ),
+      if (selection.active)
+        StudentBatchActionBar(actions: [
+          StudentBatchAction(
+            label: '複製',
+            icon: Icons.copy_outlined,
+            onPressed: chosen.isEmpty
+                ? null
+                : () => copyHumanReadable(
+                      context,
+                      joinHumanReadable(chosen.map((h) => _humanVerse(books[h.bookId - 1], h.chapter, h.verse))),
+                      success: '已複製 ${chosen.length} 則經文',
+                    ),
+          ),
+          StudentBatchAction(
+            label: '移除',
+            icon: Icons.delete_outline,
+            destructive: true,
+            onPressed: chosen.isEmpty ? null : () => remove(chosen),
+          ),
+        ]),
+    ]);
+  }
+}
+
+class _NoteTab extends StatelessWidget {
+  const _NoteTab();
+  @override
+  Widget build(BuildContext context) => StudentEmptyState(
+        title: '經文筆記已集中管理',
+        subtitle: '從「內容 → 經文筆記」可搜尋、選取與管理全部筆記。',
+        icon: Icons.edit_note_outlined,
+        actionLabel: '開啟經文筆記',
+        onAction: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const NotesScreen())),
+      );
+}
+
+class _SelectionHeader extends StatelessWidget {
+  const _SelectionHeader({
+    required this.active,
+    required this.count,
+    required this.total,
+    required this.onSelect,
+    required this.onCancel,
+    required this.onAll,
+  });
+  final bool active;
+  final int count;
+  final int total;
+  final VoidCallback onSelect;
+  final VoidCallback onCancel;
+  final VoidCallback onAll;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(20, 8, 12, 4),
+        child: Row(children: [
+          Expanded(
+            child: Text(active ? '已選 $count 項' : '$total 項',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.outline)),
+          ),
+          if (active) ...[
+            TextButton(onPressed: onAll, child: const Text('全選')),
+            TextButton(onPressed: onCancel, child: const Text('取消')),
+          ] else
+            TextButton(onPressed: onSelect, child: const Text('選取')),
+        ]),
+      );
+
 Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
   final messenger = ScaffoldMessenger.of(context);
   try {
@@ -93,24 +385,17 @@ Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
     final buf = StringBuffer('# 我的經文筆記\n');
     for (final n in notes) {
       final book = books[n.bookId - 1];
-      final text = book.chapters[n.chapter - 1][n.verse - 1];
       buf
-        ..writeln()
-        ..writeln('## ${book.name} ${n.chapter}:${n.verse}')
-        ..writeln('> $text')
-        ..writeln()
+        ..writeln('\n## ${book.name} ${n.chapter}:${n.verse}')
         ..writeln(n.content);
     }
     await Clipboard.setData(ClipboardData(text: buf.toString()));
-    messenger.showSnackBar(
-        SnackBar(content: Text('已複製 ${notes.length} 則筆記（Markdown）')));
-  } catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+    messenger.showSnackBar(SnackBar(content: Text('已複製 ${notes.length} 則筆記')));
+  } catch (_) {
+    messenger.showSnackBar(const SnackBar(content: Text('暫時無法匯出筆記，請稍後再試。')));
   }
 }
 
-/// 把筆記做成一份排版好的 HTML 檔下載（白板「PDF/Word 匯出」）。
-/// HTML 用系統字型（全中文都在），瀏覽器可「列印→存成 PDF」，Word 也能直接開。
 Future<void> _exportNotesHtml(BuildContext context, WidgetRef ref) async {
   final messenger = ScaffoldMessenger.of(context);
   try {
@@ -125,295 +410,17 @@ Future<void> _exportNotesHtml(BuildContext context, WidgetRef ref) async {
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;')
         .replaceAll('\n', '<br>');
-    final buf = StringBuffer()
-      ..writeln('<!doctype html><html lang="zh-Hant"><head>')
-      ..writeln('<meta charset="utf-8">')
-      ..writeln('<title>我的經文筆記</title>')
-      ..writeln('<style>'
-          'body{font-family:"PingFang TC","Microsoft JhengHei",'
-          '"Noto Sans TC",sans-serif;line-height:1.8;max-width:720px;'
-          'margin:40px auto;padding:0 16px;color:#1a1a1a;}'
-          'h1{font-size:24px;border-bottom:2px solid #0071BC;padding-bottom:8px;}'
-          '.item{margin:22px 0;padding-bottom:16px;border-bottom:1px solid #eee;}'
-          '.ref{color:#0071BC;font-weight:700;font-size:15px;}'
-          '.verse{color:#555;font-style:normal;background:#f5f8fb;'
-          'padding:8px 12px;border-radius:6px;margin:6px 0;}'
-          '.tags{color:#8a6d00;font-size:13px;margin-top:6px;}'
-          '.content{white-space:normal;margin-top:6px;}'
-          '</style></head><body>')
-      ..writeln('<h1>我的經文筆記</h1>');
+    final buf = StringBuffer('<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><title>我的經文筆記</title></head><body><h1>我的經文筆記</h1>');
     for (final n in notes) {
       final book = books[n.bookId - 1];
-      final text = book.chapters[n.chapter - 1][n.verse - 1];
       buf
-        ..writeln('<div class="item">')
-        ..writeln('<div class="ref">${esc(book.name)} '
-            '${n.chapter}:${n.verse}</div>')
-        ..writeln('<div class="verse">${esc(text)}</div>')
-        ..writeln('<div class="content">${esc(n.content)}</div>');
-      if (n.tagList.isNotEmpty) {
-        buf.writeln('<div class="tags">＃${n.tagList.map(esc).join('　＃')}</div>');
-      }
-      buf.writeln('</div>');
+        ..write('<article><h2>${esc(book.name)} ${n.chapter}:${n.verse}</h2>')
+        ..write('<p>${esc(n.content)}</p></article>');
     }
-    buf.writeln('</body></html>');
-
-    final ok = downloadTextFile(
-        '我的經文筆記.html', 'text/html', buf.toString());
-    messenger.showSnackBar(SnackBar(
-        content: Text(ok
-            ? '已下載 ${notes.length} 則筆記；用瀏覽器「列印→存成 PDF」或 Word 開啟'
-            : '此平台不支援下載，請改用「複製 Markdown」')));
-  } catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text('匯出失敗：$e')));
+    buf.write('</body></html>');
+    final ok = downloadTextFile('我的經文筆記.html', 'text/html', buf.toString());
+    messenger.showSnackBar(SnackBar(content: Text(ok ? '已下載筆記檔案' : '此平台不支援下載')));
+  } catch (_) {
+    messenger.showSnackBar(const SnackBar(content: Text('暫時無法匯出筆記，請稍後再試。')));
   }
-}
-
-/// 統計小卡：讀經、書籤、螢光筆、筆記、證道筆記數量。
-class _StatsCard extends ConsumerWidget {
-  const _StatsCard();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final s = ref.watch(statsProvider).value;
-    if (s == null) return const SizedBox.shrink();
-    final items = [
-      ('已讀', '${s['read']}', '章', Icons.menu_book),
-      ('書籤', '${s['bookmarks']}', '', Icons.bookmark),
-      ('螢光筆', '${s['highlights']}', '', Icons.brush),
-      ('筆記', '${s['notes']}', '', Icons.sticky_note_2_outlined),
-      ('證道', '${s['sermons']}', '', Icons.church_outlined),
-    ];
-    return Card(
-      margin: const EdgeInsets.all(12),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            for (final it in items)
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(it.$4,
-                      size: 20,
-                      color: Theme.of(context).colorScheme.secondary),
-                  const SizedBox(height: 4),
-                  Text('${it.$2}${it.$3}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700)),
-                  Text(it.$1,
-                      style: Theme.of(context).textTheme.labelSmall),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _BookmarkTab extends ConsumerWidget {
-  const _BookmarkTab();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final booksAsync = ref.watch(booksProvider);
-    final bookmarksAsync = ref.watch(allBookmarksProvider);
-
-    return _asyncList2(booksAsync, bookmarksAsync, (books, items) {
-      if (items.isEmpty) return const Center(child: Text('還沒有書籤'));
-      return ListView.builder(
-        itemCount: items.length,
-        itemBuilder: (context, i) {
-          final b = items[i];
-          final book = books[b.bookId - 1];
-          final text = book.chapters[b.chapter - 1][b.verse - 1];
-          return ListTile(
-            leading: const Icon(Icons.bookmark),
-            title: Text(text, maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text('${book.name} ${b.chapter}:${b.verse}'),
-            onTap: () => _openChapter(context, b.bookId, b.chapter),
-          );
-        },
-      );
-    });
-  }
-}
-
-class _HighlightTab extends ConsumerWidget {
-  const _HighlightTab();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final booksAsync = ref.watch(booksProvider);
-    final highlightsAsync = ref.watch(allHighlightsProvider);
-    final labels = ref.watch(highlightLabelsProvider);
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    return _asyncList2(booksAsync, highlightsAsync, (books, items) {
-      if (items.isEmpty) return const Center(child: Text('還沒有螢光筆標記'));
-      return ListView.builder(
-        itemCount: items.length,
-        itemBuilder: (context, i) {
-          final h = items[i];
-          final book = books[h.bookId - 1];
-          final text = book.chapters[h.chapter - 1][h.verse - 1];
-          final label = labels[h.color];
-          return ListTile(
-            leading: CircleAvatar(
-              radius: 10,
-              backgroundColor: AppTheme.highlightSwatch(h.color),
-            ),
-            title: Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: AppTheme.highlightColor(h.color, isDark),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child:
-                  Text(text, maxLines: 2, overflow: TextOverflow.ellipsis),
-            ),
-            subtitle: Text(label == null
-                ? '${book.name} ${h.chapter}:${h.verse}'
-                : '${book.name} ${h.chapter}:${h.verse}　·　$label'),
-            onTap: () => _openChapter(context, h.bookId, h.chapter),
-          );
-        },
-      );
-    });
-  }
-}
-
-class _NoteTab extends ConsumerStatefulWidget {
-  const _NoteTab();
-
-  @override
-  ConsumerState<_NoteTab> createState() => _NoteTabState();
-}
-
-class _NoteTabState extends ConsumerState<_NoteTab> {
-  String _query = '';
-
-  @override
-  Widget build(BuildContext context) {
-    final booksAsync = ref.watch(booksProvider);
-    final notesAsync = ref.watch(allNotesProvider);
-
-    return _asyncList2(booksAsync, notesAsync, (books, items) {
-      if (items.isEmpty) return const Center(child: Text('還沒有筆記'));
-      final q = _query.trim();
-      // 可搜筆記內容、標籤、書名、節位（例：約 3:16、信心、觀察）
-      final filtered = q.isEmpty
-          ? items
-          : items.where((n) {
-              final book = books[n.bookId - 1];
-              final ref = '${book.name} ${n.chapter}:${n.verse}';
-              return n.content.contains(q) ||
-                  n.tags.contains(q) ||
-                  ref.contains(q);
-            }).toList();
-
-      return Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: TextField(
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: '搜尋筆記（內容、書名、節位）',
-                isDense: true,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              onChanged: (v) => setState(() => _query = v),
-            ),
-          ),
-          Expanded(
-            child: filtered.isEmpty
-                ? const Center(child: Text('沒有符合的筆記'))
-                : ListView.builder(
-                    itemCount: filtered.length,
-                    itemBuilder: (context, i) {
-                      final n = filtered[i];
-                      final book = books[n.bookId - 1];
-                      // 搜尋中：顯示「含關鍵詞的那句話」並高亮該詞
-                      final display = q.isEmpty
-                          ? n.content
-                          : sentenceWithMatch(n.content, q);
-                      return ListTile(
-                        leading: const Icon(Icons.sticky_note_2_outlined),
-                        // 搜尋時顯示「含關鍵詞的那句話」（斷句），純文字保持乾淨。
-                        title: Text(display,
-                            maxLines: 3, overflow: TextOverflow.ellipsis),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('${book.name} ${n.chapter}:${n.verse}'),
-                            if (n.tagList.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Wrap(
-                                  spacing: 6,
-                                  children: [
-                                    for (final t in n.tagList)
-                                      Container(
-                                        padding: const EdgeInsets
-                                            .symmetric(
-                                            horizontal: 8, vertical: 2),
-                                        decoration: BoxDecoration(
-                                          color: AppTheme.paleBlue
-                                              .withValues(alpha: 0.25),
-                                          borderRadius:
-                                              BorderRadius.circular(10),
-                                        ),
-                                        child: Text('#$t',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .labelSmall),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        ),
-                        onTap: () =>
-                            _openChapter(context, n.bookId, n.chapter),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      );
-    });
-  }
-}
-
-void _openChapter(BuildContext context, int bookId, int chapter) {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      // My Content（書籤/螢光/筆記）→ 經文＝臨時瀏覽，返回原清單
-      builder: (_) => ChapterScreen(
-          bookId: bookId, chapter: chapter, updateReadingPosition: false),
-    ),
-  );
-}
-
-/// 兩個 AsyncValue 都 ready 才 build，否則顯示 loading/error。
-Widget _asyncList2<A, B>(
-  AsyncValue<List<A>> a,
-  AsyncValue<List<B>> b,
-  Widget Function(List<A>, List<B>) builder,
-) {
-  if (a.hasError) return Center(child: Text('載入失敗：${a.error}'));
-  if (b.hasError) return Center(child: Text('載入失敗：${b.error}'));
-  final av = a.value;
-  final bv = b.value;
-  if (av == null || bv == null) {
-    return const Center(child: CircularProgressIndicator());
-  }
-  return builder(av, bv);
 }
