@@ -39,6 +39,23 @@ class _PrivateStudyHomeScreenState extends ConsumerState<PrivateStudyHomeScreen>
   bool _sortByTitle = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 本機資料已由 provider 立即載入（local-first）。cloud 合併走**背景**一次性 sync，
+    // 完成後才 refresh；即使 Firestore 卡住，畫面也已顯示正確的本機/Empty 狀態（P0 修復）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _backgroundSync());
+  }
+
+  Future<void> _backgroundSync() async {
+    try {
+      await ref.read(privateStudyRepositoryProvider).syncCurrentUser();
+    } catch (_) {
+      // 背景同步失敗不影響本機顯示；下次進入/下拉再試。
+    }
+    if (mounted) _refreshPrivateStudy(ref);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(privateStudyBooksProvider);
     final notesAsync = ref.watch(privateStudyAllNotesProvider);
@@ -112,8 +129,11 @@ class _PrivateStudyHomeScreenState extends ConsumerState<PrivateStudyHomeScreen>
                   child: Padding(
                       padding: EdgeInsets.all(24),
                       child: CircularProgressIndicator())),
-              error: (_, _) => const _PrivateStudyEmpty(
-                  title: '暫時無法載入', subtitle: '本機資料仍會保留，請稍後再試。'),
+              error: (_, _) => _PrivateStudyEmpty(
+                  title: '載入時發生問題',
+                  subtitle: '本機資料仍會保留。請重試。',
+                  actionLabel: '重試',
+                  onAction: () => _refreshPrivateStudy(ref)),
               data: (original) {
                 if (original.isEmpty) {
                   return _PrivateStudyEmpty(

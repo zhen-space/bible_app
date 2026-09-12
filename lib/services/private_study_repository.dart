@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -204,8 +205,9 @@ class PrivateStudyRepository {
   }
 
   Future<List<PrivateStudyBook>> getBooks({bool includeDeleted = false}) async {
+    // **Local-first**：只讀本機、立即回傳；**絕不 inline await 網路 sync**（否則 Firestore
+    // .get() 在部分 Web/iOS 環境卡住會讓首次進入永久 loading）。cloud 合併走背景 [syncCurrentUser]。
     await _ready();
-    await syncCurrentUser();
     final sql = await db.database;
     final rows = await sql.query(_bookTable,
         where: includeDeleted ? null : 'deleted_at = 0',
@@ -229,7 +231,8 @@ class PrivateStudyRepository {
         conflictAlgorithm: ConflictAlgorithm.replace);
     await _clearTombstone(_bookKind, book.id);
     db.onMutate?.call();
-    await _tryPushBook(book);
+    // 本機已存；push 走背景（不 await），避免建立第一本書時因網路卡住而卡住 UI。
+    unawaited(_tryPushBook(book));
   }
 
   Future<void> touchBook(String id) async {
@@ -247,8 +250,8 @@ class PrivateStudyRepository {
     String? topic,
     bool includeDeleted = false,
   }) async {
+    // Local-first：同 getBooks，只讀本機、立即回傳，不 inline await 網路 sync。
     await _ready();
-    await syncCurrentUser();
     final sql = await db.database;
     final clauses = <String>[];
     final args = <Object?>[];
@@ -302,7 +305,7 @@ class PrivateStudyRepository {
         where: 'id = ?', whereArgs: [id]);
     db.onMutate?.call();
     final n = await getNote(id);
-    if (n != null) await _tryPushNote(n);
+    if (n != null) unawaited(_tryPushNote(n));
   }
 
   Future<void> restoreNote(String id) async {
@@ -313,7 +316,7 @@ class PrivateStudyRepository {
         where: 'id = ?', whereArgs: [id]);
     db.onMutate?.call();
     final n = await getNote(id);
-    if (n != null) await _tryPushNote(n);
+    if (n != null) unawaited(_tryPushNote(n));
   }
 
   Future<void> softDeleteBook(String id) async {
@@ -331,7 +334,7 @@ class PrivateStudyRepository {
           where: 'book_id = ? AND deleted_at = 0', whereArgs: [id]);
     });
     db.onMutate?.call();
-    await syncCurrentUser();
+    unawaited(syncCurrentUser()); // 背景同步，不阻塞刪除動作
   }
 
   Future<void> restoreBook(String id) async {
@@ -358,7 +361,7 @@ class PrivateStudyRepository {
       }
     });
     db.onMutate?.call();
-    await syncCurrentUser();
+    unawaited(syncCurrentUser());
   }
 
   Future<void> purgeNote(String id) async {
@@ -367,7 +370,7 @@ class PrivateStudyRepository {
     await sql.delete(_noteTable, where: 'id = ?', whereArgs: [id]);
     await _writeTombstone(_noteKind, id);
     db.onMutate?.call();
-    await syncCurrentUser();
+    unawaited(syncCurrentUser());
   }
 
   Future<void> purgeBook(String id) async {
@@ -384,7 +387,7 @@ class PrivateStudyRepository {
     }
     await _writeTombstone(_bookKind, id);
     db.onMutate?.call();
-    await syncCurrentUser();
+    unawaited(syncCurrentUser());
   }
 
   Future<List<PrivateStudyNote>> search({

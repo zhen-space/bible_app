@@ -112,6 +112,54 @@ void main() {
     });
   });
 
+  group('首次進入 P0 修復：local-first、非阻塞、Empty/Error state 契約', () {
+    final repo = File('lib/services/private_study_repository.dart').readAsStringSync();
+    final screen = File('lib/screens/private_study_screen.dart').readAsStringSync();
+    // 去註解後判斷「程式行為」，避免誤觸說明性註解。
+    String code(String s) {
+      final noBlock = s.replaceAll(RegExp(r'/\*.*?\*/', dotAll: true), '');
+      return noBlock.split('\n').map((l) {
+        final i = l.indexOf('//');
+        return i >= 0 ? l.substring(0, i) : l;
+      }).join('\n');
+    }
+
+    test('#1/#6 本機讀取不得 inline await 網路 sync（否則 cloud 卡住→永久 loading）', () {
+      final c = code(repo);
+      // 根因守衛：整個 repository 不再有任何 `await syncCurrentUser()`（改為背景/unawaited）。
+      expect(c, isNot(contains('await syncCurrentUser()')));
+      // getBooks / getNotes 仍存在且回本機資料。
+      expect(c, contains('Future<List<PrivateStudyBook>> getBooks'));
+      expect(c, contains('Future<List<PrivateStudyNote>> getNotes'));
+      // sync 仍存在（背景可用）。
+      expect(c, contains('Future<void> syncCurrentUser()'));
+    });
+
+    test('screen 具 Loading/Error/Empty/Loaded 四態且背景 sync', () {
+      final c = code(screen);
+      // 四態分支
+      expect(c, contains('loading:'));
+      expect(c, contains('error:'));
+      expect(c, contains('data:'));
+      expect(c, contains('original.isEmpty'));
+      // 背景一次性 sync（不阻塞首屏）
+      expect(c, contains('addPostFrameCallback'));
+      expect(c, contains('_backgroundSync'));
+    });
+
+    test('#2/#4 Empty 與 Loaded 皆有「新增書籍」入口，Empty 有正式文案與 CTA', () {
+      expect(screen, contains('開始你的第一本研讀書籍'));
+      expect(screen, contains('把閱讀時重要的話語、心得、經文與實踐整理在這裡。'));
+      expect(screen, contains('＋新增書籍')); // Empty CTA
+      expect(screen, contains("label: const Text('新增書籍')")); // Loaded 常駐入口
+      expect(screen, contains('Future<void> _addBook')); // CTA 可建立書籍
+    });
+
+    test('#5 Error 顯示 Retry，不當成 loading', () {
+      expect(screen, contains("actionLabel: '重試'"));
+    });
+  });
+
   test('Student IA 移除老師專區並在 Bible / My Content 共用我的研讀入口', () {
     final bible = File('lib/screens/bible_hub_screen.dart').readAsStringSync();
     final mine = File('lib/screens/my_content_screen.dart').readAsStringSync();
