@@ -60,6 +60,9 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
   fake_cloud_firestore: ^4.1.1
+  # 測試專用：以記憶體/暫存 SQLite 對既有使用者舊 schema → 最新做真實 migration 整合測試。
+  # 不影響 production DB factory（手機 sqflite、網頁 sqflite_common_ffi_web）。
+  sqflite_common_ffi: ^2.3.6
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

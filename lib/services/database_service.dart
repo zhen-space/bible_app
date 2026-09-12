@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart'
     show Database, ConflictAlgorithm, OpenDatabaseOptions;
 
@@ -26,6 +27,24 @@ class DatabaseService {
     _db ??= await _open();
     return _db!;
   }
+
+  /// 測試專用：以測試提供的 [Database]（例如 sqflite_common_ffi 的記憶體/暫存 DB）
+  /// 直接驅動**正式** onCreate / onUpgrade / idempotent 加欄位邏輯，
+  /// 用來對「既有使用者舊 schema → 最新」做真實 migration 整合測試。不改任何 production 行為。
+  @visibleForTesting
+  int get debugDbVersion => _dbVersion;
+
+  @visibleForTesting
+  Future<void> debugCreateAllTables(Database db) => _createAllTables(db);
+
+  @visibleForTesting
+  Future<void> debugOnUpgrade(Database db, int oldV, int newV) =>
+      _onUpgrade(db, oldV, newV);
+
+  @visibleForTesting
+  Future<void> debugAddColumnIfMissing(
+          Database db, String table, String column, String columnDef) =>
+      _addColumnIfMissing(db, table, column, columnDef);
 
   Future<Database> _open() async {
     // dbFactory 依平台切換：手機用原生 sqflite，網頁用 WASM + IndexedDB
@@ -250,14 +269,28 @@ class DatabaseService {
         where: 'kind = ? AND ref = ?', whereArgs: [kind, ref]);
   }
 
+  /// Idempotent 加欄位：**先查實際 schema**（PRAGMA table_info），欄位已存在就跳過、
+  /// 不存在才 ADD。取代無條件 `ALTER TABLE … ADD COLUMN`——既有使用者若跨版升級（例如
+  /// 從 oldV<10 一次升到最新），`_createXxxTable` 已用最新 schema 建表含新欄位，之後
+  /// 對應版本的 ADD COLUMN 會 duplicate column 崩潰、整個 DB 初始化失敗。schema-aware
+  /// 檢查讓 migration 可安全重跑、跨任何 oldV 都不會 double-add。
+  /// （不用 try/catch 吞 duplicate error——要真正 schema-aware 而非靠例外。）
+  Future<void> _addColumnIfMissing(
+      Database db, String table, String column, String columnDef) async {
+    final cols = await db.rawQuery('PRAGMA table_info($table)');
+    final exists = cols.any((c) => c['name'] == column);
+    if (exists) return;
+    await db.execute('ALTER TABLE $table ADD COLUMN $columnDef');
+  }
+
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     if (oldV < 2) {
       await _createReadingLogTable(db);
     }
     if (oldV < 3) {
       // v3：筆記加標籤欄
-      await db.execute(
-          "ALTER TABLE notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(
+          db, 'notes', 'tags', "tags TEXT NOT NULL DEFAULT ''");
     }
     if (oldV < 4) {
       await _createSermonNotesTable(db);
@@ -291,42 +324,44 @@ class DatabaseService {
     }
     if (oldV < 12) {
       // Notes v2：可選標題、額外多節引用、軟刪除（最近刪除）。全部 additive。
-      await db.execute(
-          "ALTER TABLE notes ADD COLUMN title TEXT NOT NULL DEFAULT ''");
-      await db.execute(
-          "ALTER TABLE notes ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
-      await db.execute(
-          'ALTER TABLE notes ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(
+          db, 'notes', 'title', "title TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(
+          db, 'notes', 'refs', "refs TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(
+          db, 'notes', 'deleted_at', 'deleted_at INTEGER NOT NULL DEFAULT 0');
     }
     if (oldV < 13) {
       // Prayer v2：標題/日期/引用/狀態/提醒/應允日期/應允回顧。全部 additive，
       // 舊 category/subcategory/content 保留；既有禱告資料不動。
-      await db.execute(
-          "ALTER TABLE prayers ADD COLUMN title TEXT NOT NULL DEFAULT ''");
-      await db.execute(
-          'ALTER TABLE prayers ADD COLUMN prayer_date INTEGER NOT NULL DEFAULT 0');
-      await db.execute(
-          "ALTER TABLE prayers ADD COLUMN refs TEXT NOT NULL DEFAULT ''");
-      await db.execute(
-          "ALTER TABLE prayers ADD COLUMN status TEXT NOT NULL DEFAULT 'praying'");
-      await db.execute(
-          'ALTER TABLE prayers ADD COLUMN reminder_at INTEGER NOT NULL DEFAULT 0');
-      await db.execute(
-          'ALTER TABLE prayers ADD COLUMN answered_at INTEGER NOT NULL DEFAULT 0');
-      await db.execute(
-          "ALTER TABLE prayers ADD COLUMN answered_reflection TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(
+          db, 'prayers', 'title', "title TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(db, 'prayers', 'prayer_date',
+          'prayer_date INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(
+          db, 'prayers', 'refs', "refs TEXT NOT NULL DEFAULT ''");
+      await _addColumnIfMissing(
+          db, 'prayers', 'status', "status TEXT NOT NULL DEFAULT 'praying'");
+      await _addColumnIfMissing(db, 'prayers', 'reminder_at',
+          'reminder_at INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'prayers', 'answered_at',
+          'answered_at INTEGER NOT NULL DEFAULT 0');
+      await _addColumnIfMissing(db, 'prayers', 'answered_reflection',
+          "answered_reflection TEXT NOT NULL DEFAULT ''");
     }
     if (oldV < 14) {
       // Reading Plans：Published 計畫 Reading Item 的 stable item_id（progress
       // 身分，取代 display index）。additive，機械計畫 item_id 留空沿用章位身分。
-      await db.execute(
-          "ALTER TABLE plan_item_progress ADD COLUMN item_id TEXT NOT NULL DEFAULT ''");
+      // ⚠️ 跨版升級（oldV<10）時 `_createPlanItemProgressTable` 已含 item_id，
+      // 故必須 idempotent（否則 duplicate column name: item_id → 全 DB 初始化崩潰）。
+      await _addColumnIfMissing(db, 'plan_item_progress', 'item_id',
+          "item_id TEXT NOT NULL DEFAULT ''");
     }
     if (oldV < 15) {
       // Reading Plans：plan_version——Published 計畫 v1→v2 時進度可辨識版本，
-      // 避免換版錯位。additive，預設 1。
-      await db.execute(
-          'ALTER TABLE plan_item_progress ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1');
+      // 避免換版錯位。additive，預設 1。同上，idempotent（跨版升級已含此欄）。
+      await _addColumnIfMissing(db, 'plan_item_progress', 'plan_version',
+          'plan_version INTEGER NOT NULL DEFAULT 1');
     }
   }
 
