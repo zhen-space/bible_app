@@ -2,41 +2,32 @@ import 'package:flutter/material.dart';
 
 import '../models/models.dart';
 
-/// 深淺色主題。所有畫面顏色一律透過 Theme 或 [highlightColor] 取得，
-/// 不在 widget 裡寫死顏色（深色模式第一天就要對）。
 class AppTheme {
-  // 品牌藍漸層（使用者指定四色，由淺到深）：
-  static const _bluePale = Color(0xFF8AC4DE); // 最淺
-  static const _blueMid = Color(0xFF6C9BD2); // 中
-  static const _blue = Color(0xFF0086CC); // 主色
-  static const _blueDeep = Color(0xFF005B98); // 深
-  static const _blueOnDark = Color(0xFF6C9BD2); // 深色模式用的亮藍
-  static const _gold = Color(0xFFC9A227); // 金（圖標）
-  static const _goldDark = Color(0xFFD8B84A); // 深色模式的金
-  static const _ink = Color(0xFF1C1C1E); // 黑字
-  static const _cardBorder = Color(0xFFE4E8EE); // 白卡片在白底上的細邊
-  static const _blueContainer = Color(0xFFE4F0F8); // 淺藍容器（章節格等）
-  static const _navy = Color(0xFF071726); // 深藍底
-  static const _navyCard = Color(0xFF0E2438); // 深藍卡片
-  static const _navyContainer = Color(0xFF16324B); // 深藍容器
+  static const _bluePale = Color(0xFF8AC4DE);
+  static const _blueMid = Color(0xFF6C9BD2);
+  static const _blue = Color(0xFF0086CC);
+  static const _blueDeep = Color(0xFF005B98);
+  static const _blueOnDark = Color(0xFF6C9BD2);
+  static const _gold = Color(0xFFC9A227);
+  static const _goldDark = Color(0xFFD8B84A);
+  static const _ink = Color(0xFF1C1C1E);
+  static const _separator = Color(0xFFE5E5EA);
+  static const _field = Color(0xFFF4F5F7);
+  static const _blueContainer = Color(0xFFE4F0F8);
+  static const _navy = Color(0xFF071726);
+  static const _navyCard = Color(0xFF0E2438);
+  static const _navyContainer = Color(0xFF16324B);
 
-  /// 今日經文卡等強調處的品牌藍漸層（淺→深）。
   static const brandGradient = LinearGradient(
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
     colors: [_blue, _blueDeep],
   );
 
-  /// 次要強調藍（進度條、連結）。
   static const accentBlue = _blueMid;
-
-  /// 最淺品牌藍（章節格底）。
   static const paleBlue = _bluePale;
-
-  /// 打包的繁中字型（網頁版不依賴 Google CDN，各平台字型一致）。
   static const _fontFamily = 'NotoSansTC';
 
-  // iOS 風大標題（左對齊、粗體、稍大）。
   static const _titleStyle = TextStyle(
     fontFamily: _fontFamily,
     fontSize: 20,
@@ -44,12 +35,32 @@ class AppTheme {
     letterSpacing: -0.3,
   );
 
+  static InputDecorationTheme _inputTheme(Color fill, Color outline) =>
+      InputDecorationTheme(
+        filled: true,
+        fillColor: fill,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(color: outline, width: 1.3),
+        ),
+      );
+
   static final ThemeData light = ThemeData(
     colorScheme: ColorScheme.fromSeed(
       seedColor: _blue,
       brightness: Brightness.light,
     ).copyWith(
-      primary: _blue, // 強調藍
+      primary: _blue,
       onPrimary: Colors.white,
       secondary: _gold,
       onSecondary: Colors.white,
@@ -58,35 +69,54 @@ class AppTheme {
       onSurface: _ink,
       surfaceContainerHighest: _blueContainer,
       surfaceContainerHigh: _blueContainer,
-      primaryContainer: _blue, // 強調卡（今日經文/導讀方格）＝實心藍
+      primaryContainer: _blue,
       onPrimaryContainer: Colors.white,
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
-    scaffoldBackgroundColor: Colors.white, // 整個白底
+    scaffoldBackgroundColor: Colors.white,
+    materialTapTargetSize: MaterialTapTargetSize.padded,
     iconTheme: const IconThemeData(color: _gold),
     cardTheme: CardThemeData(
       elevation: 0,
       color: Colors.white,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: _cardBorder),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       margin: EdgeInsets.zero,
     ),
     appBarTheme: AppBarTheme(
       backgroundColor: Colors.white,
-      foregroundColor: _ink, // 標題黑字
+      foregroundColor: _ink,
       elevation: 0,
       scrolledUnderElevation: 0,
       centerTitle: false,
       titleTextStyle: _titleStyle.copyWith(color: _ink),
-      iconTheme: const IconThemeData(color: _gold), // leading 金
-      actionsIconTheme: const IconThemeData(color: _gold), // actions 金
+      iconTheme: const IconThemeData(color: _gold),
+      actionsIconTheme: const IconThemeData(color: _gold),
     ),
-    listTileTheme: const ListTileThemeData(iconColor: _gold),
-    dividerTheme: const DividerThemeData(color: _cardBorder, thickness: 1),
+    listTileTheme: const ListTileThemeData(
+      iconColor: _gold,
+      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 3),
+      minVerticalPadding: 10,
+      minLeadingWidth: 28,
+      titleTextStyle: TextStyle(
+        fontFamily: _fontFamily,
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        color: _ink,
+      ),
+      subtitleTextStyle: TextStyle(
+        fontFamily: _fontFamily,
+        fontSize: 13,
+        color: Color(0xFF6E6E73),
+      ),
+    ),
+    inputDecorationTheme: _inputTheme(_field, _blue),
+    dividerTheme: const DividerThemeData(
+      color: _separator,
+      thickness: 0.7,
+      space: 1,
+    ),
   );
 
   static final ThemeData dark = ThemeData(
@@ -103,18 +133,19 @@ class AppTheme {
       onSurface: Colors.white,
       surfaceContainerHighest: _navyContainer,
       surfaceContainerHigh: _navyContainer,
-      primaryContainer: _blueDeep, // 強調卡＝深藍
+      primaryContainer: _blueDeep,
       onPrimaryContainer: Colors.white,
     ),
     useMaterial3: true,
     fontFamily: _fontFamily,
     scaffoldBackgroundColor: _navy,
+    materialTapTargetSize: MaterialTapTargetSize.padded,
     iconTheme: const IconThemeData(color: _goldDark),
     cardTheme: CardThemeData(
       elevation: 0,
       color: _navyCard,
       surfaceTintColor: Colors.transparent,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       margin: EdgeInsets.zero,
     ),
     appBarTheme: AppBarTheme(
@@ -127,10 +158,31 @@ class AppTheme {
       iconTheme: const IconThemeData(color: _goldDark),
       actionsIconTheme: const IconThemeData(color: _goldDark),
     ),
-    listTileTheme: const ListTileThemeData(iconColor: _goldDark),
+    listTileTheme: const ListTileThemeData(
+      iconColor: _goldDark,
+      contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: 3),
+      minVerticalPadding: 10,
+      minLeadingWidth: 28,
+      titleTextStyle: TextStyle(
+        fontFamily: _fontFamily,
+        fontSize: 16,
+        fontWeight: FontWeight.w500,
+        color: Colors.white,
+      ),
+      subtitleTextStyle: TextStyle(
+        fontFamily: _fontFamily,
+        fontSize: 13,
+        color: Color(0xFFB7BCC4),
+      ),
+    ),
+    inputDecorationTheme: _inputTheme(_navyContainer, _blueOnDark),
+    dividerTheme: const DividerThemeData(
+      color: Color(0xFF24394C),
+      thickness: 0.7,
+      space: 1,
+    ),
   );
 
-  /// 螢光筆顏色（深淺色各一組，不寫死單一色）。
   static Color highlightColor(HighlightColor c, bool isDark) {
     switch (c) {
       case HighlightColor.yellow:
@@ -146,7 +198,6 @@ class AppTheme {
     }
   }
 
-  /// 螢光筆選色器上顯示的實色。
   static Color highlightSwatch(HighlightColor c) {
     switch (c) {
       case HighlightColor.yellow:
