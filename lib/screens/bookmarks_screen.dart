@@ -372,6 +372,7 @@ class _SelectionHeader extends StatelessWidget {
             TextButton(onPressed: onSelect, child: const Text('選取')),
         ]),
       );
+}
 
 Future<void> _exportNotes(BuildContext context, WidgetRef ref) async {
   final messenger = ScaffoldMessenger.of(context);
