@@ -163,7 +163,7 @@ void main() {
       'lib/screens/private_study_screen.dart',
     ]) {
       final src = File(path).readAsStringSync();
-      expect(src, isNot(contains('載入失敗：$e')), reason: path);
+      expect(src, isNot(contains(r'載入失敗：$e')), reason: path);
       expect(src, isNot(contains('error: (e, _) => Center')), reason: path);
     }
   });
