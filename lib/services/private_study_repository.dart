@@ -22,9 +22,11 @@ class PrivateStudyRepository {
 
   static const _bookTable = 'private_study_books';
   static const _noteTable = 'private_study_notes';
+  static const _metaTable = 'private_study_meta';
   static const _bookKind = 'private_study_book';
   static const _noteKind = 'private_study_note';
   static const _retentionMs = 30 * 24 * 60 * 60 * 1000;
+  bool _syncing = false; // sync 重入/序列化守衛（§八G/§八J）
 
   String newBookId() => 'psb_${DateTime.now().microsecondsSinceEpoch}';
   String newNoteId() => 'psn_${DateTime.now().microsecondsSinceEpoch}';
@@ -62,8 +64,60 @@ class PrivateStudyRepository {
         'CREATE INDEX IF NOT EXISTS idx_private_study_notes_book ON $_noteTable(book_id)');
     await sql.execute(
         'CREATE INDEX IF NOT EXISTS idx_private_study_notes_deleted ON $_noteTable(deleted_at)');
+    // 這些表在 repository 內以 CREATE IF NOT EXISTS 建立（不在 DatabaseService migration 框架）。
+    // 既有使用者的表可能缺新欄位，故以 idempotent ALTER 補（重複欄位錯誤忽略）。行動雙平台適用。
+    await _ensureColumn(sql, _noteTable, 'book_deleted_at',
+        'INTEGER NOT NULL DEFAULT 0');
+    // 帳號歸屬 marker：private personal data 不可跨帳號 sync（§八I）。
+    await sql.execute('''
+      CREATE TABLE IF NOT EXISTS $_metaTable (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    ''');
     _initialized = true;
     await _purgeExpired();
+  }
+
+  Future<void> _ensureColumn(
+      dynamic sql, String table, String column, String decl) async {
+    try {
+      final info = await sql.rawQuery('PRAGMA table_info($table)');
+      final has = info.any((r) => r['name']?.toString() == column);
+      if (!has) {
+        await sql.execute('ALTER TABLE $table ADD COLUMN $column $decl');
+      }
+    } catch (_) {
+      // 已存在或不支援 PRAGMA 時，嘗試直接 ALTER 並吞掉「duplicate column」錯誤。
+      try {
+        await sql.execute('ALTER TABLE $table ADD COLUMN $column $decl');
+      } catch (_) {}
+    }
+  }
+
+  // ---- 純決策函式（可測、無 IO；sync/cascade 正確性核心）----
+
+  /// tombstone（永久刪除標記）是否應擋下一筆較舊的 remote live doc（防復活，§八A/D）。
+  /// tombstone 較新或同時 → 擋；remote 較新（合法 restore/edit）→ 不擋（且呼叫端應清舊 tombstone）。
+  static bool tombstoneBlocksResurrection(
+          int tombstoneDeletedAt, int remoteUpdatedAt) =>
+      tombstoneDeletedAt >= remoteUpdatedAt;
+
+  /// Book restore 時，某 note 是否應隨之復活（§八C）：
+  /// 只有「因該次 Book 級聯刪除」的 note（bookDeletedAt == 被還原 Book 的 deletedAt 且 >0）才復活；
+  /// 在 Book 刪除前就被個別刪除的 note（bookDeletedAt==0）**不得**復活。
+  static bool shouldRestoreCascadedNote(
+          int noteBookDeletedAt, int bookDeletedAt) =>
+      bookDeletedAt > 0 && noteBookDeletedAt == bookDeletedAt;
+
+  /// 帳號歸屬決策（§八I）：
+  /// - 'adopt'：本機資料尚無歸屬（guest 或全新）→ 收養為目前 uid，正常 merge/upload（Guest→Login）。
+  /// - 'same'：歸屬 == 目前 uid → 正常 sync。
+  /// - 'switch'：歸屬 != 目前 uid → 換帳號，**不得把上一使用者本機資料上傳到目前帳號**。
+  static String ownerAction(String? storedOwner, String currentUid) {
+    if (storedOwner == null || storedOwner.isEmpty) return 'adopt';
+    if (storedOwner == currentUid) return 'same';
+    return 'switch';
   }
 
   List<String> _strings(Object? raw) {
@@ -90,6 +144,7 @@ class PrivateStudyRepository {
         sourceLocation: m['source_location']?.toString() ?? '',
         practice: m['practice']?.toString() ?? '',
         deletedAt: (m['deleted_at'] as num?)?.toInt() ?? 0,
+        bookDeletedAt: (m['book_deleted_at'] as num?)?.toInt() ?? 0,
         createdAt: (m['created_at'] as num?)?.toInt() ?? 0,
         updatedAt: (m['updated_at'] as num?)?.toInt() ?? 0,
       );
@@ -105,6 +160,7 @@ class PrivateStudyRepository {
         sourceLocation: m['source_location']?.toString() ?? '',
         practice: m['practice']?.toString() ?? '',
         deletedAt: (m['deleted_at'] as num?)?.toInt() ?? 0,
+        bookDeletedAt: (m['book_deleted_at'] as num?)?.toInt() ?? 0,
         createdAt: (m['created_at'] as num?)?.toInt() ?? 0,
         updatedAt: (m['updated_at'] as num?)?.toInt() ?? 0,
       );
@@ -129,9 +185,23 @@ class PrivateStudyRepository {
         'source_location': n.sourceLocation,
         'practice': n.practice,
         'deleted_at': n.deletedAt,
+        'book_deleted_at': n.bookDeletedAt,
         'created_at': n.createdAt,
         'updated_at': n.updatedAt,
       };
+
+  Future<String?> _getMeta(String key) async {
+    final sql = await db.database;
+    final rows = await sql.query(_metaTable,
+        columns: ['value'], where: 'key = ?', whereArgs: [key]);
+    return rows.isEmpty ? null : rows.first['value']?.toString();
+  }
+
+  Future<void> _setMeta(String key, String value) async {
+    final sql = await db.database;
+    await sql.insert(_metaTable, {'key': key, 'value': value},
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
 
   Future<List<PrivateStudyBook>> getBooks({bool includeDeleted = false}) async {
     await _ready();
@@ -253,8 +323,12 @@ class PrivateStudyRepository {
     await sql.transaction((txn) async {
       await txn.update(_bookTable, {'deleted_at': now, 'updated_at': now},
           where: 'id = ?', whereArgs: [id]);
-      await txn.update(_noteTable, {'deleted_at': now, 'updated_at': now},
-          where: 'book_id = ?', whereArgs: [id]);
+      // **只級聯刪除目前仍 live 的 notes**，並以 book_deleted_at=now 標記「屬於這次級聯」。
+      // 已被個別刪除的 notes（deleted_at>0）保持原狀、book_deleted_at 維持 0 → Book restore 不復活。
+      await txn.update(
+          _noteTable,
+          {'deleted_at': now, 'book_deleted_at': now, 'updated_at': now},
+          where: 'book_id = ? AND deleted_at = 0', whereArgs: [id]);
     });
     db.onMutate?.call();
     await syncCurrentUser();
@@ -264,12 +338,24 @@ class PrivateStudyRepository {
     await _ready();
     final now = DateTime.now().millisecondsSinceEpoch;
     final sql = await db.database;
+    // 讀取還原前的 Book.deletedAt，作為「這次級聯批次」的識別鍵。
+    final bookRows = await sql
+        .query(_bookTable, columns: ['deleted_at'], where: 'id = ?', whereArgs: [id]);
+    final bookDeletedAt =
+        bookRows.isEmpty ? 0 : ((bookRows.first['deleted_at'] as num?)?.toInt() ?? 0);
     await sql.transaction((txn) async {
       await txn.update(_bookTable,
           {'deleted_at': 0, 'updated_at': now, 'last_studied_at': now},
           where: 'id = ?', whereArgs: [id]);
-      await txn.update(_noteTable, {'deleted_at': 0, 'updated_at': now},
-          where: 'book_id = ?', whereArgs: [id]);
+      // **只復活隨這次 Book 級聯刪除的 notes**（book_deleted_at == 還原前 Book.deletedAt）。
+      // 個別刪除者（book_deleted_at==0 或其它批次）維持刪除。
+      if (bookDeletedAt > 0) {
+        await txn.update(
+            _noteTable,
+            {'deleted_at': 0, 'book_deleted_at': 0, 'updated_at': now},
+            where: 'book_id = ? AND book_deleted_at = ?',
+            whereArgs: [id, bookDeletedAt]);
+      }
     });
     db.onMutate?.call();
     await syncCurrentUser();
@@ -395,17 +481,47 @@ class PrivateStudyRepository {
     }
   }
 
+  /// 目前本機 private-study 那筆 ref 的 tombstone deleted_at（無則 null）。
+  Future<int?> _localTombstone(dynamic sql, String kind, String ref) async {
+    final rows = await sql.query('tombstones',
+        columns: ['deleted_at'],
+        where: 'kind = ? AND ref = ?',
+        whereArgs: [kind, ref]);
+    return rows.isEmpty ? null : ((rows.first['deleted_at'] as num?)?.toInt() ?? 0);
+  }
+
+  /// 換帳號時清掉本機 private-study 資料（上一使用者資料已安全存在其 cloud）。
+  /// 只清 private-study 相關 rows，不動其他表；§八I 防跨帳號上傳。
+  Future<void> _clearLocalData(dynamic sql) async {
+    await sql.delete(_noteTable);
+    await sql.delete(_bookTable);
+    await sql.delete('tombstones',
+        where: 'kind IN (?, ?)', whereArgs: [_bookKind, _noteKind]);
+  }
+
   /// Opportunistic LWW sync。Guest / Firebase unavailable 時安全 no-op。
+  /// 重入守衛（§八G/§八J）：同時多次呼叫只跑一次，重複 reconnect idempotent。
   Future<void> syncCurrentUser() async {
     await _ready();
     final uid = await _uid();
-    if (uid == null) return;
+    if (uid == null) return; // guest：資料留本機、不上傳
+    if (_syncing) return;
+    _syncing = true;
     try {
       final sql = await db.database;
+
+      // §八I 帳號歸屬守衛：換帳號不得把上一使用者本機資料上傳到目前帳號。
+      final action = ownerAction(await _getMeta('owner_uid'), uid);
+      if (action == 'switch') {
+        await _clearLocalData(sql);
+      }
+      await _setMeta('owner_uid', uid);
+
       final bookCol = _col(uid, 'private_study_books');
       final noteCol = _col(uid, 'private_study_notes');
       final tombCol = _col(uid, 'tombstones');
 
+      // 1) 下載 cloud tombstones：套用刪除（deletedAt>=local.updatedAt 才刪）＋落地 marker。
       final cloudTombs = await tombCol.get();
       for (final d in cloudTombs.docs) {
         final m = d.data();
@@ -425,14 +541,24 @@ class PrivateStudyRepository {
             await sql.delete(_noteTable, where: 'id = ?', whereArgs: [ref]);
           }
         }
-        await sql.insert('tombstones',
-            {'kind': kind, 'ref': ref, 'deleted_at': deletedAt},
-            conflictAlgorithm: ConflictAlgorithm.replace);
+        // 落地 marker，但**保留較新的本機 marker**（避免舊 cloud tomb 壓過新的）。
+        final localTomb = await _localTombstone(sql, kind!, ref);
+        if (localTomb == null || deletedAt > localTomb) {
+          await sql.insert('tombstones',
+              {'kind': kind, 'ref': ref, 'deleted_at': deletedAt},
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
 
+      // 2) 下載 books（**防復活**：較新/同時的 tombstone 擋下；較舊 tombstone 則被合法 restore 清掉）。
       final cloudBooks = await bookCol.get();
       for (final d in cloudBooks.docs) {
         final remote = PrivateStudyBook.fromMap({'id': d.id, ...d.data()});
+        final tomb = await _localTombstone(sql, _bookKind, d.id);
+        if (tomb != null && tombstoneBlocksResurrection(tomb, remote.updatedAt)) {
+          continue; // 永久刪除較新 → 不復活
+        }
+        if (tomb != null) await _clearTombstone(_bookKind, d.id); // 合法較新 → 清舊 marker，止 flip-flop
         final local = await getBook(d.id);
         if (local == null || remote.updatedAt > local.updatedAt) {
           await sql.insert(_bookTable, _bookLocal(remote),
@@ -440,9 +566,15 @@ class PrivateStudyRepository {
         }
       }
 
+      // 3) 下載 notes（同樣防復活 + 止 flip-flop）。
       final cloudNotes = await noteCol.get();
       for (final d in cloudNotes.docs) {
         final remote = _noteFromCloud(d.id, d.data());
+        final tomb = await _localTombstone(sql, _noteKind, d.id);
+        if (tomb != null && tombstoneBlocksResurrection(tomb, remote.updatedAt)) {
+          continue;
+        }
+        if (tomb != null) await _clearTombstone(_noteKind, d.id);
         final local = await getNote(d.id);
         if (local == null || remote.updatedAt > local.updatedAt) {
           await sql.insert(_noteTable, _noteLocal(remote),
@@ -450,28 +582,25 @@ class PrivateStudyRepository {
         }
       }
 
+      // 4) 上傳本機（含 soft-deleted：deleted_at 隨 doc 同步，靠 updatedAt LWW）。
       final localBooks = await sql.query(_bookTable);
       for (final row in localBooks) {
-        final b = _bookFromLocal(row);
-        await bookCol.doc(b.id).set(b.toCloudMap());
+        await bookCol.doc(_bookFromLocal(row).id).set(_bookFromLocal(row).toCloudMap());
       }
       final localNotes = await sql.query(_noteTable);
       for (final row in localNotes) {
-        final n = _noteFromLocal(row);
-        await noteCol.doc(n.id).set(n.toCloudMap());
+        await noteCol.doc(_noteFromLocal(row).id).set(_noteFromLocal(row).toCloudMap());
       }
 
+      // 5) 上傳永久刪除 tombstones，並刪對應 cloud doc（永久刪除防復活的必要 marker，§八D/E）。
       final tombs = await sql.query('tombstones',
           where: 'kind IN (?, ?)', whereArgs: [_bookKind, _noteKind]);
       for (final t in tombs) {
         final kind = t['kind'].toString();
         final ref = t['ref'].toString();
         final deletedAt = (t['deleted_at'] as num?)?.toInt() ?? 0;
-        await tombCol.doc('${kind}_$ref').set({
-          'kind': kind,
-          'ref': ref,
-          'deleted_at': deletedAt,
-        });
+        await tombCol.doc('${kind}_$ref').set(
+            {'kind': kind, 'ref': ref, 'deleted_at': deletedAt});
         if (kind == _bookKind) {
           await bookCol.doc(ref).delete();
         } else {
@@ -480,6 +609,8 @@ class PrivateStudyRepository {
       }
     } catch (_) {
       // Local-first：雲端不可用時不影響本地讀寫；下次進入/操作再同步。
+    } finally {
+      _syncing = false;
     }
   }
 }

@@ -83,6 +83,9 @@ class PrivateStudyNote {
   final String sourceLocation;
   final String practice;
   final int deletedAt;
+  // >0 代表這筆 note 是「隨所屬 Book 級聯刪除」時被刪的，值＝當時 Book 的 deletedAt。
+  // 0 代表 live，或**在 Book 刪除前就被使用者個別刪除**（獨立刪除，Book restore 不得復活）。
+  final int bookDeletedAt;
   final int createdAt;
   final int updatedAt;
 
@@ -96,6 +99,7 @@ class PrivateStudyNote {
     this.sourceLocation = '',
     this.practice = '',
     this.deletedAt = 0,
+    this.bookDeletedAt = 0,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -127,6 +131,7 @@ class PrivateStudyNote {
     String? sourceLocation,
     String? practice,
     int? deletedAt,
+    int? bookDeletedAt,
     int? updatedAt,
   }) =>
       PrivateStudyNote(
@@ -139,6 +144,7 @@ class PrivateStudyNote {
         sourceLocation: sourceLocation ?? this.sourceLocation,
         practice: practice ?? this.practice,
         deletedAt: deletedAt ?? this.deletedAt,
+        bookDeletedAt: bookDeletedAt ?? this.bookDeletedAt,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
@@ -153,6 +159,7 @@ class PrivateStudyNote {
         'source_location': sourceLocation,
         'practice': practice,
         'deleted_at': deletedAt,
+        'book_deleted_at': bookDeletedAt,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };

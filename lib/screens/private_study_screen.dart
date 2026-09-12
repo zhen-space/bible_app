@@ -655,7 +655,8 @@ class PrivateStudyNoteEditorScreen extends ConsumerStatefulWidget {
 }
 
 class _PrivateStudyNoteEditorScreenState
-    extends ConsumerState<PrivateStudyNoteEditorScreen> {
+    extends ConsumerState<PrivateStudyNoteEditorScreen>
+    with WidgetsBindingObserver {
   late final TextEditingController _quote;
   late final TextEditingController _reflection;
   late final TextEditingController _refs;
@@ -664,6 +665,7 @@ class _PrivateStudyNoteEditorScreenState
   late final String _id;
   late final int _createdAt;
   late Set<String> _topics;
+  late final PrivateStudyRepository _repo; // 於 initState 綁定，dispose 時不再碰 ref
   Timer? _debounce;
   bool _persisted = false;
   String _saveState = '';
@@ -671,6 +673,8 @@ class _PrivateStudyNoteEditorScreenState
   @override
   void initState() {
     super.initState();
+    _repo = ref.read(privateStudyRepositoryProvider);
+    WidgetsBinding.instance.addObserver(this);
     final note = widget.note;
     _id = note?.id ?? 'psn_${DateTime.now().microsecondsSinceEpoch}';
     _createdAt = note?.createdAt ?? DateTime.now().millisecondsSinceEpoch;
@@ -687,8 +691,31 @@ class _PrivateStudyNoteEditorScreenState
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // App 進背景/被收起前，先把待寫入的最後編輯 flush（§八F）。
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      if (_debounce?.isActive ?? false) {
+        _debounce?.cancel();
+        _save();
+      }
+    }
+  }
+
+  @override
   void dispose() {
+    // 立即 Back：若仍有 debounce 未觸發，先用「目前欄位內容」flush 到本機（fire-and-forget，
+    // repository 的 DB 寫入不依賴此 widget 生命週期，不會遺失最後一段文字）。§八F
+    final pending = _debounce?.isActive ?? false;
     _debounce?.cancel();
+    if (pending) {
+      final note = _draft(); // controllers 尚未 dispose，可安全讀取
+      if (_persisted || note.hasMeaningfulContent) {
+        _repo.saveNote(note); // 不 await；不觸 ref/ setState
+      }
+    }
+    WidgetsBinding.instance.removeObserver(this);
     _quote.dispose();
     _reflection.dispose();
     _refs.dispose();
