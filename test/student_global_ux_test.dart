@@ -168,15 +168,12 @@ void main() {
     }
   });
 
-  test('Teacher Area re-added (capability-gated) and Church/Q&A/Study Content contracts remain', () {
-    // Teacher Area Student 入口已補回；shared Church/Q&A/Study Content 契約不受影響。
-    expect(File('lib/screens/teacher_area_screen.dart').existsSync(), isTrue);
+  test('Teacher Area stays retired and Church/Q&A/Study Content contracts remain', () {
+    expect(File('lib/screens/teacher_area_screen.dart').existsSync(), isFalse);
     expect(File('lib/services/church_repository.dart').existsSync(), isTrue);
     expect(File('lib/services/qa_service.dart').existsSync(), isTrue);
     expect(File('lib/services/study_content_repository.dart').existsSync(), isTrue);
     final hub = File('lib/screens/bible_hub_screen.dart').readAsStringSync();
-    // 入口存在且以 capability provider 把關（非無條件顯示）。
-    expect(hub, contains('老師專區'));
-    expect(hub, contains('teacherEntryVisibleProvider'));
+    expect(hub, isNot(contains('老師專區')));
   });
 }

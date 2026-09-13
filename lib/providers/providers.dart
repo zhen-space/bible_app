@@ -480,22 +480,12 @@ final authorizedTeachingsProvider =
       .fetchAuthorizedTeachings(chapterId, auth);
 });
 
-/// 老師專區搜尋用：所有**已授權** teacher teaching（跨書卷/章）。搜尋在此 universe 上
-/// 做 title+body 比對；未授權 church/internal 永不進入結果（authorization-first）。
-final authorizedTeachingsAllProvider =
-    FutureProvider<List<StudyContentItem>>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  final auth = await ref.watch(myAuthProvider.future);
-  return ref
-      .watch(studyContentRepositoryProvider)
-      .fetchAuthorizedTeachingsAll(auth);
-});
-
-/// 老師專區入口 eligibility 的唯一 authority：
+/// `teacher_area` capability 的唯一 authority：
 /// Active Membership + 該 Active Church private `teacher_area` capability。
 ///
-/// capability 與 Published Teaching 數量完全分離；即使目前沒有任何 authorized
-/// teaching，只要 capability=true，入口仍存在並由 TeacherAreaScreen 顯示 empty state。
+/// 產品決策：Student 端**不提供獨立「老師專區」瀏覽 UI**（已移除）。此 provider 保留
+/// 作為 **shared capability**，供 Q&A 授權（teacher-area source 的 required capability）
+/// 等 backend 判斷使用；不再驅動任何 Student Teacher Area 入口/畫面。
 final teacherEntryVisibleProvider = FutureProvider<bool>((ref) async {
   if (!ref.watch(firebaseReadyProvider)) return false;
   final uid = ref.watch(authUserProvider).value?.uid;
