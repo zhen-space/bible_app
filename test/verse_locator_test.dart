@@ -51,6 +51,45 @@ void main() {
       expect(VerseLocator.parse('約3:999', books), isNull);
       expect(VerseLocator.parse('不存在的書3:1', books), isNull);
     });
+
+    // 實機 bug（PR#9 Scripture input）：書卷與章之間的冒號分隔、半/全形冒號、
+    // 有無空格都必須辨識。normalize 後再解析，不要求使用者配合特定鍵盤格式。
+    test('書卷、章、節間的冒號/空格各種組合都要成功', () {
+      for (final input in [
+        '約翰福音：3：16', // 全形冒號、書卷後也有冒號（原本失敗的實機輸入）
+        '約翰福音 3:16', // 空格 + 半形冒號
+        '約翰福音3:16', // 完全無空格
+        '約翰福音 3：16', // 空格 + 全形冒號
+        '約翰福音:3:16', // 半形冒號、書卷後也有冒號
+        '約翰福音　3：16', // 全形空格 + 全形冒號
+      ]) {
+        final r = VerseLocator.parse(input, books);
+        expect(r, isNotNull, reason: '應辨識：$input');
+        expect(r!.bookId, 43, reason: input); // 約翰福音
+        expect(r.chapter, 3, reason: input);
+        expect(r.verse, 16, reason: input);
+      }
+    });
+
+    test('書卷後冒號、只有章（整章）也要成功', () {
+      final r = VerseLocator.parse('詩篇：23', books);
+      expect(r, isNotNull);
+      expect(r!.bookId, 19); // 詩篇
+      expect(r.chapter, 23);
+      expect(r.verse, isNull);
+    });
+
+    test('normalize 後仍為 malformed 的輸入必須拒絕', () {
+      for (final bad in [
+        '約翰福音：：', // 有書卷與分隔但沒有章
+        '：3：16', // 沒有書卷名
+        '約翰福音', // 只有書卷、沒有章
+        '3:16', // 沒有書卷名（開頭是數字）
+        '約翰福音：0：16', // 章為 0，超出範圍
+      ]) {
+        expect(VerseLocator.parse(bad, books), isNull, reason: '應拒絕：$bad');
+      }
+    });
   });
 
   group('主題經文資料', () {
