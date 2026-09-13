@@ -96,7 +96,13 @@ class StudyContentItem {
   final StudyContentType? contentType; // 未知 → null（fail-closed）
   final String title;
   final String body;
+  // 整理者建立的**相關經文**（既有欄位，既有 consumer 沿用；語意＝curator-added related）。
   final List<String> scriptureRefs;
+  // 老師教導的**原文引用經文**（Church/Teacher R1；additive，與 scriptureRefs 分開呈現）。
+  final List<String> teacherScriptureRefs;
+  // 老師教導最小 provenance：來源頁碼／位置（Book/Chapter 由 teacherBookId/ChapterId 決定，
+  // 不重複建立 authority）。additive、選填。
+  final String sourceLocation;
   final List<String> topicIds;
   final List<String> tags;
   final int version;
@@ -127,6 +133,8 @@ class StudyContentItem {
     this.title = '',
     this.body = '',
     this.scriptureRefs = const [],
+    this.teacherScriptureRefs = const [],
+    this.sourceLocation = '',
     this.topicIds = const [],
     this.tags = const [],
     this.version = 0,
@@ -162,6 +170,10 @@ class StudyContentItem {
         'title': title,
         'body': body,
         'scripture_refs': scriptureRefs,
+        // additive：僅在有值時序列化，不污染既有 study content doc 形狀。
+        if (teacherScriptureRefs.isNotEmpty)
+          'teacher_scripture_refs': teacherScriptureRefs,
+        if (sourceLocation.isNotEmpty) 'source_location': sourceLocation,
         'topic_ids': topicIds,
         'tags': tags,
         if (teacherBookId.isNotEmpty) 'teacher_book_id': teacherBookId,
@@ -202,6 +214,8 @@ class StudyContentItem {
       title: (p['title'] as String?) ?? '',
       body: (p['body'] as String?) ?? '',
       scriptureRefs: strs(p['scripture_refs']),
+      teacherScriptureRefs: strs(p['teacher_scripture_refs']),
+      sourceLocation: (p['source_location'] as String?) ?? '',
       topicIds: strs(p['topic_ids']),
       tags: strs(p['tags']),
       version: c.version,

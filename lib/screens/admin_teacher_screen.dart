@@ -116,6 +116,8 @@ class AdminTeacherChaptersScreen extends ConsumerWidget {
                     title: const Text('編輯章'),
                     onTap: () => _editChapter(context, ref, c),
                   ),
+                  const Divider(height: 1),
+                  _ChapterTeachings(chapterId: c.id),
                   ListTile(
                     leading: const Icon(Icons.add_circle_outline),
                     title: const Text('新增教導內容'),
@@ -178,6 +180,58 @@ class AdminTeacherChaptersScreen extends ConsumerWidget {
         MaterialPageRoute(
             builder: (_) => StudyContentEditor(item: draft, isNew: true)));
     ref.invalidate(adminTeacherChaptersProvider(book.id));
+  }
+}
+
+/// 列出某章現有的教導內容（study content，依 teacher_chapter_id 篩選）。
+/// 顯示 title / status / audience；點進既有 StudyContentEditor。
+class _ChapterTeachings extends ConsumerWidget {
+  final String chapterId;
+  const _ChapterTeachings({required this.chapterId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(adminTeachingsProvider(chapterId));
+    return async.when(
+      loading: () => const Padding(
+          padding: EdgeInsets.symmetric(vertical: 10),
+          child: Center(child: SizedBox(
+              width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))),
+      error: (e, _) => ListTile(
+          dense: true, title: Text('教導內容載入失敗：$e')),
+      data: (rows) {
+        if (rows.isEmpty) {
+          return const ListTile(
+              dense: true,
+              leading: Icon(Icons.article_outlined),
+              title: Text('此章尚無教導內容'),
+              subtitle: Text('用下方「新增教導內容」建立第一則'));
+        }
+        return Column(
+          children: [
+            for (final r in rows)
+              ListTile(
+                dense: true,
+                leading: const Icon(Icons.article_outlined),
+                title: Text(
+                    r.editorial.title.isEmpty ? '(未命名)' : r.editorial.title),
+                subtitle: Text(
+                    '${r.editorial.status.label}｜${r.editorial.audience?.label ?? '未設對象'}'
+                    '${r.hasPublished ? '｜有發布版本' : ''}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () async {
+                  await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => StudyContentEditor(
+                              item: r.editorial, isNew: false)));
+                  ref.invalidate(adminTeachingsProvider(chapterId));
+                },
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 

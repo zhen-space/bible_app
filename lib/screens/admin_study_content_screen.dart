@@ -307,7 +307,13 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
   late final TextEditingController _body;
   late final TextEditingController _refs;
   late final TextEditingController _tags;
+  // 老師教導專屬（additive；只在此 item 是 teacher teaching 時顯示/儲存）。
+  late final TextEditingController _teacherRefs; // 老師原文引用經文
+  late final TextEditingController _sourceLocation; // 來源頁碼／位置
   late final Map<String, TextEditingController> _typed;
+
+  /// 是否為老師專區教導（由 teacherBookId 決定；不建立重複 authority）。
+  bool get _isTeaching => it.teacherBookId.isNotEmpty;
   late Visibility _visibility;
   // Church/Teacher R1：audience 為 authoring authority；visibility 由 audience 派生（相容）。
   late Audience _audience;
@@ -331,6 +337,9 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
     _body = TextEditingController(text: it.body);
     _refs = TextEditingController(text: it.scriptureRefs.join('\n'));
     _tags = TextEditingController(text: it.tags.join(' '));
+    _teacherRefs =
+        TextEditingController(text: it.teacherScriptureRefs.join('\n'));
+    _sourceLocation = TextEditingController(text: it.sourceLocation);
     _visibility = it.visibility ?? Visibility.internal;
     // audience：優先用既有；否則由 legacy visibility 派生（student→public、其餘→internal）。
     _audience = it.audience ??
@@ -372,7 +381,15 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
 
   @override
   void dispose() {
-    for (final c in [_title, _body, _refs, _tags, ..._typed.values]) {
+    for (final c in [
+      _title,
+      _body,
+      _refs,
+      _tags,
+      _teacherRefs,
+      _sourceLocation,
+      ..._typed.values
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -390,8 +407,19 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
           if (_readOnly) _readOnlyBanner(),
           _field(_title, '標題', enabled: !_readOnly),
           _field(_body, '內文 / 說明', enabled: !_readOnly, lines: 5),
-          _field(_refs, '經文引用（每行一個節位，例：約3:16）',
-              enabled: !_readOnly, lines: 3),
+          _field(
+              _refs,
+              _isTeaching
+                  ? '整理者建立的相關經文（每行一個節位，例：約3:16）'
+                  : '經文引用（每行一個節位，例：約3:16）',
+              enabled: !_readOnly,
+              lines: 3),
+          if (_isTeaching) ...[
+            _field(_teacherRefs, '老師原文引用經文（每行一個節位；與相關經文分開呈現）',
+                enabled: !_readOnly, lines: 3),
+            _field(_sourceLocation, '來源頁碼／位置（選填，例：第 42 頁、第三段）',
+                enabled: !_readOnly),
+          ],
           for (final k in _typedFields(type))
             _field(_typed[k]!, _typedLabel(k),
                 enabled: !_readOnly, lines: k == 'events' ? 4 : 1),
@@ -760,6 +788,17 @@ class _StudyContentEditorState extends ConsumerState<StudyContentEditor> {
       'tags': tags,
       'data': _buildData(),
     };
+    // 老師教導專屬欄位（additive）：只在 teacher teaching 時寫入，維持既有 doc 形狀。
+    if (_isTeaching) {
+      final teacherRefs = _teacherRefs.text
+          .split('\n')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (teacherRefs.isNotEmpty) payload['teacher_scripture_refs'] = teacherRefs;
+      final loc = _sourceLocation.text.trim();
+      if (loc.isNotEmpty) payload['source_location'] = loc;
+    }
     await repo.saveContentDraft(
       it.id,
       type: type,

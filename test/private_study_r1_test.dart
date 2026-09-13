@@ -74,7 +74,7 @@ void main() {
     expect(screen, contains("actionLabel: '新增書籍'"));
   });
 
-  test('Student IA 已無老師專區，Bible / My Content 共用我的研讀', () {
+  test('Student IA：我的研讀在 Bible / My Content 共用；老師專區由 capability gate', () {
     final bible = File('lib/screens/bible_hub_screen.dart').readAsStringSync();
     final mine = File('lib/screens/my_content_screen.dart').readAsStringSync();
     final home = File('lib/screens/student_home_screen.dart').readAsStringSync();
@@ -84,9 +84,12 @@ void main() {
     expect(bible, contains('PrivateStudyHomeScreen'));
     expect(mine, contains('PrivateStudyHomeScreen'));
     expect(home, isNot(contains("'我的研讀'")));
-    expect(bible, isNot(contains("'老師專區'")));
+    // Teacher Area 入口已補回 Bible Hub，但仍以 capability provider 把關。
+    expect(bible, contains("'老師專區'"));
+    expect(bible, contains('teacherEntryVisibleProvider'));
+    // Search 不呈現 Teacher Area organization context。
     expect(search, isNot(contains("'老師專區'")));
-    expect(File('lib/screens/teacher_area_screen.dart').existsSync(), isFalse);
+    expect(File('lib/screens/teacher_area_screen.dart').existsSync(), isTrue);
     expect(File('lib/services/church_repository.dart').existsSync(), isTrue);
   });
 

@@ -155,11 +155,28 @@ class StudentStudyContentDetail extends ConsumerWidget {
             Text(item.body, style: const TextStyle(height: 1.7)),
           const SizedBox(height: 8),
           ..._typed(context, ref),
+          // 老師原文引用經文與整理者相關經文**明確分開呈現**（Church/Teacher R1）。
+          if (item.teacherScriptureRefs.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text('老師引用經文', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 6),
+            _refChips(context, ref, item.teacherScriptureRefs),
+          ],
           if (item.scriptureRefs.isNotEmpty) ...[
             const SizedBox(height: 16),
-            Text('相關經文', style: Theme.of(context).textTheme.labelLarge),
+            Text(
+                item.teacherScriptureRefs.isNotEmpty ? '相關經文（整理者建立）' : '相關經文',
+                style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(height: 6),
             _refChips(context, ref, item.scriptureRefs),
+          ],
+          if (item.sourceLocation.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Text('來源',
+                style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(height: 6),
+            Text(item.sourceLocation,
+                style: TextStyle(color: Theme.of(context).colorScheme.outline)),
           ],
         ],
       ),
