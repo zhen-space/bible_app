@@ -3,7 +3,6 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:bible_app/models/church.dart';
 import 'package:bible_app/models/study_content.dart';
-import 'package:bible_app/models/teacher.dart';
 import 'package:bible_app/services/church_repository.dart';
 import 'package:bible_app/services/content_service.dart';
 import 'package:bible_app/services/content_workflow_service.dart';
@@ -152,36 +151,9 @@ void main() {
     });
   });
 
-  group('Teacher hierarchy authorization', () {
-    test('church A book：active B 讀不到（無結構洩漏）', () async {
-      final fs = FakeFirebaseFirestore();
-      final tr = TeacherRepository(fs);
-      await fs.collection('teacher_books').doc('b1').set({
-        'title': '書', 'order': 0, 'status': 'published',
-        'audience': 'church', 'allowed_church_ids': ['A'],
-      });
-      expect((await tr.fetchAuthorizedBooks(const StudentAuth('A'))).map((b) => b.id), ['b1']);
-      expect(await tr.fetchAuthorizedBooks(const StudentAuth('B')), isEmpty);
-      expect(await tr.fetchAuthorizedBooks(StudentAuth.none), isEmpty);
-    });
-
-    test('teaching(chapter) authorized：study_content 掛 chapter，audience 授權過濾', () async {
-      final fs = FakeFirebaseFirestore();
-      final repo = _repo(fs);
-      await _seed(fs, 'teach_pub', status: 'published', audience: 'public', teacherChapterId: 'c1');
-      await _seed(fs, 'teach_chB', status: 'published', audience: 'church', churches: ['B'], teacherChapterId: 'c1');
-      final ids = (await repo.fetchAuthorizedTeachings('c1', const StudentAuth('A'))).map((e) => e.id).toSet();
-      expect(ids, {'teach_pub'}); // 不含 church B teaching
-    });
-
-    test('TeacherBook/Chapter.authorizedFor 契約', () {
-      const book = TeacherBook(id: 'b', status: ContentStatus.published, audience: Audience.church, allowedChurchIds: ['A']);
-      expect(book.authorizedFor('A'), isTrue);
-      expect(book.authorizedFor('B'), isFalse);
-      const ch = TeacherChapter(id: 'c', bookId: 'b', status: ContentStatus.published, audience: Audience.internal);
-      expect(ch.authorizedFor('A'), isFalse);
-    });
-  });
+  // Teacher Area 產品功能已退休：TeacherRepository / TeacherBook / TeacherChapter /
+  // fetchAuthorizedTeachings 已刪除，故原「Teacher hierarchy authorization」group 一併移除。
+  // Church study_content audience 授權由 study_content 的其他 group 覆蓋，未受影響。
 
   group('Membership contract', () {
     test('request → pending；activeChurchId 只有 active 才有值', () async {
@@ -263,7 +235,7 @@ void main() {
       expect(await repo.hasTeacherAreaForActiveChurch('u'), isFalse);
     });
 
-    test('capability=true 且 0 篇 Teacher content：入口 eligibility 仍為 true', () async {
+    test('teacher_area capability=true → hasTeacherAreaForActiveChurch 為 true（供 Q&A 授權）', () async {
       final fs = FakeFirebaseFirestore();
       final repo = ChurchRepository(fs);
       await fs.collection('churches').doc('A').set({'active': true});
@@ -273,8 +245,7 @@ void main() {
       await repo.saveChurchCapabilities(
           const ChurchCapabilities(churchId: 'A', teacherArea: true));
 
-      expect(await TeacherRepository(fs).fetchAuthorizedBooks(const StudentAuth('A')),
-          isEmpty);
+      // Teacher Area 瀏覽已退休；capability 仍為 shared authority（Q&A teacher-area source）。
       expect(await repo.hasTeacherAreaForActiveChurch('u'), isTrue);
     });
   });
@@ -382,16 +353,8 @@ void main() {
       expect(u.map((e) => e.id).toSet(), {'p', 'a'});
     });
 
-    test('Public Book + 只有 church-B chapter：active A 讀不到 B chapter（無結構洩漏）', () async {
-      final fs = FakeFirebaseFirestore();
-      final tr = TeacherRepository(fs);
-      await fs.collection('teacher_books').doc('bk').set({'title': '公開書', 'status': 'published', 'audience': 'public', 'order': 0});
-      await fs.collection('teacher_books').doc('bk').collection('chapters').doc('cB')
-          .set({'book_id': 'bk', 'status': 'published', 'audience': 'church', 'allowed_church_ids': ['B'], 'order': 0});
-      // Book 公開可見，但 active A 的授權章為空（B 章不洩漏）。
-      expect((await tr.fetchAuthorizedBooks(const StudentAuth('A'))).map((b) => b.id), ['bk']);
-      expect(await tr.fetchAuthorizedChapters('bk', const StudentAuth('A')), isEmpty);
-      expect((await tr.fetchAuthorizedChapters('bk', const StudentAuth('B'))).map((c) => c.id), ['cB']);
-    });
+    // （Teacher Area 退休：原「Public Book + church-B chapter 無結構洩漏」測試移除，
+    // 因 TeacherRepository / teacher_books 讀取層已刪。Church study_content audience
+    // 授權由本檔其他 study_content group 覆蓋。）
   });
 }

@@ -19,7 +19,6 @@ import '../services/study_content_repository.dart';
 import '../services/church_repository.dart';
 import '../models/study_content.dart';
 import '../models/church.dart';
-import '../models/teacher.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
 import '../services/qa_service.dart';
@@ -434,8 +433,6 @@ final studyContentRepositoryProvider = Provider((ref) => StudyContentRepository(
 
 final churchRepositoryProvider =
     Provider((ref) => ChurchRepository(FirebaseFirestore.instance));
-final teacherRepositoryProvider =
-    Provider((ref) => TeacherRepository(FirebaseFirestore.instance));
 final savedStudyContentRepositoryProvider =
     Provider((ref) => SavedStudyContentRepository(FirebaseFirestore.instance));
 
@@ -453,33 +450,6 @@ final myAuthProvider = FutureProvider<StudentAuth>((ref) async {
   return StudentAuth.from(m);
 });
 
-// ---- 老師專區（授權 aware）----
-
-final authorizedTeacherBooksProvider =
-    FutureProvider<List<TeacherBook>>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  final auth = await ref.watch(myAuthProvider.future);
-  return ref.watch(teacherRepositoryProvider).fetchAuthorizedBooks(auth);
-});
-
-final authorizedTeacherChaptersProvider =
-    FutureProvider.family<List<TeacherChapter>, String>((ref, bookId) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  final auth = await ref.watch(myAuthProvider.future);
-  return ref
-      .watch(teacherRepositoryProvider)
-      .fetchAuthorizedChapters(bookId, auth);
-});
-
-final authorizedTeachingsProvider =
-    FutureProvider.family<List<StudyContentItem>, String>((ref, chapterId) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  final auth = await ref.watch(myAuthProvider.future);
-  return ref
-      .watch(studyContentRepositoryProvider)
-      .fetchAuthorizedTeachings(chapterId, auth);
-});
-
 /// `teacher_area` capability 的唯一 authority：
 /// Active Membership + 該 Active Church private `teacher_area` capability。
 ///
@@ -493,26 +463,6 @@ final teacherEntryVisibleProvider = FutureProvider<bool>((ref) async {
   return ref
       .watch(churchRepositoryProvider)
       .hasTeacherAreaForActiveChurch(uid);
-});
-
-// Admin 老師專區。
-final adminTeacherBooksProvider =
-    FutureProvider<List<TeacherBook>>((ref) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  return ref.watch(teacherRepositoryProvider).adminListBooks();
-});
-
-final adminTeacherChaptersProvider =
-    FutureProvider.family<List<TeacherChapter>, String>((ref, bookId) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  return ref.watch(teacherRepositoryProvider).adminListChapters(bookId);
-});
-
-/// 某章現有教導內容（study content，workspace∪published），供 Admin Chapter 畫面列出。
-final adminTeachingsProvider =
-    FutureProvider.family<List<AdminStudyRow>, String>((ref, chapterId) async {
-  if (!ref.watch(firebaseReadyProvider)) return const [];
-  return ref.watch(studyContentRepositoryProvider).adminListTeachings(chapterId);
 });
 
 /// Optional onboarding church prompt：登入、無 membership、未略過時才顯示。
