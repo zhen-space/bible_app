@@ -480,6 +480,17 @@ final authorizedTeachingsProvider =
       .fetchAuthorizedTeachings(chapterId, auth);
 });
 
+/// 老師專區搜尋用：所有**已授權** teacher teaching（跨書卷/章）。搜尋在此 universe 上
+/// 做 title+body 比對；未授權 church/internal 永不進入結果（authorization-first）。
+final authorizedTeachingsAllProvider =
+    FutureProvider<List<StudyContentItem>>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  final auth = await ref.watch(myAuthProvider.future);
+  return ref
+      .watch(studyContentRepositoryProvider)
+      .fetchAuthorizedTeachingsAll(auth);
+});
+
 /// 老師專區入口 eligibility 的唯一 authority：
 /// Active Membership + 該 Active Church private `teacher_area` capability。
 ///
@@ -505,6 +516,13 @@ final adminTeacherChaptersProvider =
     FutureProvider.family<List<TeacherChapter>, String>((ref, bookId) async {
   if (!ref.watch(firebaseReadyProvider)) return const [];
   return ref.watch(teacherRepositoryProvider).adminListChapters(bookId);
+});
+
+/// 某章現有教導內容（study content，workspace∪published），供 Admin Chapter 畫面列出。
+final adminTeachingsProvider =
+    FutureProvider.family<List<AdminStudyRow>, String>((ref, chapterId) async {
+  if (!ref.watch(firebaseReadyProvider)) return const [];
+  return ref.watch(studyContentRepositoryProvider).adminListTeachings(chapterId);
 });
 
 /// Optional onboarding church prompt：登入、無 membership、未略過時才顯示。
