@@ -7,8 +7,16 @@ class VerseLocator {
   /// 解析失敗或超出範圍回傳 null。
   static ({int bookId, int chapter, int? verse})? parse(
       String input, List<Book> books) {
-    final m = RegExp(r'^([^\d\s:：]+)\s*(\d{1,3})(?:[:：.篇\s]\s*(\d{1,3}))?$')
-        .firstMatch(input.trim());
+    // 先 normalize，讓使用者不必配合特定鍵盤格式：
+    // 全形冒號「：」→ 半形「:」、全形空格「　」→ 半形空格。
+    final normalized = input
+        .trim()
+        .replaceAll('：', ':')
+        .replaceAll('　', ' ');
+    // 書卷名（不含數字/空白/冒號）→ 書卷與章之間可有空白或冒號分隔（也可無）→
+    // 章 →（可選）節分隔（空白/冒號/點/篇）+ 節。
+    final m = RegExp(r'^([^\d\s:]+)[\s:]*(\d{1,3})(?:[\s:.篇]\s*(\d{1,3}))?$')
+        .firstMatch(normalized);
     if (m == null) return null;
 
     final name = m.group(1)!;
