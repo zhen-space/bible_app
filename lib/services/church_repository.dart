@@ -1,8 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/church.dart';
-import '../models/study_content.dart';
-import '../models/teacher.dart';
 
 /// Church / Membership 資料存取（Church/Teacher R1）。
 ///
@@ -156,102 +154,6 @@ class ChurchRepository {
         .where('status', isEqualTo: MembershipStatus.pending.name)
         .get();
     return [for (final d in s.docs) Membership.fromDoc(d.id, d.data())];
-  }
-}
-
-/// 老師專區結構讀取（授權 aware）。Book/Chapter 皆 audience-gated，避免結構洩漏。
-class TeacherRepository {
-  TeacherRepository(this._fs);
-  final FirebaseFirestore _fs;
-
-  CollectionReference<Map<String, dynamic>> get _books =>
-      _fs.collection('teacher_books');
-  static const _pub = 'published';
-
-  Future<List<TeacherBook>> fetchAuthorizedBooks(StudentAuth auth) async {
-    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    docs.addAll(
-      (await _books
-              .where('status', isEqualTo: _pub)
-              .where('audience', isEqualTo: Audience.public.name)
-              .get())
-          .docs,
-    );
-    if (auth.hasChurch) {
-      docs.addAll(
-        (await _books
-                .where('status', isEqualTo: _pub)
-                .where('audience', isEqualTo: Audience.church.name)
-                .where('allowed_church_ids', arrayContains: auth.activeChurchId)
-                .get())
-            .docs,
-      );
-    }
-    final seen = <String>{};
-    final out = <TeacherBook>[];
-    for (final d in docs) {
-      if (!seen.add(d.id)) continue;
-      final b = TeacherBook.fromDoc(d.id, d.data());
-      if (b.authorizedFor(auth.activeChurchId)) out.add(b);
-    }
-    out.sort((a, b) => a.order.compareTo(b.order));
-    return out;
-  }
-
-  // ---- Admin（含未發佈；rules 限管理員）----
-  Future<List<TeacherBook>> adminListBooks() async {
-    final s = await _books.get();
-    return [for (final d in s.docs) TeacherBook.fromDoc(d.id, d.data())]
-      ..sort((a, b) => a.order.compareTo(b.order));
-  }
-
-  Future<List<TeacherChapter>> adminListChapters(String bookId) async {
-    final s = await _books.doc(bookId).collection('chapters').get();
-    return [for (final d in s.docs) TeacherChapter.fromDoc(d.id, d.data())]
-      ..sort((a, b) => a.order.compareTo(b.order));
-  }
-
-  Future<void> saveBook(TeacherBook b) =>
-      _books.doc(b.id).set(b.toMap(), SetOptions(merge: true));
-
-  Future<void> saveChapter(TeacherChapter c) => _books
-      .doc(c.bookId)
-      .collection('chapters')
-      .doc(c.id)
-      .set(c.toMap(), SetOptions(merge: true));
-
-  Future<List<TeacherChapter>> fetchAuthorizedChapters(
-    String bookId,
-    StudentAuth auth,
-  ) async {
-    final col = _books.doc(bookId).collection('chapters');
-    final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    docs.addAll(
-      (await col
-              .where('status', isEqualTo: _pub)
-              .where('audience', isEqualTo: Audience.public.name)
-              .get())
-          .docs,
-    );
-    if (auth.hasChurch) {
-      docs.addAll(
-        (await col
-                .where('status', isEqualTo: _pub)
-                .where('audience', isEqualTo: Audience.church.name)
-                .where('allowed_church_ids', arrayContains: auth.activeChurchId)
-                .get())
-            .docs,
-      );
-    }
-    final seen = <String>{};
-    final out = <TeacherChapter>[];
-    for (final d in docs) {
-      if (!seen.add(d.id)) continue;
-      final c = TeacherChapter.fromDoc(d.id, d.data());
-      if (c.authorizedFor(auth.activeChurchId)) out.add(c);
-    }
-    out.sort((a, b) => a.order.compareTo(b.order));
-    return out;
   }
 }
 

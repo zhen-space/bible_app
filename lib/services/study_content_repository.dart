@@ -163,13 +163,6 @@ class StudyContentRepository {
     return out;
   }
 
-  /// 老師專區 teaching（＝study content，掛某 chapter）：授權 universe 上 narrow。
-  Future<List<StudyContentItem>> fetchAuthorizedTeachings(
-          String chapterId, StudentAuth auth) async =>
-      (await fetchAuthorizedStudyContent(auth))
-          .where((i) => i.teacherChapterId == chapterId)
-          .toList();
-
   // ---- Admin workflow（包裝既有 ContentWorkflowService；不另造 engine）----
 
   /// 新建／編輯草稿。新建預設 status=draft、visibility=internal（fail-closed 起點）。
@@ -321,13 +314,6 @@ class StudyContentRepository {
     ]..sort((a, b) => b.editorial.updatedAt.compareTo(a.editorial.updatedAt));
     return rows;
   }
-
-  /// 某章（teacherChapterId）現有的教導內容（study content），供 Admin Chapter 畫面列出。
-  /// 沿用 [adminListContent]（workspace∪published union），client 端依 teacher_chapter_id 篩。
-  Future<List<AdminStudyRow>> adminListTeachings(String chapterId) async =>
-      (await adminListContent())
-          .where((r) => r.editorial.teacherChapterId == chapterId)
-          .toList();
 
   Future<StudyContentItem?> adminGetContentWorkspace(String id) async {
     final c = await _workflow.getWorkspace(contentType, id);

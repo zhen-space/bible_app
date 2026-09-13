@@ -14,6 +14,25 @@ void main() {
     expect(hub, contains("'我的研讀'"));
   });
 
+  test('Admin 不再提供 Teacher Books / Chapters 管理 UI（產品功能退休）', () {
+    // Admin Teacher Area 畫面與 provider 已刪；Dashboard 不再有老師專區入口，
+    // 「教會與教師」section 改名「教會管理」，但教會/會籍管理入口保留。
+    expect(File('lib/screens/admin_teacher_screen.dart').existsSync(), isFalse);
+    expect(File('lib/models/teacher.dart').existsSync(), isFalse);
+    final dash = File('lib/screens/admin_dashboard_screen.dart').readAsStringSync();
+    expect(dash, isNot(contains('老師專區書卷')));
+    expect(dash, isNot(contains('AdminTeacherBooksScreen')));
+    expect(dash, isNot(contains('admin_teacher_screen.dart')));
+    expect(dash, contains('教會管理'));
+    // 教會 / 會籍管理入口保留。
+    expect(dash, contains('AdminChurchesScreen'));
+    expect(dash, contains('AdminMembershipRequestsScreen'));
+    final providers = File('lib/providers/providers.dart').readAsStringSync();
+    expect(providers, isNot(contains('adminTeacherBooksProvider')));
+    expect(providers, isNot(contains('authorizedTeacherBooksProvider')));
+    expect(providers, isNot(contains('teacherRepositoryProvider')));
+  });
+
   test('Teacher capability shared authorization infrastructure 不因 UI 移除而刪除', () {
     final providers = File('lib/providers/providers.dart').readAsStringSync();
     final qa = File('lib/services/qa_service.dart').readAsStringSync();

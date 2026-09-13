@@ -2,44 +2,11 @@ import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:bible_app/models/church.dart';
-import 'package:bible_app/models/managed_content.dart';
-import 'package:bible_app/models/study_content.dart';
-import 'package:bible_app/models/teacher.dart';
 import 'package:bible_app/services/church_repository.dart';
 
 void main() {
-  group('Admin Teacher repository', () {
-    test('saveBook/saveChapter → adminList；audience 保存', () async {
-      final fs = FakeFirebaseFirestore();
-      final repo = TeacherRepository(fs);
-      await repo.saveBook(
-        const TeacherBook(
-          id: 'b1',
-          title: '書',
-          order: 1,
-          status: ContentStatus.published,
-          audience: Audience.church,
-          allowedChurchIds: ['A'],
-        ),
-      );
-      await repo.saveChapter(
-        const TeacherChapter(
-          id: 'c1',
-          bookId: 'b1',
-          title: '章',
-          status: ContentStatus.published,
-          audience: Audience.public,
-        ),
-      );
-      final books = await repo.adminListBooks();
-      expect(books.map((b) => b.id), ['b1']);
-      expect(books.first.audience, Audience.church);
-      expect(books.first.allowedChurchIds, ['A']);
-      final chapters = await repo.adminListChapters('b1');
-      expect(chapters.map((c) => c.id), ['c1']);
-      expect(chapters.first.audience, Audience.public);
-    });
-  });
+  // Teacher Area 產品功能已退休：原「Admin Teacher repository」group（TeacherRepository
+  // saveBook/saveChapter/adminList）已移除，TeacherRepository 本身已刪。
 
   group('Admin Church repository', () {
     test('saveChurch / fetchAllChurches / setChurchActive', () async {

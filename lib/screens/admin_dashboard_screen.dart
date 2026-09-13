@@ -8,7 +8,6 @@ import 'admin_screen.dart';
 import 'admin_knowledge_screen.dart';
 import 'admin_study_content_screen.dart';
 import 'admin_church_screen.dart';
-import 'admin_teacher_screen.dart';
 import 'admin_daily_verse_screen.dart';
 import 'qa_screen.dart';
 
@@ -122,14 +121,12 @@ class AdminDashboard extends ConsumerWidget {
           const Divider(height: 24),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
-            child: Text('教會與教師', style: TextStyle(fontWeight: FontWeight.w700)),
+            child: Text('教會管理', style: TextStyle(fontWeight: FontWeight.w700)),
           ),
           _tile(context, Icons.church_outlined, '教會',
               '建立／管理教會、Active 狀態', const AdminChurchesScreen()),
           _tile(context, Icons.how_to_reg_outlined, '教會會籍申請',
               '審核加入申請（通過／退回）', const AdminMembershipRequestsScreen()),
-          _tile(context, Icons.school_outlined, '老師專區書卷',
-              '書卷／章／教導內容（audience）', const AdminTeacherBooksScreen()),
           const Divider(height: 24),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 4, 16, 4),
