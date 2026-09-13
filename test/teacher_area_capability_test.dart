@@ -3,14 +3,11 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Bible Hub 老師專區入口存在，且由 teacherEntryVisibleProvider（capability）把關', () {
+  test('Bible Hub 不再提供 Teacher Area Student 入口', () {
     final hub = File('lib/screens/bible_hub_screen.dart').readAsStringSync();
 
-    // Student Teacher Area 入口已補回；但必須以既有 capability provider 為唯一 gate。
-    expect(hub, contains("'老師專區'"));
-    expect(hub, contains('TeacherAreaScreen'));
-    expect(hub, contains('teacherEntryVisibleProvider'));
-    // 其餘理解區入口不變。
+    expect(hub, isNot(contains("'老師專區'")));
+    expect(hub, isNot(contains('TeacherAreaScreen')));
     expect(hub, contains("'書卷／章節導讀'"));
     expect(hub, contains("'聖經／信仰問答'"));
     expect(hub, contains("'研讀內容'"));

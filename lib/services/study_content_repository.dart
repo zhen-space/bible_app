@@ -329,15 +329,6 @@ class StudyContentRepository {
           .where((r) => r.editorial.teacherChapterId == chapterId)
           .toList();
 
-  /// 老師專區 teaching 的**授權 universe**（跨書卷/章），供 Teacher Area 搜尋。
-  /// 在已授權 universe（public ∪ my-church）上 narrow 出 teacher teaching（有 teacherBookId），
-  /// **never fetch-all-then-hide**；未授權 church/internal 天生不在 universe 內。
-  Future<List<StudyContentItem>> fetchAuthorizedTeachingsAll(
-          StudentAuth auth) async =>
-      (await fetchAuthorizedStudyContent(auth))
-          .where((i) => i.teacherBookId.isNotEmpty)
-          .toList();
-
   Future<StudyContentItem?> adminGetContentWorkspace(String id) async {
     final c = await _workflow.getWorkspace(contentType, id);
     return c == null ? null : StudyContentItem.fromManaged(c);

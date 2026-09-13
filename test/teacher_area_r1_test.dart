@@ -91,7 +91,7 @@ void main() {
     });
   });
 
-  group('授權 Teacher teachings（authorization-first，不 fetch-all-then-hide）', () {
+  group('授權 Teacher teachings（per-chapter，authorization-first）', () {
     late FakeFirebaseFirestore fs;
     setUp(() async {
       fs = FakeFirebaseFirestore();
@@ -103,52 +103,22 @@ void main() {
           churches: ['B'], teacherBookId: 'bookA', teacherChapterId: 'chA');
       await _seed(fs, 'internal', status: 'published', audience: 'internal',
           teacherBookId: 'bookA', teacherChapterId: 'chA');
-      // 非 teacher 的 study content（無 teacherBookId）——不得出現在 teaching 清單。
-      await _seed(fs, 'nonteach', status: 'published', audience: 'public');
-      // draft teaching——不得對學生可見。
-      await _seed(fs, 'draft', status: 'draft', audience: 'public',
-          teacherBookId: 'bookA', teacherChapterId: 'chA');
     });
 
-    test('無教會：只看得到 public teacher teaching', () async {
-      final all = await _repo(fs)
-          .fetchAuthorizedTeachingsAll(const StudentAuth(null));
-      expect(all.map((i) => i.id).toSet(), {'pub'});
-    });
-
-    test('Church A：public + churchA teaching；churchB/internal/draft/非teacher 皆不洩漏',
-        () async {
-      final all = await _repo(fs)
-          .fetchAuthorizedTeachingsAll(const StudentAuth('A'));
-      final ids = all.map((i) => i.id).toSet();
-      expect(ids, {'pub', 'chA_church'});
-      expect(ids, isNot(contains('chB_church')));
-      expect(ids, isNot(contains('internal')));
-      expect(ids, isNot(contains('draft')));
-      expect(ids, isNot(contains('nonteach')));
-    });
-
+    // shared backend（未隨 Student Teacher Area UI 移除）：per-chapter 授權取用仍正確。
     test('fetchAuthorizedTeachings(chA) 對 Church B 使用者不含 Church A 專屬', () async {
       final b = await _repo(fs).fetchAuthorizedTeachings('chA', const StudentAuth('B'));
       final ids = b.map((i) => i.id).toSet();
       expect(ids, contains('pub'));
       expect(ids, contains('chB_church'));
       expect(ids, isNot(contains('chA_church')));
+      expect(ids, isNot(contains('internal')));
     });
 
-    test('search（title+body）只在授權 universe 上比對，churchB 內容不進結果', () async {
-      // 模擬 Teacher Area 搜尋：universe = fetchAuthorizedTeachingsAll，client 端過濾。
-      final all = await _repo(fs)
-          .fetchAuthorizedTeachingsAll(const StudentAuth('A'));
-      const q = '恩典';
-      final hits = all
-          .where((t) =>
-              t.title.toLowerCase().contains(q.toLowerCase()) ||
-              t.body.toLowerCase().contains(q.toLowerCase()))
-          .toList();
-      expect(hits.map((i) => i.id), ['pub']);
-      // 即使搜 churchB 專屬 id，也不可能命中（不在 universe）。
-      expect(all.any((t) => t.id == 'chB_church'), isFalse);
+    test('無教會：per-chapter 只回 public teaching', () async {
+      final none =
+          await _repo(fs).fetchAuthorizedTeachings('chA', const StudentAuth(null));
+      expect(none.map((i) => i.id).toSet(), {'pub'});
     });
   });
 
