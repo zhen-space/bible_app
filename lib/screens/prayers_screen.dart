@@ -3,192 +3,315 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../widgets/scripture_reference_field.dart';
+import '../widgets/student_ux.dart';
 
-/// 禱告事項：分類 → 子分類 → 內容。使用者自行新增/編輯/刪除，
-/// **不設打勾**（禱告不是待辦清單）。
-class PrayersScreen extends ConsumerWidget {
+class PrayersScreen extends ConsumerStatefulWidget {
   const PrayersScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final prayers = ref.watch(allPrayersProvider).value ?? const <Prayer>[];
-    final scheme = Theme.of(context).colorScheme;
+  ConsumerState<PrayersScreen> createState() => _PrayersScreenState();
+}
 
-    // 分類 → 子分類 → 條目（保留 DB 排序：分類、子分類、新到舊）
-    final byCategory = <String, Map<String, List<Prayer>>>{};
-    for (final p in prayers) {
-      final cat = p.category.isEmpty ? '未分類' : p.category;
-      final sub = p.subcategory;
-      ((byCategory[cat] ??= {})[sub] ??= []).add(p);
+class _PrayersScreenState extends ConsumerState<PrayersScreen> {
+  final SelectionController<int> _selection = SelectionController<int>();
+
+  @override
+  void initState() {
+    super.initState();
+    _selection.addListener(_changed);
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    _selection
+      ..removeListener(_changed)
+      ..dispose();
+    super.dispose();
+  }
+
+  Future<void> _setStatus(Iterable<Prayer> prayers, PrayerStatus status) async {
+    final db = ref.read(databaseServiceProvider);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final prayer in prayers) {
+      await db.savePrayer(prayer.copyWith(
+        status: status,
+        answeredAt: status == PrayerStatus.praying
+            ? 0
+            : (prayer.answeredAt == 0 ? now : prayer.answeredAt),
+      ));
+    }
+    _selection.cancel();
+    ref.invalidate(allPrayersProvider);
+  }
+
+  Future<void> _delete(Iterable<Prayer> prayers) async {
+    final list = prayers.where((p) => p.id != null).toList();
+    if (list.isEmpty) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(list.length == 1
+            ? '刪除這則禱告事項？'
+            : '刪除 ${list.length} 則禱告事項？'),
+        content: const Text('刪除會沿用現有同步刪除紀錄。'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('取消')),
+          FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('刪除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    final db = ref.read(databaseServiceProvider);
+    for (final prayer in list) {
+      await db.deletePrayer(prayer.id!);
+    }
+    _selection.cancel();
+    ref.invalidate(allPrayersProvider);
+  }
+
+  String _copyPrayer(Prayer prayer, List<Book>? books) {
+    String refLabel(String raw) {
+      if (books == null) return raw;
+      return parseLegacyScriptureRef(raw, books)?.label(books) ?? raw;
     }
 
+    final out = <String>[];
+    if (prayer.title.trim().isNotEmpty) out.add(prayer.title.trim());
+    if (prayer.content.trim().isNotEmpty) out.add(prayer.content.trim());
+    if (prayer.refs.isNotEmpty) {
+      out.add('對應經文：${prayer.refs.map(refLabel).join('、')}');
+    }
+    if (prayer.category.trim().isNotEmpty) {
+      out.add(
+          '分類：${prayer.category.trim()}${prayer.subcategory.trim().isEmpty ? '' : ' · ${prayer.subcategory.trim()}'}');
+    }
+    if (prayer.status != PrayerStatus.praying) {
+      out.add('狀態：${prayer.status.label}');
+    }
+    return out.join('\n');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(allPrayersProvider);
+    final prayers = async.value ?? const <Prayer>[];
+    final books = ref.watch(booksProvider).value;
+    final ids =
+        prayers.where((p) => p.id != null).map((p) => p.id!).toList();
+    final selected = prayers
+        .where((p) => p.id != null && _selection.contains(p.id!))
+        .toList();
+
     return Scaffold(
-      appBar: AppBar(title: const Text('禱告事項')),
-      floatingActionButton: FloatingActionButton.extended(
-        icon: const Icon(Icons.add),
-        label: const Text('新增'),
-        onPressed: () => showPrayerEditor(context, ref, null),
-      ),
-      body: prayers.isEmpty
-          ? const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text('還沒有禱告事項。\n點右下角新增，可自訂分類與子分類。',
-                    textAlign: TextAlign.center),
-              ),
+      appBar: _selection.active
+          ? StudentSelectionAppBar(
+              title: '禱告事項',
+              selectionCount: _selection.count,
+              totalCount: ids.length,
+              onCancel: _selection.cancel,
+              onSelectAll: () {
+                if (_selection.count == ids.length && ids.isNotEmpty) {
+                  _selection.cancel();
+                  _selection.start();
+                } else {
+                  _selection.selectAll(ids);
+                }
+              },
             )
-          : ListView(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-              children: [
-                // 每個「分類」＝一張獨立卡片；子分類、內容在卡內縮排巢狀
-                for (final cat in byCategory.entries)
-                  Card(
-                    margin: const EdgeInsets.only(bottom: 14),
-                    clipBehavior: Clip.antiAlias,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        // 分類標題條（實心底色，最顯眼那層）
-                        Container(
-                          color: scheme.primary,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.folder_outlined,
-                                  size: 18, color: Colors.white),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(cat.key,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 16)),
-                              ),
-                              Text(
-                                  '${cat.value.values.fold<int>(0, (a, b) => a + b.length)} 則',
-                                  style: const TextStyle(
-                                      color: Colors.white70, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                        // 子分類 + 內容
-                        for (final sub in cat.value.entries)
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              if (sub.key.isNotEmpty)
-                                Container(
-                                  width: double.infinity,
-                                  color: scheme.primary.withValues(alpha: 0.08),
-                                  padding: const EdgeInsets.fromLTRB(
-                                      16, 6, 16, 6),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.subdirectory_arrow_right,
-                                          size: 16, color: scheme.secondary),
-                                      const SizedBox(width: 6),
-                                      Text(sub.key,
-                                          style: TextStyle(
-                                              color: scheme.secondary,
-                                              fontWeight: FontWeight.w600)),
-                                    ],
-                                  ),
-                                ),
-                              for (final p in sub.value)
-                                InkWell(
-                                  onTap: () =>
-                                      showPrayerEditor(context, ref, p),
-                                  child: Padding(
-                                    // 有子分類→再縮排；沒有→只縮一層
-                                    padding: EdgeInsets.fromLTRB(
-                                        sub.key.isNotEmpty ? 34 : 16,
-                                        10,
-                                        16,
-                                        10),
-                                    child: Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Padding(
-                                          padding:
-                                              const EdgeInsets.only(top: 6),
-                                          child: Icon(Icons.circle,
-                                              size: 6,
-                                              color: scheme.secondary),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              if (p.title.isNotEmpty)
-                                                Text(p.title,
-                                                    style: const TextStyle(
-                                                        fontWeight:
-                                                            FontWeight.w600)),
-                                              Text(p.content,
-                                                  style: const TextStyle(
-                                                      height: 1.5)),
-                                            ],
-                                          ),
-                                        ),
-                                        if (p.status != PrayerStatus.praying)
-                                          _statusChip(context, p.status),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              const Divider(height: 1),
-                            ],
-                          ),
-                      ],
-                    ),
-                  ),
+          : AppBar(
+              title: const Text('禱告事項'),
+              actions: [
+                if (prayers.isNotEmpty)
+                  TextButton(
+                      onPressed: _selection.start,
+                      child: const Text('選取')),
               ],
             ),
+      floatingActionButton: _selection.active
+          ? null
+          : FloatingActionButton(
+              tooltip: '新增禱告事項',
+              onPressed: () => showPrayerEditor(context, ref, null),
+              child: const Icon(Icons.add),
+            ),
+      bottomNavigationBar: _selection.active
+          ? StudentBatchActionBar(actions: [
+              StudentBatchAction(
+                label: '複製',
+                icon: Icons.copy_outlined,
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => copyHumanReadable(
+                          context,
+                          joinHumanReadable(
+                              selected.map((p) => _copyPrayer(p, books))),
+                          success: '已複製 ${selected.length} 則禱告事項',
+                        ),
+              ),
+              StudentBatchAction(
+                label: '已蒙應允',
+                icon: Icons.check_circle_outline,
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => _setStatus(selected, PrayerStatus.answered),
+              ),
+              StudentBatchAction(
+                label: '已結束',
+                icon: Icons.stop_circle_outlined,
+                onPressed: selected.isEmpty
+                    ? null
+                    : () => _setStatus(selected, PrayerStatus.ended),
+              ),
+              StudentBatchAction(
+                label: '刪除',
+                icon: Icons.delete_outline,
+                destructive: true,
+                onPressed:
+                    selected.isEmpty ? null : () => _delete(selected),
+              ),
+            ])
+          : null,
+      body: async.when(
+        loading: () => const StudentCompactLoading(),
+        error: (_, _) => StudentErrorState(
+            onRetry: () => ref.invalidate(allPrayersProvider)),
+        data: (list) {
+          if (list.isEmpty) {
+            return StudentEmptyState(
+              title: '還沒有禱告事項',
+              subtitle: '把正在禱告的事情整理在這裡。',
+              icon: Icons.volunteer_activism_outlined,
+              actionLabel: '新增禱告事項',
+              onAction: () => showPrayerEditor(context, ref, null),
+            );
+          }
+          String? lastCategory;
+          return ListView.builder(
+            padding: const EdgeInsets.only(bottom: 96),
+            itemCount: list.length,
+            itemBuilder: (context, index) {
+              final p = list[index];
+              final id = p.id!;
+              final category = p.category.isEmpty ? '未分類' : p.category;
+              final showHeader = category != lastCategory;
+              lastCategory = category;
+              final row = ListTile(
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+                leading: _selection.active
+                    ? Checkbox(
+                        value: _selection.contains(id),
+                        onChanged: (_) => _selection.toggle(id))
+                    : null,
+                title: Text(
+                  p.title.isNotEmpty
+                      ? p.title
+                      : (p.content.isEmpty ? '禱告事項' : p.content),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  [
+                    if (p.title.isNotEmpty && p.content.isNotEmpty) p.content,
+                    if (p.subcategory.isNotEmpty) p.subcategory,
+                  ].where((e) => e.isNotEmpty).join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: p.status == PrayerStatus.praying
+                    ? null
+                    : _statusChip(context, p.status),
+                onLongPress: () => _selection.start(id),
+                onTap: _selection.active
+                    ? () => _selection.toggle(id)
+                    : () => showPrayerEditor(context, ref, p),
+              );
+              final swipe = _selection.active
+                  ? row
+                  : StudentSwipeRow(
+                      dismissKey: ValueKey('prayer_$id'),
+                      startLabel: '複製',
+                      startIcon: Icons.copy_outlined,
+                      endLabel: '刪除',
+                      onSwipeStartToEnd: () =>
+                          copyHumanReadable(context, _copyPrayer(p, books)),
+                      onSwipeEndToStart: () => _delete([p]),
+                      child: row,
+                    );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (showHeader)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 18, 20, 5),
+                      child: Text(
+                        category,
+                        style: Theme.of(context)
+                            .textTheme
+                            .labelLarge
+                            ?.copyWith(
+                                color: Theme.of(context).colorScheme.outline,
+                                fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  swipe,
+                  const Divider(height: 1, indent: 20),
+                ],
+              );
+            },
+          );
+        },
+      ),
     );
   }
 }
 
 Widget _statusChip(BuildContext context, PrayerStatus s) {
   final scheme = Theme.of(context).colorScheme;
-  final color = s == PrayerStatus.answered ? scheme.primary : scheme.outline;
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(10),
+      color: scheme.surfaceContainerHighest,
+      borderRadius: BorderRadius.circular(12),
     ),
     child: Text(s.label,
         style: Theme.of(context)
             .textTheme
             .labelSmall
-            ?.copyWith(color: color, fontWeight: FontWeight.w700)),
+            ?.copyWith(color: scheme.outline)),
   );
 }
 
 String _ymd(int ms) {
   final d = DateTime.fromMillisecondsSinceEpoch(ms);
-  return '${d.year}/${d.month.toString().padLeft(2, '0')}/'
-      '${d.day.toString().padLeft(2, '0')}';
+  return '${d.year}/${d.month.toString().padLeft(2, '0')}/${d.day.toString().padLeft(2, '0')}';
 }
 
-/// 新增／編輯禱告事項（底部表單，v2）。[existing] 為 null 表示新增。
 void showPrayerEditor(BuildContext context, WidgetRef ref, Prayer? existing) {
   showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (ctx) => _PrayerEditorSheet(existing: existing, parentRef: ref),
+    showDragHandle: true,
+    builder: (ctx) =>
+        _PrayerEditorSheet(existing: existing, parentRef: ref),
   );
 }
 
 class _PrayerEditorSheet extends StatefulWidget {
+  const _PrayerEditorSheet(
+      {required this.existing, required this.parentRef});
   final Prayer? existing;
   final WidgetRef parentRef;
-  const _PrayerEditorSheet({required this.existing, required this.parentRef});
 
   @override
   State<_PrayerEditorSheet> createState() => _PrayerEditorSheetState();
@@ -200,6 +323,7 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
   late final TextEditingController _subcategory;
   late final TextEditingController _content;
   late final TextEditingController _reflection;
+  late List<String> _refs;
   late PrayerStatus _status;
   late int _prayerDate;
   late int _reminderAt;
@@ -216,7 +340,9 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
     _category = TextEditingController(text: e?.category ?? '');
     _subcategory = TextEditingController(text: e?.subcategory ?? '');
     _content = TextEditingController(text: e?.content ?? '');
-    _reflection = TextEditingController(text: e?.answeredReflection ?? '');
+    _reflection =
+        TextEditingController(text: e?.answeredReflection ?? '');
+    _refs = List<String>.of(e?.refs ?? const []);
     _status = e?.status ?? PrayerStatus.praying;
     _prayerDate = e?.prayerDate ?? 0;
     _reminderAt = e?.reminderAt ?? 0;
@@ -225,7 +351,13 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
 
   @override
   void dispose() {
-    for (final c in [_title, _category, _subcategory, _content, _reflection]) {
+    for (final c in [
+      _title,
+      _category,
+      _subcategory,
+      _content,
+      _reflection,
+    ]) {
       c.dispose();
     }
     super.dispose();
@@ -233,8 +365,9 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
 
   Future<int> _pickDate(int current) async {
     final now = DateTime.now();
-    final init =
-        current > 0 ? DateTime.fromMillisecondsSinceEpoch(current) : now;
+    final init = current > 0
+        ? DateTime.fromMillisecondsSinceEpoch(current)
+        : now;
     final d = await showDatePicker(
       context: context,
       initialDate: init,
@@ -246,34 +379,29 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final prayers = ref.read(allPrayersProvider).value ?? const <Prayer>[];
-    final cats = {
-      for (final p in prayers)
-        if (p.category.isNotEmpty) p.category
-    }.toList();
     final answered = _status != PrayerStatus.praying;
-
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-        left: 16,
-        right: 16,
-        top: 12,
-      ),
+      padding: EdgeInsets.fromLTRB(
+          20, 0, 20, MediaQuery.viewInsetsOf(context).bottom + 20),
       child: ListView(
         shrinkWrap: true,
         children: [
-          Text(existing == null ? '新增禱告事項' : '編輯禱告事項',
-              style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
-          // 狀態
+          Text(
+            existing == null ? '新增禱告事項' : '編輯禱告事項',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 18),
           SegmentedButton<PrayerStatus>(
             segments: const [
               ButtonSegment(
                   value: PrayerStatus.praying, label: Text('禱告中')),
               ButtonSegment(
                   value: PrayerStatus.answered, label: Text('已蒙應允')),
-              ButtonSegment(value: PrayerStatus.ended, label: Text('已結束')),
+              ButtonSegment(
+                  value: PrayerStatus.ended, label: Text('已結束')),
             ],
             selected: {_status},
             onSelectionChanged: (s) => setState(() {
@@ -283,161 +411,88 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
               }
             }),
           ),
+          const SizedBox(height: 16),
+          TextField(
+              controller: _title,
+              decoration: const InputDecoration(labelText: '標題')),
           const SizedBox(height: 12),
           TextField(
-            controller: _title,
-            decoration: const InputDecoration(
-                labelText: '標題（可空）', border: OutlineInputBorder(), isDense: true),
+              controller: _content,
+              maxLines: 4,
+              decoration: const InputDecoration(labelText: '禱告內容')),
+          const SizedBox(height: 16),
+          ScriptureReferenceField(
+            values: _refs,
+            onChanged: (values) => setState(() => _refs = values),
           ),
-          const SizedBox(height: 8),
-          if (cats.isNotEmpty) ...[
-            Wrap(
-              spacing: 6,
-              children: [
-                for (final c in cats)
-                  ActionChip(
-                      label: Text(c),
-                      onPressed: () => setState(() => _category.text = c)),
-              ],
-            ),
-            const SizedBox(height: 8),
-          ],
-          TextField(
-            controller: _category,
-            decoration: const InputDecoration(
-                labelText: '分類（例：家人、教會、宣教）',
-                border: OutlineInputBorder(),
-                isDense: true),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _subcategory,
-            decoration: const InputDecoration(
-                labelText: '子分類（可空，例：爸爸）',
-                border: OutlineInputBorder(),
-                isDense: true),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _content,
-            maxLines: 3,
-            decoration: const InputDecoration(
-                labelText: '禱告內容',
-                border: OutlineInputBorder(),
-                alignLabelWithHint: true),
-          ),
-          const SizedBox(height: 8),
-          // 禱告日期
+          const SizedBox(height: 16),
+          Row(children: [
+            Expanded(
+                child: TextField(
+                    controller: _category,
+                    decoration: const InputDecoration(labelText: '分類'))),
+            const SizedBox(width: 12),
+            Expanded(
+                child: TextField(
+                    controller: _subcategory,
+                    decoration: const InputDecoration(labelText: '子分類'))),
+          ]),
+          const SizedBox(height: 12),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.event),
+            leading: const Icon(Icons.event_outlined),
             title: const Text('禱告日期'),
             subtitle: Text(_prayerDate > 0 ? _ymd(_prayerDate) : '未設定'),
-            trailing: _prayerDate > 0
-                ? IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () => setState(() => _prayerDate = 0),
-                  )
-                : null,
             onTap: () async {
-              final v = await _pickDate(_prayerDate);
-              setState(() => _prayerDate = v);
+              final value = await _pickDate(_prayerDate);
+              if (mounted) setState(() => _prayerDate = value);
             },
           ),
-          // 提醒（僅儲存時間；實際推播需 FCM/本地通知，尚未接）
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.alarm),
-            title: const Text('提醒（儲存時間）'),
+            leading: const Icon(Icons.alarm_outlined),
+            title: const Text('提醒'),
             subtitle: Text(_reminderAt > 0 ? _ymd(_reminderAt) : '未設定'),
-            trailing: _reminderAt > 0
-                ? IconButton(
-                    icon: const Icon(Icons.clear),
-                    onPressed: () => setState(() => _reminderAt = 0),
-                  )
-                : null,
             onTap: () async {
-              final v = await _pickDate(_reminderAt);
-              setState(() => _reminderAt = v);
+              final value = await _pickDate(_reminderAt);
+              if (mounted) setState(() => _reminderAt = value);
             },
           ),
           if (answered) ...[
-            const Divider(),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.check_circle_outline),
-              title: Text(_status == PrayerStatus.answered
-                  ? '蒙應允日期'
-                  : '結束日期'),
-              subtitle: Text(_answeredAt > 0 ? _ymd(_answeredAt) : '未設定'),
-              onTap: () async {
-                final v = await _pickDate(
-                    _answeredAt > 0 ? _answeredAt : DateTime.now().millisecondsSinceEpoch);
-                setState(() => _answeredAt = v);
-              },
-            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _reflection,
               maxLines: 3,
-              decoration: const InputDecoration(
-                  labelText: '應允後回顧（可空）',
-                  border: OutlineInputBorder(),
-                  alignLabelWithHint: true),
+              decoration: const InputDecoration(labelText: '應允後回顧'),
             ),
           ],
-          const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              if (existing != null)
-                TextButton(
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    try {
-                      await ref
-                          .read(databaseServiceProvider)
-                          .deletePrayer(existing!.id!);
-                    } finally {
-                      ref.invalidate(allPrayersProvider);
-                    }
-                  },
-                  child: const Text('刪除'),
-                ),
-              const SizedBox(width: 8),
-              FilledButton(
-                onPressed: () async {
-                  final text = _content.text.trim();
-                  final title = _title.text.trim();
-                  Navigator.pop(context);
-                  if (text.isEmpty && title.isEmpty) return;
-                  try {
-                    await ref.read(databaseServiceProvider).savePrayer(
-                          Prayer(
-                            id: existing?.id,
-                            category: _category.text.trim(),
-                            subcategory: _subcategory.text.trim(),
-                            title: title,
-                            content: text,
-                            prayerDate: _prayerDate,
-                            refs: existing?.refs ?? const [],
-                            status: _status,
-                            reminderAt: _reminderAt,
-                            answeredAt: answered ? _answeredAt : 0,
-                            answeredReflection:
-                                answered ? _reflection.text.trim() : '',
-                            createdAt: existing?.createdAt ?? 0,
-                            updatedAt: existing?.updatedAt ?? 0,
-                          ),
-                        );
-                  } finally {
-                    ref.invalidate(allPrayersProvider);
-                  }
-                },
-                child: const Text('儲存'),
-              ),
-            ],
+          const SizedBox(height: 20),
+          FilledButton(
+            onPressed: () async {
+              final text = _content.text.trim();
+              final title = _title.text.trim();
+              if (text.isEmpty && title.isEmpty && _refs.isEmpty) return;
+              Navigator.pop(context);
+              await ref.read(databaseServiceProvider).savePrayer(Prayer(
+                    id: existing?.id,
+                    category: _category.text.trim(),
+                    subcategory: _subcategory.text.trim(),
+                    title: title,
+                    content: text,
+                    prayerDate: _prayerDate,
+                    refs: _refs,
+                    status: _status,
+                    reminderAt: _reminderAt,
+                    answeredAt: answered ? _answeredAt : 0,
+                    answeredReflection:
+                        answered ? _reflection.text.trim() : '',
+                    createdAt: existing?.createdAt ?? 0,
+                    updatedAt: existing?.updatedAt ?? 0,
+                  ));
+              ref.invalidate(allPrayersProvider);
+            },
+            child: const Text('儲存'),
           ),
-          const SizedBox(height: 16),
         ],
       ),
     );

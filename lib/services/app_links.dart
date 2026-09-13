@@ -7,37 +7,31 @@ import '../screens/knowledge_screen.dart';
 import 'verse_locator.dart';
 
 /// 原子化經文關聯（Deep Linking）：全 App 統一的「一鍵跨模組跳轉」入口。
-///
-/// 原子 ID 有兩種：
-/// - **節位字串**（約3:16、太8:23-27）——聖經內容的唯一定位，
-///   所有模組（註解 crossRefs、Q&A 引用、知識庫、主題）都用同一格式，
-///   由 VerseLocator 解析後跳讀經頁（帶範圍取起點）。
-/// - **人物 id**（knowledge.people 的 id，如 abraham）——跳人物詳情頁；
-///   人物間的 relations 也用同一 id 串起來。
-///
-/// 各畫面一律呼叫這裡，不要自己 copy 跳轉邏輯（之前散在 3 處，已收攏）。
 class AppLinks {
-  /// 依節位字串跳讀經頁。解析失敗就安靜不動（不炸畫面）。
+  /// 依節位字串跳讀經頁。連續範圍（例：約翰一書 4:7–8）定位到範圍起點。
+  /// 所有內容型引用都是臨時瀏覽，不更新一般 Reading Position。
   static void openVerseRef(
       BuildContext context, WidgetRef ref, String refStr) {
     final books = ref.read(booksProvider).value;
     if (books == null) return;
-    final loc = VerseLocator.parse(refStr, books);
+    final range = RegExp(r'^(.*?)(?:\s*[-–—]\s*\d{1,3})$')
+        .firstMatch(refStr.trim());
+    final parseTarget = range?.group(1)?.trim() ?? refStr.trim();
+    final loc = VerseLocator.parse(parseTarget, books);
     if (loc == null) return;
     Navigator.push(
       context,
       MaterialPageRoute(
-        // 交叉引用／Q&A 引用／知識庫＝臨時瀏覽，不更新一般 Reading Position
         builder: (_) => ChapterScreen(
-            bookId: loc.bookId,
-            chapter: loc.chapter,
-            focusVerse: loc.verse,
-            updateReadingPosition: false),
+          bookId: loc.bookId,
+          chapter: loc.chapter,
+          focusVerse: loc.verse,
+          updateReadingPosition: false,
+        ),
       ),
     );
   }
 
-  /// 依人物 id 跳人物詳情頁。
   static void openPerson(BuildContext context, String personId) {
     Navigator.push(
       context,
