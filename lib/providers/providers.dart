@@ -14,6 +14,8 @@ import '../services/bible_repository.dart';
 import '../utils/date_key.dart';
 import '../services/content_service.dart';
 import '../services/content_workflow_service.dart';
+import '../services/daily_verse_batch_service.dart';
+import '../models/daily_verse_batch.dart';
 import '../services/annotation_admin_repository.dart';
 import '../services/study_content_repository.dart';
 import '../services/church_repository.dart';
@@ -424,6 +426,16 @@ final contentServiceProvider = Provider((ref) => ContentService());
 /// 受管理內容發佈工作流（Draft→Review→Published→Rejected/Archived）。管理後台用。
 final contentWorkflowServiceProvider = Provider(
     (ref) => ContentWorkflowService(FirebaseFirestore.instance));
+
+/// 每日經文批次（候選池 + 確定性排程 + 批次 workflow）。沿用 contentWorkflowService。
+final dailyVerseBatchServiceProvider = Provider((ref) => DailyVerseBatchService(
+    FirebaseFirestore.instance, ref.watch(contentWorkflowServiceProvider)));
+
+/// 目前候選池（版本化、人工核准）。編輯/核准後 invalidate。
+final dailyVersePoolProvider = FutureProvider<DailyVerseCandidatePool>((ref) async {
+  if (!ref.watch(firebaseReadyProvider)) return const DailyVerseCandidatePool();
+  return ref.watch(dailyVerseBatchServiceProvider).loadPool();
+});
 
 /// Study Content（新版研讀內容）資料存取層。**下一輪 Student/Admin UI 依賴此契約。**
 final studyContentRepositoryProvider = Provider((ref) => StudyContentRepository(
