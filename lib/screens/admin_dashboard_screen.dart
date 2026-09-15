@@ -9,6 +9,7 @@ import 'admin_knowledge_screen.dart';
 import 'admin_study_content_screen.dart';
 import 'admin_church_screen.dart';
 import 'admin_daily_verse_screen.dart';
+import 'admin_daily_verse_batch_screen.dart';
 import 'qa_screen.dart';
 
 /// 獨立後台 app 的進入點畫面：登入 → 只有管理者能進 → 管理儀表板。
@@ -113,6 +114,8 @@ class AdminDashboard extends ConsumerWidget {
               '正式 study_topics：分類與學生可見度', const AdminTopicScreen()),
           _tile(context, Icons.today_outlined, '每日經文',
               'Draft→Review→Published；每日一則', const AdminDailyVerseScreen()),
+          _tile(context, Icons.event_note_outlined, '每日經文 · 批次排程',
+              '候選池→核准→排程30天→批次Draft/Review/Publish', const AdminDailyVerseBatchScreen()),
           _tile(context, Icons.forum_outlined, 'Q&A',
               '審核問題、親自回答、回答依據', const QaAdminScreen(), badge: pendingQs),
           _tile(context, Icons.inventory_2_outlined, 'Legacy Knowledge',
