@@ -52,6 +52,8 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'daily_verses/2026-01-01'), { status: 'published', book_id: 1, chapter: 1, verse: 1 });
   await setDoc(doc(db, 'daily_verses/2026-01-02'), { status: 'draft', book_id: 1, chapter: 1, verse: 2 });
   await setDoc(doc(db, 'daily_verses/2026-01-03'), { status: 'archived', book_id: 1, chapter: 1, verse: 3 });
+  // 每日經文批次候選池（admin-only；學生/匿名完全不可讀）。
+  await setDoc(doc(db, 'daily_verse_pool/current'), { version: 1, approved: true, candidates: [{ ref: '約3:16', title: '', content: '' }] });
   await setDoc(doc(db, 'knowledge/data'), { status: 'published', version: 1 });
   // reading_plans：Published v1 mirror + v2 workspace draft（驗證 v1 在 v2 草稿時仍服務）
   await setDoc(doc(db, 'reading_plans/plan1'), { status: 'published', version: 1, content_type: 'reading_plan' });
@@ -154,6 +156,16 @@ await ok('admin(claim) 可寫 workspace（review transition）',
 await ok('guest 可讀 Published daily verse', assertSucceeds(getDoc(doc(guest, 'daily_verses/2026-01-01'))));
 await ok('guest 不可讀 Draft daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-02'))));
 await ok('guest 不可讀 Archived daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-03'))));
+
+// daily_verse_pool：批次候選池 admin-only；學生/匿名完全不可讀寫。
+await ok('guest 不可讀 daily_verse_pool', assertFails(getDoc(doc(guest, 'daily_verse_pool/current'))));
+await ok('student 不可讀 daily_verse_pool', assertFails(getDoc(doc(student, 'daily_verse_pool/current'))));
+await ok('guest 不可寫 daily_verse_pool', assertFails(setDoc(doc(guest, 'daily_verse_pool/current'), { approved: true })));
+await ok('student 不可寫 daily_verse_pool', assertFails(setDoc(doc(student, 'daily_verse_pool/current'), { approved: true })));
+await ok('admin(email) 可讀 daily_verse_pool', assertSucceeds(getDoc(doc(admin, 'daily_verse_pool/current'))));
+await ok('admin(email) 可寫 daily_verse_pool', assertSucceeds(setDoc(doc(admin, 'daily_verse_pool/current'), { version: 2, approved: false, candidates: [] })));
+await ok('admin(claim) 可讀 daily_verse_pool', assertSucceeds(getDoc(doc(claimAdmin, 'daily_verse_pool/current'))));
+await ok('admin(claim) 可寫 daily_verse_pool', assertSucceeds(setDoc(doc(claimAdmin, 'daily_verse_pool/pool2'), { version: 1, approved: false, candidates: [] })));
 
 // knowledge：Published 可讀。
 await ok('guest 可讀 Published knowledge', assertSucceeds(getDoc(doc(guest, 'knowledge/data'))));
