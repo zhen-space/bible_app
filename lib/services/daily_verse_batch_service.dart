@@ -1,7 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/daily_verse_batch.dart';
+import '../models/models.dart';
+import '../utils/date_key.dart';
 import 'content_workflow_service.dart';
+import 'daily_verse_auto_selector.dart';
 import 'daily_verse_scheduler.dart';
 
 /// 每日經文批次的 Firestore 存取 + workflow 包裝層。
@@ -37,7 +40,15 @@ class DailyVerseBatchService {
   Future<void> saveCandidates(List<DailyVerseCandidate> candidates) async {
     final cur = await loadPool();
     await _poolDoc.set(
-      cur.copyWith(candidates: candidates, approved: false).toJson(),
+      cur
+          .copyWith(
+            candidates: candidates,
+            approved: false,
+            source: 'manual',
+            catalogVersion: 0,
+            algoVersion: 0,
+          )
+          .toJson(),
     );
   }
 
@@ -48,6 +59,77 @@ class DailyVerseBatchService {
       throw StateError('候選池為空，不可核准（fail-closed）。');
     }
     final next = cur.copyWith(approved: true, version: cur.version + 1);
+    await _poolDoc.set(next.toJson());
+    return next;
+  }
+
+  // ---- 自動選取（curated catalog + corpus 正文，deterministic、fail-closed）----
+
+  /// 讀取現行已 Published 的每日經文，供自動選取「鎖定已發布日期」與「365 天防重複」。
+  /// 回傳 (publishedByDate, history)：前者只含**排程視窗涵蓋日期**，後者為全部已發布使用紀錄。
+  Future<
+      ({
+        Map<String, ({int bookId, int chapter, int verse})> publishedByDate,
+        List<({String date, int bookId, int chapter, int verse})> history,
+      })> loadPublishedHistory() async {
+    final snap = await _dailyVerses.get();
+    final byDate = <String, ({int bookId, int chapter, int verse})>{};
+    final history = <({String date, int bookId, int chapter, int verse})>[];
+    for (final d in snap.docs) {
+      final m = d.data();
+      if (m['status'] != 'published') continue;
+      final date = (m['date'] as String?) ?? d.id;
+      final bookId = m['book_id'] as int?;
+      final chapter = m['chapter'] as int?;
+      final verse = m['verse'] as int?;
+      if (bookId == null || chapter == null || verse == null) continue;
+      byDate[date] = (bookId: bookId, chapter: chapter, verse: verse);
+      history.add((date: date, bookId: bookId, chapter: chapter, verse: verse));
+    }
+    return (publishedByDate: byDate, history: history);
+  }
+
+  CollectionReference<Map<String, dynamic>> get _dailyVerses =>
+      _fs.collection('daily_verses');
+
+  /// 系統自動產生未來 [days] 天計畫（deterministic；正文由 corpus；已發布日期鎖定；
+  /// 候選不足 fail-closed 留白）。[startYmd] 預設「明天（台北）」。
+  Future<DailyVerseAutoPlan> generateAutoPlan({
+    required List<Book> books,
+    String? startYmd,
+    int days = 30,
+  }) async {
+    final start = startYmd ?? DailyVerseScheduler.addDaysYmd(taipeiTodayYmd(), 1);
+    final hist = await loadPublishedHistory();
+    return DailyVerseAutoSelector.generate(
+      books: books,
+      startYmd: start,
+      days: days,
+      publishedByDate: hist.publishedByDate,
+      history: hist.history,
+    );
+  }
+
+  /// 把自動計畫的**可建立日**存入候選池（approved=false，需人工核准），
+  /// 帶 date 與 provenance（source='auto'、catalog/algo 版本、generatedAt）。
+  /// ⛔ 只存節位（ref/date），正文不落池（讀取端由 corpus 解析）。
+  Future<DailyVerseCandidatePool> saveAutoPlan(DailyVerseAutoPlan plan) async {
+    final candidates = [
+      for (final d in plan.draftableDays)
+        DailyVerseCandidate(ref: d.ref, date: d.date),
+    ];
+    if (candidates.isEmpty) {
+      throw StateError('計畫中沒有可建立的日期（全部已發布或 fail-closed）。');
+    }
+    final cur = await loadPool();
+    final next = cur.copyWith(
+      candidates: candidates,
+      approved: false,
+      source: 'auto',
+      catalogVersion: plan.catalogVersion,
+      algoVersion: plan.algoVersion,
+      generatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
     await _poolDoc.set(next.toJson());
     return next;
   }
