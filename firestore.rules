@@ -206,6 +206,11 @@ service cloud.firestore {
     match /daily_verses_workspace/{doc} {
       allow read, write: if isAdmin();
     }
+    // 每日經文「批次候選池」（版本化、人工核准；doc id='current'）。
+    // ⛔ **僅管理員可讀寫**；學生／匿名一律不可讀（含候選 ref/title/content 皆內部草稿）。
+    match /daily_verse_pool/{doc} {
+      allow read, write: if isAdmin();
+    }
 
     // ---- 公開註解投稿（使用者投稿 → 管理員審核）----
     // 投稿者只能建立 status=='pending' 的自己的投稿；不得自設核准/發佈欄位。
