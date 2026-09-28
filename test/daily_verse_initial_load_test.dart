@@ -43,6 +43,7 @@ void main() {
       });
       expect(p.approved, isFalse);
       expect(p.isSchedulable, isFalse);
+      expect(p.hasMalformedCandidates, isTrue);
       expect(p.candidates, hasLength(1));
       expect(p.candidates.single.ref, '約3:16');
       expect(p.candidates.single.date, '2026-09-22');
@@ -57,6 +58,7 @@ void main() {
       });
       expect(p.approved, isTrue);
       expect(p.isSchedulable, isTrue);
+      expect(p.hasMalformedCandidates, isFalse);
       expect(p.candidates.single.ref, '約3:16');
     });
 
@@ -69,6 +71,7 @@ void main() {
       });
       expect(p.approved, isFalse);
       expect(p.isSchedulable, isFalse);
+      expect(p.hasMalformedCandidates, isTrue);
       expect(p.candidates, isEmpty);
     });
 
