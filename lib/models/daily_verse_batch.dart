@@ -25,11 +25,13 @@ class DailyVerseCandidate {
     this.date,
   });
 
+  /// 防禦性解析：任何欄位型別不符一律退回安全預設，**不丟例外**
+  /// （malformed payload 不得讓讀取路徑崩潰或永久 spinner）。
   factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) => DailyVerseCandidate(
-        ref: (m['ref'] as String?) ?? '',
-        title: (m['title'] as String?) ?? '',
-        content: (m['content'] as String?) ?? '',
-        date: m['date'] as String?,
+        ref: m['ref'] is String ? m['ref'] as String : '',
+        title: m['title'] is String ? m['title'] as String : '',
+        content: m['content'] is String ? m['content'] as String : '',
+        date: m['date'] is String ? m['date'] as String : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -87,18 +89,28 @@ class DailyVerseCandidatePool {
         generatedAt: generatedAt ?? this.generatedAt,
       );
 
-  factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) =>
-      DailyVerseCandidatePool(
-        version: (m['version'] as int?) ?? 0,
-        approved: (m['approved'] as bool?) ?? false,
-        candidates: ((m['candidates'] as List?) ?? const [])
-            .map((e) => DailyVerseCandidate.fromJson((e as Map).cast<String, dynamic>()))
-            .toList(),
-        source: (m['source'] as String?) ?? 'manual',
-        catalogVersion: (m['catalog_version'] as int?) ?? 0,
-        algoVersion: (m['algo_version'] as int?) ?? 0,
-        generatedAt: m['generated_at'] as int?,
-      );
+  /// 防禦性解析：型別不符退回安全預設、非 Map 的候選項略過，**不丟例外**
+  /// （malformed payload 不得讓讀取路徑崩潰或永久 spinner）。
+  factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) {
+    final rawList = m['candidates'];
+    final candidates = <DailyVerseCandidate>[];
+    if (rawList is List) {
+      for (final e in rawList) {
+        if (e is Map) {
+          candidates.add(DailyVerseCandidate.fromJson(e.cast<String, dynamic>()));
+        }
+      }
+    }
+    return DailyVerseCandidatePool(
+      version: m['version'] is int ? m['version'] as int : 0,
+      approved: m['approved'] is bool ? m['approved'] as bool : false,
+      candidates: candidates,
+      source: m['source'] is String ? m['source'] as String : 'manual',
+      catalogVersion: m['catalog_version'] is int ? m['catalog_version'] as int : 0,
+      algoVersion: m['algo_version'] is int ? m['algo_version'] as int : 0,
+      generatedAt: m['generated_at'] is int ? m['generated_at'] as int : null,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'version': version,

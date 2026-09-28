@@ -66,7 +66,23 @@ class _AdminDailyVerseBatchScreenState
       appBar: AppBar(title: const Text('每日經文 · 批次排程')),
       body: poolAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('候選池載入失敗：$e')),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text('候選池載入失敗：$e', textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('重試'),
+                onPressed: () => ref.invalidate(dailyVersePoolProvider),
+              ),
+            ],
+          ),
+        ),
         data: (pool) => ListView(
           padding: const EdgeInsets.all(16),
           children: [

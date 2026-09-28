@@ -36,11 +36,23 @@ class DailyVerseBatchService {
   DocumentReference<Map<String, dynamic>> get _poolDoc =>
       _fs.collection('daily_verse_pool').doc('current');
 
+  /// 讀取加上逾時保護：web 長連線可能默默卡死（`.get()` 不回也不報錯），
+  /// 若無此保護，載入的 Future 永不返回 → provider 永久 loading → 畫面永久 spinner。
+  /// 逾時一律轉為**明確錯誤**（可重試），絕不永久等待。（亦作為測試 seam。）
+  Future<T> guardedRead<T>(Future<T> Function() read, String what) async {
+    try {
+      return await read().timeout(operationTimeout);
+    } on TimeoutException {
+      throw StateError('$what 逾時（${operationTimeout.inSeconds}s）；請重試。');
+    }
+  }
+
   // ---- 候選池（版本化、人工核准）----
 
   Future<DailyVerseCandidatePool> loadPool() async {
-    final d = await _poolDoc.get();
+    final d = await guardedRead(() => _poolDoc.get(), '候選池載入');
     if (!d.exists) return const DailyVerseCandidatePool();
+    // fromJson 為防禦性解析：malformed 退回安全預設，不丟例外、不 spinner。
     return DailyVerseCandidatePool.fromJson(d.data()!);
   }
 
@@ -83,7 +95,7 @@ class DailyVerseBatchService {
     })
   >
   loadPublishedHistory() async {
-    final snap = await _dailyVerses.get();
+    final snap = await guardedRead(() => _dailyVerses.get(), '已發布每日經文讀取');
     final byDate = <String, ({int bookId, int chapter, int verse})>{};
     final history = <({String date, int bookId, int chapter, int verse})>[];
     for (final d in snap.docs) {

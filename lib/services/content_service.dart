@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/church.dart';
@@ -257,9 +259,23 @@ class ContentService {
   /// （daily_verses_workspace，草稿/送審）。同日期以 workspace 為編輯真相，
   /// 另標記 `_has_published`＝該日是否已有對外 published。doc id＝日期，
   /// 因此**每個日期至多一筆**（one-active-per-date 由 id 結構保證）。
+  /// 讀取逾時保護：web 長連線可能默默卡死（`.get()` 不回也不報錯）。無此保護，
+  /// Future 永不返回 → 清單畫面永久 spinner。逾時轉為明確錯誤（可重試）。
+  static const Duration _listTimeout = Duration(seconds: 20);
+
   Future<List<Map<String, dynamic>>> adminListDailyVerses() async {
-    final ws = await _fs.collection('daily_verses_workspace').get();
-    final pub = await _dailyVerses.get();
+    late final QuerySnapshot<Map<String, dynamic>> ws;
+    late final QuerySnapshot<Map<String, dynamic>> pub;
+    try {
+      final snaps = await Future.wait([
+        _fs.collection('daily_verses_workspace').get(),
+        _dailyVerses.get(),
+      ]).timeout(_listTimeout);
+      ws = snaps[0];
+      pub = snaps[1];
+    } on TimeoutException {
+      throw StateError('每日經文清單讀取逾時（${_listTimeout.inSeconds}s）；請重試。');
+    }
     final published = {for (final d in pub.docs) d.id: d.data()};
     final byId = {for (final d in ws.docs) d.id: d.data()};
     final ids = {...byId.keys, ...published.keys};
