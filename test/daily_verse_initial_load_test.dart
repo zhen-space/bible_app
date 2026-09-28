@@ -31,21 +31,45 @@ void main() {
       expect(p.source, 'manual');
     });
 
-    test('candidates 內含非 Map 項 → 略過，只保留合法項', () {
+    test('candidates 內含損壞項 → 保留合法項但整池撤銷核准', () {
       final p = DailyVerseCandidatePool.fromJson({
         'approved': true,
         'candidates': [
           1,
           'bad',
           {'ref': '約3:16', 'date': '2026-09-22'},
-          {'ref': 123}, // ref 型別錯 → 退回 ''
+          {'ref': 123},
+        ],
+      });
+      expect(p.approved, isFalse);
+      expect(p.isSchedulable, isFalse);
+      expect(p.candidates, hasLength(1));
+      expect(p.candidates.single.ref, '約3:16');
+      expect(p.candidates.single.date, '2026-09-22');
+    });
+
+    test('合法候選缺少選填欄位 → 可維持核准', () {
+      final p = DailyVerseCandidatePool.fromJson({
+        'approved': true,
+        'candidates': [
+          {'ref': '約3:16'},
         ],
       });
       expect(p.approved, isTrue);
-      expect(p.candidates.length, 2);
-      expect(p.candidates[0].ref, '約3:16');
-      expect(p.candidates[0].date, '2026-09-22');
-      expect(p.candidates[1].ref, ''); // 防禦性預設
+      expect(p.isSchedulable, isTrue);
+      expect(p.candidates.single.ref, '約3:16');
+    });
+
+    test('候選選填欄位型別錯誤 → 整池撤銷核准', () {
+      final p = DailyVerseCandidatePool.fromJson({
+        'approved': true,
+        'candidates': [
+          {'ref': '約3:16', 'date': 20260922},
+        ],
+      });
+      expect(p.approved, isFalse);
+      expect(p.isSchedulable, isFalse);
+      expect(p.candidates, isEmpty);
     });
 
     test('Candidate 欄位型別錯 → 安全預設，不丟例外', () {
