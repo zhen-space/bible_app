@@ -116,28 +116,39 @@ class _AdminDailyVerseBatchScreenState
   }
 
   // ---- 候選池狀態 ----
-  Widget _poolStatus(DailyVerseCandidatePool pool) => Card(
-    child: ListTile(
-      leading: Icon(
-        pool.approved ? Icons.verified : Icons.edit_note,
-        color: pool.approved ? Colors.green.shade700 : Colors.orange,
+  Widget _poolStatus(DailyVerseCandidatePool pool) {
+    final malformed = pool.hasMalformedCandidates;
+    return Card(
+      color: malformed ? Theme.of(context).colorScheme.errorContainer : null,
+      child: ListTile(
+        leading: Icon(
+          malformed
+              ? Icons.report_problem_outlined
+              : (pool.approved ? Icons.verified : Icons.edit_note),
+          color: malformed
+              ? Theme.of(context).colorScheme.error
+              : (pool.approved ? Colors.green.shade700 : Colors.orange),
+        ),
+        title: Text(
+          '候選池 v${pool.version}｜${pool.candidates.length} 筆'
+          '｜${pool.approved ? "已核准" : "未核准"}'
+          '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}',
+        ),
+        subtitle: Text(
+          [
+            if (pool.source == 'auto')
+              'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
+            if (malformed)
+              '⚠️ 偵測到損壞或型別錯誤的候選；已自動撤銷核准，請重新產生或修正後再核准'
+            else if (_dirty)
+              '計畫已編輯，需重新核准'
+            else
+              (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
+          ].join('　·　'),
+        ),
       ),
-      title: Text(
-        '候選池 v${pool.version}｜${pool.candidates.length} 筆'
-        '｜${pool.approved ? "已核准" : "未核准"}'
-        '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}',
-      ),
-      subtitle: Text(
-        [
-          if (pool.source == 'auto')
-            'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
-          _dirty
-              ? '計畫已編輯，需重新核准'
-              : (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
-        ].join('　·　'),
-      ),
-    ),
-  );
+    );
+  }
 
   // ---- 自動選取動作 ----
   Widget _autoActions(
