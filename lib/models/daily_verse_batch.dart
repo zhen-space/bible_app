@@ -56,6 +56,8 @@ class DailyVerseCandidatePool {
   final int catalogVersion;
   final int algoVersion;
   final int? generatedAt; // epoch millis（auto 產生時）
+  /// 讀取時偵測到候選資料損壞；僅供 Admin 顯示，永不寫回 Firestore。
+  final bool hasMalformedCandidates;
 
   const DailyVerseCandidatePool({
     this.version = 0,
@@ -65,6 +67,7 @@ class DailyVerseCandidatePool {
     this.catalogVersion = 0,
     this.algoVersion = 0,
     this.generatedAt,
+    this.hasMalformedCandidates = false,
   });
 
   /// 排程前置條件：人工已核准且候選非空。不符即 fail-closed。
@@ -78,6 +81,7 @@ class DailyVerseCandidatePool {
     int? catalogVersion,
     int? algoVersion,
     int? generatedAt,
+    bool? hasMalformedCandidates,
   }) =>
       DailyVerseCandidatePool(
         version: version ?? this.version,
@@ -87,6 +91,8 @@ class DailyVerseCandidatePool {
         catalogVersion: catalogVersion ?? this.catalogVersion,
         algoVersion: algoVersion ?? this.algoVersion,
         generatedAt: generatedAt ?? this.generatedAt,
+        hasMalformedCandidates:
+            hasMalformedCandidates ?? this.hasMalformedCandidates,
       );
 
   /// 防禦性解析：型別不符退回安全預設，**不丟例外**。
@@ -130,6 +136,7 @@ class DailyVerseCandidatePool {
       catalogVersion: m['catalog_version'] is int ? m['catalog_version'] as int : 0,
       algoVersion: m['algo_version'] is int ? m['algo_version'] as int : 0,
       generatedAt: m['generated_at'] is int ? m['generated_at'] as int : null,
+      hasMalformedCandidates: !structurallyValid,
     );
   }
 
