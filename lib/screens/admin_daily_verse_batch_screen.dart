@@ -169,6 +169,8 @@ class _AdminDailyVerseBatchScreenState
                 setState(() {
                   _plan = plan;
                   _dirty = true; // 尚未核准
+                  _draftResult = null;
+                  _reconciliation = null;
                 });
               }),
       ),
@@ -190,6 +192,8 @@ class _AdminDailyVerseBatchScreenState
                   setState(() {
                     _plan = plan;
                     _dirty = !pool.approved;
+                    _draftResult = null;
+                    _reconciliation = null;
                   });
                 }),
         ),
@@ -338,6 +342,8 @@ class _AdminDailyVerseBatchScreenState
     setState(() {
       _plan!.days[index] = DailyVersePlanDay(date: d.date, failClosed: true);
       _dirty = true;
+      _draftResult = null;
+      _reconciliation = null;
     });
   }
 
@@ -384,6 +390,8 @@ class _AdminDailyVerseBatchScreenState
     setState(() {
       _plan!.days[index] = day;
       _dirty = true;
+      _draftResult = null;
+      _reconciliation = null;
     });
   }
 
@@ -396,6 +404,27 @@ class _AdminDailyVerseBatchScreenState
     final plan = _plan!;
     final canApprove = plan.draftableDays.isNotEmpty;
     final canDraft = pool.approved && !_dirty && plan.draftableDays.isNotEmpty;
+    final expectedDates = {for (final d in plan.draftableDays) d.date};
+    final evidence = _reconciliation;
+    final evidenceItems = evidence == null
+        ? const <DailyVerseReconciliationItem>[]
+        : [
+            for (final item in evidence.items)
+              if (expectedDates.contains(item.date)) item,
+          ];
+    final evidenceComplete =
+        evidence != null &&
+        evidence.anomalyCount == 0 &&
+        evidenceItems.length == expectedDates.length &&
+        evidenceItems.every((item) => item.workspaceExists);
+    final canReview =
+        canDraft &&
+        evidenceComplete &&
+        evidenceItems.every((item) => item.workspaceStatus == 'draft');
+    final canPublish =
+        canDraft &&
+        evidenceComplete &&
+        evidenceItems.every((item) => item.workspaceStatus == 'review');
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -429,7 +458,14 @@ class _AdminDailyVerseBatchScreenState
                       specs,
                       editorEmail: email,
                     );
-                    if (mounted) setState(() => _draftResult = result);
+                    final dates = [for (final d in plan.draftableDays) d.date];
+                    final reconciliation = await svc.reconcileDates(dates);
+                    if (mounted) {
+                      setState(() {
+                        _draftResult = result;
+                        _reconciliation = reconciliation;
+                      });
+                    }
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
@@ -459,22 +495,30 @@ class _AdminDailyVerseBatchScreenState
         OutlinedButton.icon(
           icon: const Icon(Icons.rate_review_outlined),
           label: const Text('批次送 Review'),
-          onPressed: _busy || !canDraft
+          onPressed: _busy || !canReview
               ? null
-              : () => _confirm('把這批草稿送審？', () async {
+              : () => _confirm('把這批已核對的草稿送審？', () async {
                   final dates = [for (final s in plan.draftableDays) s.date];
                   await svc.submitBatchForReview(dates, editorEmail: email);
+                  final reconciliation = await svc.reconcileDates(dates);
+                  if (mounted) {
+                    setState(() => _reconciliation = reconciliation);
+                  }
                   ref.invalidate(adminDailyVerseListProvider);
                 }),
         ),
         OutlinedButton.icon(
           icon: const Icon(Icons.publish_outlined),
           label: const Text('批次 Publish'),
-          onPressed: _busy || !canDraft
+          onPressed: _busy || !canPublish
               ? null
-              : () => _confirm('發佈這批每日經文？學生將於各指定日期讀到。', () async {
+              : () => _confirm('發佈這批已核對為 Review 的每日經文？學生將於各指定日期讀到。', () async {
                   final dates = [for (final s in plan.draftableDays) s.date];
                   await svc.publishBatch(dates, publisherEmail: email);
+                  final reconciliation = await svc.reconcileDates(dates);
+                  if (mounted) {
+                    setState(() => _reconciliation = reconciliation);
+                  }
                   ref.invalidate(adminDailyVerseListProvider);
                 }),
         ),
