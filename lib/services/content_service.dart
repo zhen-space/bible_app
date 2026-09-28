@@ -14,7 +14,7 @@ import '../models/managed_content.dart';
 /// 內容文字一律由管理者（使用者本人）在 App 內撰寫。
 class ContentService {
   ContentService([FirebaseFirestore? fs])
-    : _fs = fs ?? FirebaseFirestore.instance;
+      : _fs = fs ?? FirebaseFirestore.instance;
   final FirebaseFirestore _fs;
 
   CollectionReference<Map<String, dynamic>> get _col =>
@@ -37,25 +37,20 @@ class ContentService {
   /// universe = published+public ∪ published+church(my active church)；**絕不 fetch-all-then-hide**。
   /// audience 缺失/'internal'、church 但無授權 → 不回（fail-closed）。by-doc 再驗一次。
   Future<Map<String, Map<String, dynamic>>> fetchAuthorizedAnnotations(
-    StudentAuth auth,
-  ) async {
+      StudentAuth auth) async {
     final docs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    docs.addAll(
-      (await _col
-              .where('status', isEqualTo: 'published')
-              .where('audience', isEqualTo: Audience.public.name)
-              .get())
-          .docs,
-    );
+    docs.addAll((await _col
+            .where('status', isEqualTo: 'published')
+            .where('audience', isEqualTo: Audience.public.name)
+            .get())
+        .docs);
     if (auth.hasChurch) {
-      docs.addAll(
-        (await _col
-                .where('status', isEqualTo: 'published')
-                .where('audience', isEqualTo: Audience.church.name)
-                .where('allowed_church_ids', arrayContains: auth.activeChurchId)
-                .get())
-            .docs,
-      );
+      docs.addAll((await _col
+              .where('status', isEqualTo: 'published')
+              .where('audience', isEqualTo: Audience.church.name)
+              .where('allowed_church_ids', arrayContains: auth.activeChurchId)
+              .get())
+          .docs);
     }
     final out = <String, Map<String, dynamic>>{};
     for (final d in docs) {
@@ -68,16 +63,13 @@ class ContentService {
 
   /// 純授權判斷（可測）：published 且（public，或 church 且 activeChurchId ∈ allowed_church_ids）。
   static bool annotationAuthorized(
-    Map<String, dynamic> m,
-    String? activeChurchId,
-  ) {
+      Map<String, dynamic> m, String? activeChurchId) {
     if (m['status'] != 'published') return false;
     final audience = m['audience'];
     if (audience == 'public') return true;
     if (audience == 'church') {
-      final ids = ((m['allowed_church_ids'] as List?) ?? const []).map(
-        (e) => e.toString(),
-      );
+      final ids = ((m['allowed_church_ids'] as List?) ?? const [])
+          .map((e) => e.toString());
       return activeChurchId != null && ids.contains(activeChurchId);
     }
     return false; // internal / missing → fail-closed
@@ -89,13 +81,11 @@ class ContentService {
   /// （#8 rules 依 `status=='published'` 放行公開讀；缺 status 者一律 fail-closed）。
   /// 需要 Draft→Review→Published 分階段時改用 ContentWorkflowService。
   Future<void> _setVersioned(
-    DocumentReference<Map<String, dynamic>> doc,
-    String contentId,
-    String contentType,
-    Map<String, dynamic> data, {
-    String publisher = '',
-    String provenanceSource = '管理員親撰',
-  }) async {
+      DocumentReference<Map<String, dynamic>> doc,
+      String contentId,
+      String contentType,
+      Map<String, dynamic> data,
+      {String publisher = '', String provenanceSource = '管理員親撰'}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await doc.get();
     final prevVersion = (existing.data()?['version'] as int?) ?? 0;
@@ -117,7 +107,7 @@ class ContentService {
       final old = Map<String, dynamic>.from(existing.data()!)
         ..remove('versions'); // 快照不含歷史，避免巢狀膨脹
       payload['versions'] = FieldValue.arrayUnion([
-        {...old, 'edited_at': now},
+        {...old, 'edited_at': now}
       ]);
       await doc.update(payload);
     } else {
@@ -127,44 +117,24 @@ class ContentService {
     }
   }
 
-  Future<void> saveBook(
-    int bookId,
-    Map<String, dynamic> data, {
-    String publisher = '',
-  }) => _setVersioned(
-    _col.doc('book_$bookId'),
-    'book_$bookId',
-    'book_guide',
-    data,
-    publisher: publisher,
-  );
+  Future<void> saveBook(int bookId, Map<String, dynamic> data,
+          {String publisher = ''}) =>
+      _setVersioned(
+          _col.doc('book_$bookId'), 'book_$bookId', 'book_guide', data,
+          publisher: publisher);
 
-  Future<void> saveChapter(
-    int bookId,
-    int chapter,
-    Map<String, dynamic> data, {
-    String publisher = '',
-  }) => _setVersioned(
-    _col.doc('chapter_${bookId}_$chapter'),
-    'chapter_${bookId}_$chapter',
-    'chapter_guide',
-    data,
-    publisher: publisher,
-  );
+  Future<void> saveChapter(int bookId, int chapter, Map<String, dynamic> data,
+          {String publisher = ''}) =>
+      _setVersioned(_col.doc('chapter_${bookId}_$chapter'),
+          'chapter_${bookId}_$chapter', 'chapter_guide', data,
+          publisher: publisher);
 
   Future<void> saveVerse(
-    int bookId,
-    int chapter,
-    int verse,
-    Map<String, dynamic> data, {
-    String publisher = '',
-  }) => _setVersioned(
-    _col.doc('verse_${bookId}_${chapter}_$verse'),
-    'verse_${bookId}_${chapter}_$verse',
-    'verse_commentary',
-    data,
-    publisher: publisher,
-  );
+          int bookId, int chapter, int verse, Map<String, dynamic> data,
+          {String publisher = ''}) =>
+      _setVersioned(_col.doc('verse_${bookId}_${chapter}_$verse'),
+          'verse_${bookId}_${chapter}_$verse', 'verse_commentary', data,
+          publisher: publisher);
 
   // ---- 知識架構（時間軸/人物/平行/預表）----
   //
@@ -190,10 +160,8 @@ class ContentService {
   }
 
   /// 後台：寫回整份知識資料（直接發佈；stamp Published mirror meta）。
-  Future<void> saveKnowledge(
-    Map<String, dynamic> data, {
-    String publisher = '',
-  }) async {
+  Future<void> saveKnowledge(Map<String, dynamic> data,
+      {String publisher = ''}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await _knowledgeDoc.get();
     final prevVersion = (existing.data()?['version'] as int?) ?? 0;
@@ -225,10 +193,8 @@ class ContentService {
   /// 學生端每日經文顯示條件（純函式，可測）：**status==published 且 date==今天**。
   /// 未來已發布的日期不會提前顯示；今天無 published 一律 fail-closed（不顯示、不 fallback）。
   static bool dailyVerseVisibleToday(
-    String? status,
-    String date,
-    String todayYmd,
-  ) => status == 'published' && date == todayYmd;
+          String? status, String date, String todayYmd) =>
+      status == 'published' && date == todayYmd;
 
   /// 讀經端：取某日（YYYY-MM-DD）的官方每日經文。**只回 status=='published'**；
   /// 未發佈或不存在回 null（fail-closed，前端顯示「今日尚無經文」，不得 fallback）。
@@ -292,12 +258,8 @@ class ContentService {
   /// 另標記 `_has_published`＝該日是否已有對外 published。doc id＝日期，
   /// 因此**每個日期至多一筆**（one-active-per-date 由 id 結構保證）。
   Future<List<Map<String, dynamic>>> adminListDailyVerses() async {
-    final snapshots = await Future.wait([
-      _fs.collection('daily_verses_workspace').get(),
-      _dailyVerses.get(),
-    ]).timeout(const Duration(seconds: 20));
-    final ws = snapshots[0];
-    final pub = snapshots[1];
+    final ws = await _fs.collection('daily_verses_workspace').get();
+    final pub = await _dailyVerses.get();
     final published = {for (final d in pub.docs) d.id: d.data()};
     final byId = {for (final d in ws.docs) d.id: d.data()};
     final ids = {...byId.keys, ...published.keys};
@@ -353,19 +315,19 @@ class ContentService {
 
   /// 管理者：取全部待審投稿。
   Future<List<PublicSubmission>> pendingSubmissions() async {
-    final snap = await _submissions.where('status', isEqualTo: 'pending').get();
-    final list =
-        snap.docs.map((d) => PublicSubmission.fromDoc(d.id, d.data())).toList()
-          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final snap =
+        await _submissions.where('status', isEqualTo: 'pending').get();
+    final list = snap.docs
+        .map((d) => PublicSubmission.fromDoc(d.id, d.data()))
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return list;
   }
 
   /// 管理者：通過（寫入公開集合並標記）。寫入時 stamp status='published' 等
   /// Published mirror meta，rules 才會放行公開讀（#8）；溯源記為「使用者投稿」。
-  Future<void> approveSubmission(
-    PublicSubmission s, {
-    String publisher = '',
-  }) async {
+  Future<void> approveSubmission(PublicSubmission s,
+      {String publisher = ''}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _publicNotes.add({
       'author': s.author,
@@ -398,9 +360,7 @@ class ContentService {
 
   /// 讀經端：某章已通過的公開註解（verse → 多則）。所有人可讀。
   Future<Map<int, List<PublicNote>>> approvedNotes(
-    int bookId,
-    int chapter,
-  ) async {
+      int bookId, int chapter) async {
     // #8：只讀 Published。loc+status 複合查詢需 composite index（見
     // firestore.indexes.json），使 rules 可證明查詢只回 Published 文件。
     final snap = await _publicNotes
@@ -412,11 +372,7 @@ class ContentService {
       final m = d.data();
       final v = m['verse'] as int;
       (out[v] ??= []).add(
-        PublicNote(
-          author: m['author'] as String? ?? '',
-          content: m['content'] as String,
-        ),
-      );
+          PublicNote(author: m['author'] as String? ?? '', content: m['content'] as String));
     }
     return out;
   }

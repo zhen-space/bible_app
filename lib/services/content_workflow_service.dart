@@ -53,33 +53,34 @@ class ContentWorkflowService {
       _fs.collection('${type}_workspace');
 
   static Map<String, dynamic> payloadOf(Map<String, dynamic> doc) => {
-    for (final e in doc.entries)
-      if (!reservedKeys.contains(e.key)) e.key: e.value,
-  };
+        for (final e in doc.entries)
+          if (!reservedKeys.contains(e.key)) e.key: e.value,
+      };
 
   Map<String, dynamic> _flat(ManagedContent c) => {
-    ...c.payload,
-    'content_id': c.contentId,
-    'content_type': c.contentType,
-    'status': c.status.name,
-    'version': c.version,
-    'created_at': c.createdAt,
-    'created_by': c.createdBy,
-    'updated_at': c.updatedAt,
-    'updated_by': c.updatedBy,
-    'reviewed_by': c.reviewedBy,
-    'reviewed_at': c.reviewedAt,
-    'published_by': c.publishedBy,
-    'published_at': c.publishedAt,
-    'archived_at': c.archivedAt,
-    'provenance': c.provenance.toMap(),
-    // visibility 僅在使用該維度（Study Content）時寫入，null 省略。
-    if (c.visibility != null) 'visibility': c.visibility!.name,
-    // audience/allowed_church_ids（Church/Teacher R1），null 省略。
-    if (c.audience != null) 'audience': c.audience!.name,
-    if (c.audience != null) 'allowed_church_ids': c.allowedChurchIds,
-  };
+        ...c.payload,
+        'content_id': c.contentId,
+        'content_type': c.contentType,
+        'status': c.status.name,
+        'version': c.version,
+        'created_at': c.createdAt,
+        'created_by': c.createdBy,
+        'updated_at': c.updatedAt,
+        'updated_by': c.updatedBy,
+        'reviewed_by': c.reviewedBy,
+        'reviewed_at': c.reviewedAt,
+        'published_by': c.publishedBy,
+        'published_at': c.publishedAt,
+        'archived_at': c.archivedAt,
+        'provenance': c.provenance.toMap(),
+        // visibility 僅在使用該維度（Study Content）時寫入，null 省略。
+        if (c.visibility != null) 'visibility': c.visibility!.name,
+        // audience/allowed_church_ids（Church/Teacher R1），null 省略。
+        if (c.audience != null) 'audience': c.audience!.name,
+        if (c.audience != null) 'allowed_church_ids': c.allowedChurchIds,
+      };
 
+  /// 深層值比較（Map/List/純量），供 createDraftIfAbsent 判定「等值 Draft」。
   static bool _sameValue(Object? a, Object? b) {
     if (a is Map && b is Map) {
       if (a.length != b.length) return false;
@@ -136,8 +137,8 @@ class ContentWorkflowService {
     final now = DateTime.now().millisecondsSinceEpoch;
     final existing = await getWorkspace(type, contentId);
     final published = await _published(type).doc(contentId).get();
-    final baseVersion =
-        existing?.version ?? ((published.data()?['version'] as int?) ?? 0);
+    final baseVersion = existing?.version ??
+        ((published.data()?['version'] as int?) ?? 0);
     final effAudience = audience ?? existing?.audience;
     final c = ManagedContent(
       contentId: contentId,
@@ -162,9 +163,11 @@ class ContentWorkflowService {
     await _workspace(type).doc(contentId).set(_flat(c));
   }
 
-  /// Atomically creates a new Draft only when no workspace or published
-  /// document exists. An equivalent existing Draft is an idempotent success;
-  /// any other existing state is a conflict and is never overwritten.
+  /// 交易式「不存在才建立 Draft」：只有在 workspace 與 published mirror 皆不存在時才建立。
+  /// 等值的既有 Draft 視為 idempotent 成功（回 false，不重建、不產生重複 revision）；
+  /// 任何其他既有狀態（不同內容的 Draft、或 review/rejected/published/archived）都視為
+  /// conflict（丟 [DraftConflictException]），**絕不覆寫**。整個判斷在 transaction 內完成，
+  /// 因此逾時後底層 Future 若稍後才 commit 仍為安全的「不存在才建立」，不會重複或覆寫。
   Future<bool> createDraftIfAbsent(
     String type,
     String contentId, {
@@ -181,8 +184,7 @@ class ContentWorkflowService {
 
       if (ws.exists) {
         final data = ws.data()!;
-        final validEnvelope =
-            data['content_id'] == contentId &&
+        final validEnvelope = data['content_id'] == contentId &&
             data['content_type'] == contentType &&
             data['version'] is int;
         if (data['status'] == ContentStatus.draft.name &&
@@ -255,10 +257,7 @@ class ContentWorkflowService {
   }
 
   Future<void> submitForReview(
-    String type,
-    String contentId,
-    String editorEmail,
-  ) async {
+      String type, String contentId, String editorEmail) async {
     await _workspace(type).doc(contentId).update({
       'status': ContentStatus.review.name,
       'updated_at': DateTime.now().millisecondsSinceEpoch,
@@ -267,10 +266,7 @@ class ContentWorkflowService {
   }
 
   Future<void> reject(
-    String type,
-    String contentId,
-    String reviewerEmail,
-  ) async {
+      String type, String contentId, String reviewerEmail) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     await _workspace(type).doc(contentId).update({
       'status': ContentStatus.rejected.name,
@@ -302,40 +298,39 @@ class ContentWorkflowService {
     final prevVersion = (prev.data()?['version'] as int?) ?? 0;
     final newVersion = prevVersion + 1;
 
-    final publishedDoc = _flat(
-      ManagedContent(
-        contentId: contentId,
-        contentType: ws.contentType,
-        status: ContentStatus.published,
-        version: newVersion,
-        createdAt: ws.createdAt,
-        createdBy: ws.createdBy,
-        updatedAt: now,
-        updatedBy: publisherEmail,
-        reviewedBy: ws.reviewedBy,
-        reviewedAt: ws.reviewedAt,
-        publishedBy: publisherEmail,
-        publishedAt: now,
-        provenance: ws.provenance,
-        visibility: ws.visibility,
-        audience: ws.audience,
-        allowedChurchIds: ws.allowedChurchIds,
-        payload: ws.payload,
-      ),
-    );
+    final publishedDoc = _flat(ManagedContent(
+      contentId: contentId,
+      contentType: ws.contentType,
+      status: ContentStatus.published,
+      version: newVersion,
+      createdAt: ws.createdAt,
+      createdBy: ws.createdBy,
+      updatedAt: now,
+      updatedBy: publisherEmail,
+      reviewedBy: ws.reviewedBy,
+      reviewedAt: ws.reviewedAt,
+      publishedBy: publisherEmail,
+      publishedAt: now,
+      provenance: ws.provenance,
+      visibility: ws.visibility,
+      audience: ws.audience,
+      allowedChurchIds: ws.allowedChurchIds,
+      payload: ws.payload,
+    ));
     // 舊 Published 快照留存
-    if (prev.exists && prev.data()?['status'] == ContentStatus.published.name) {
+    if (prev.exists &&
+        prev.data()?['status'] == ContentStatus.published.name) {
       final old = Map<String, dynamic>.from(prev.data()!)..remove('versions');
       if (snapshotToSubcollection) {
         // 唯讀歷史版本子集合：doc id = 舊版號。rules 設為 admin-only，
         // 學生不得經此繞過 current visibility。
-        await pubRef.collection('versions').doc('$prevVersion').set({
-          ...old,
-          'snapshot_at': now,
-        });
+        await pubRef
+            .collection('versions')
+            .doc('$prevVersion')
+            .set({...old, 'snapshot_at': now});
       } else {
         publishedDoc['versions'] = FieldValue.arrayUnion([
-          {...old, 'snapshot_at': now},
+          {...old, 'snapshot_at': now}
         ]);
       }
     }
@@ -355,10 +350,7 @@ class ContentWorkflowService {
   /// 封存：把 published mirror 撤下（status → archived，學生端立即讀不到），
   /// workspace 也標記 archived。歷史 `versions` 保留。
   Future<void> archive(
-    String type,
-    String contentId,
-    String publisherEmail,
-  ) async {
+      String type, String contentId, String publisherEmail) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final pubRef = _published(type).doc(contentId);
     if ((await pubRef.get()).exists) {
@@ -381,6 +373,7 @@ class ContentWorkflowService {
   }
 }
 
+/// createDraftIfAbsent 遇到既有的不同內容 Draft 或非 Draft 狀態時丟出（拒絕覆寫）。
 class DraftConflictException implements Exception {
   final String message;
   const DraftConflictException(this.message);

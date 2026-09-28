@@ -25,8 +25,7 @@ class DailyVerseCandidate {
     this.date,
   });
 
-  factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) =>
-      DailyVerseCandidate(
+  factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) => DailyVerseCandidate(
         ref: (m['ref'] as String?) ?? '',
         title: (m['title'] as String?) ?? '',
         content: (m['content'] as String?) ?? '',
@@ -34,11 +33,11 @@ class DailyVerseCandidate {
       );
 
   Map<String, dynamic> toJson() => {
-    'ref': ref,
-    'title': title,
-    'content': content,
-    if (date != null) 'date': date,
-  };
+        'ref': ref,
+        'title': title,
+        'content': content,
+        if (date != null) 'date': date,
+      };
 }
 
 /// 版本化候選池。**只有 approved 且非空**才可被排程（[isSchedulable]）。
@@ -77,26 +76,23 @@ class DailyVerseCandidatePool {
     int? catalogVersion,
     int? algoVersion,
     int? generatedAt,
-  }) => DailyVerseCandidatePool(
-    version: version ?? this.version,
-    approved: approved ?? this.approved,
-    candidates: candidates ?? this.candidates,
-    source: source ?? this.source,
-    catalogVersion: catalogVersion ?? this.catalogVersion,
-    algoVersion: algoVersion ?? this.algoVersion,
-    generatedAt: generatedAt ?? this.generatedAt,
-  );
+  }) =>
+      DailyVerseCandidatePool(
+        version: version ?? this.version,
+        approved: approved ?? this.approved,
+        candidates: candidates ?? this.candidates,
+        source: source ?? this.source,
+        catalogVersion: catalogVersion ?? this.catalogVersion,
+        algoVersion: algoVersion ?? this.algoVersion,
+        generatedAt: generatedAt ?? this.generatedAt,
+      );
 
   factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) =>
       DailyVerseCandidatePool(
         version: (m['version'] as int?) ?? 0,
         approved: (m['approved'] as bool?) ?? false,
         candidates: ((m['candidates'] as List?) ?? const [])
-            .map(
-              (e) => DailyVerseCandidate.fromJson(
-                (e as Map).cast<String, dynamic>(),
-              ),
-            )
+            .map((e) => DailyVerseCandidate.fromJson((e as Map).cast<String, dynamic>()))
             .toList(),
         source: (m['source'] as String?) ?? 'manual',
         catalogVersion: (m['catalog_version'] as int?) ?? 0,
@@ -105,14 +101,14 @@ class DailyVerseCandidatePool {
       );
 
   Map<String, dynamic> toJson() => {
-    'version': version,
-    'approved': approved,
-    'candidates': [for (final c in candidates) c.toJson()],
-    'source': source,
-    'catalog_version': catalogVersion,
-    'algo_version': algoVersion,
-    if (generatedAt != null) 'generated_at': generatedAt,
-  };
+        'version': version,
+        'approved': approved,
+        'candidates': [for (final c in candidates) c.toJson()],
+        'source': source,
+        'catalog_version': catalogVersion,
+        'algo_version': algoVersion,
+        if (generatedAt != null) 'generated_at': generatedAt,
+      };
 }
 
 /// 排程結果一筆：日期（台北 YYYY-MM-DD）→ 指派到的候選（含其在池中的索引）。
@@ -172,14 +168,14 @@ class DailyVerseDraftSpec {
   /// 寫入 workspace 草稿用的 payload（與既有 admin_daily_verse_screen 完全一致）。
   /// 正文不落 payload（讀取端一律由 corpus 依 book/chapter/verse 取得）。
   Map<String, dynamic> toPayload() => {
-    'date': date,
-    'book_id': bookId,
-    'chapter': chapter,
-    'verse': verse,
-    'ref_text': ref,
-    'title': title,
-    'content': content,
-  };
+        'date': date,
+        'book_id': bookId,
+        'chapter': chapter,
+        'verse': verse,
+        'ref_text': ref,
+        'title': title,
+        'content': content,
+      };
 }
 
 /// 批次驗證結果（送出前的整批健檢）。
@@ -196,6 +192,96 @@ class DailyVerseBatchValidation {
 
   bool get allResolve => unresolvedDates.isEmpty;
   bool get canSubmit => count > 0 && allResolve && !hasDuplicateDates;
+}
+
+// ===========================================================================
+// 自動選取（auto-select）：系統從 curated catalog + corpus 正文解析，逐日確定性
+// 指派未來 N 天的每日經文。內容正文一律來自 corpus，catalog 只提供節位。
+// ===========================================================================
+
+/// 自動選取後一天的規格。[published]＝該日已有對外 Published（鎖定、不覆寫、只讀顯示）；
+/// [failClosed]＝當日沒有符合規則的候選（不 fabricate、留白待補）。
+/// [flags] 為**建議性**旗標（如 'pronoun_start'），不阻擋送出，只供 Admin 參考。
+class DailyVersePlanDay {
+  final String date; // 台北 YYYY-MM-DD
+  final String ref; // 顯示節位（abbr章:節）；failClosed 時為 ''
+  final int? bookId;
+  final int? chapter;
+  final int? verse;
+  final String? resolvedText; // corpus 正文（只讀顯示，不落 payload）
+  final bool published;
+  final bool failClosed;
+  final List<String> flags;
+
+  const DailyVersePlanDay({
+    required this.date,
+    this.ref = '',
+    this.bookId,
+    this.chapter,
+    this.verse,
+    this.resolvedText,
+    this.published = false,
+    this.failClosed = false,
+    this.flags = const [],
+  });
+
+  /// 可建立為 Draft 的日：未 Published、未 fail-closed、且正文可解析。
+  bool get isDraftable =>
+      !published && !failClosed && bookId != null && chapter != null && verse != null;
+
+  DailyVersePlanDay copyWith({
+    String? ref,
+    int? bookId,
+    int? chapter,
+    int? verse,
+    String? resolvedText,
+    bool? failClosed,
+    List<String>? flags,
+  }) =>
+      DailyVersePlanDay(
+        date: date,
+        ref: ref ?? this.ref,
+        bookId: bookId ?? this.bookId,
+        chapter: chapter ?? this.chapter,
+        verse: verse ?? this.verse,
+        resolvedText: resolvedText ?? this.resolvedText,
+        published: published,
+        failClosed: failClosed ?? this.failClosed,
+        flags: flags ?? this.flags,
+      );
+}
+
+/// 自動選取整體計畫（確定性：同輸入同輸出）。
+class DailyVerseAutoPlan {
+  final List<DailyVersePlanDay> days;
+  final String startYmd;
+  final int requestedDays;
+  final int catalogVersion;
+  final int algoVersion;
+  final List<String> warnings; // 例：'shortfall:N'（N 天無候選、留白待補）
+
+  const DailyVerseAutoPlan({
+    this.days = const [],
+    required this.startYmd,
+    this.requestedDays = 0,
+    this.catalogVersion = 0,
+    this.algoVersion = 0,
+    this.warnings = const [],
+  });
+
+  /// 可建立 Draft 的日（未 Published、未 fail-closed、可解析）。
+  List<DailyVersePlanDay> get draftableDays =>
+      [for (final d in days) if (d.isDraftable) d];
+
+  /// 已 Published（鎖定）的日。
+  List<DailyVersePlanDay> get publishedDays =>
+      [for (final d in days) if (d.published) d];
+
+  /// fail-closed（無候選）的日。
+  List<DailyVersePlanDay> get failClosedDays =>
+      [for (final d in days) if (d.failClosed) d];
+
+  bool get hasFailClosed => failClosedDays.isNotEmpty;
 }
 
 enum DailyVerseDraftOutcome {
@@ -271,103 +357,4 @@ class DailyVerseReconciliationResult {
     }
     return out;
   }
-}
-
-// ===========================================================================
-// 自動選取（auto-select）：系統從 curated catalog + corpus 正文解析，逐日確定性
-// 指派未來 N 天的每日經文。內容正文一律來自 corpus，catalog 只提供節位。
-// ===========================================================================
-
-/// 自動選取後一天的規格。[published]＝該日已有對外 Published（鎖定、不覆寫、只讀顯示）；
-/// [failClosed]＝當日沒有符合規則的候選（不 fabricate、留白待補）。
-/// [flags] 為**建議性**旗標（如 'pronoun_start'），不阻擋送出，只供 Admin 參考。
-class DailyVersePlanDay {
-  final String date; // 台北 YYYY-MM-DD
-  final String ref; // 顯示節位（abbr章:節）；failClosed 時為 ''
-  final int? bookId;
-  final int? chapter;
-  final int? verse;
-  final String? resolvedText; // corpus 正文（只讀顯示，不落 payload）
-  final bool published;
-  final bool failClosed;
-  final List<String> flags;
-
-  const DailyVersePlanDay({
-    required this.date,
-    this.ref = '',
-    this.bookId,
-    this.chapter,
-    this.verse,
-    this.resolvedText,
-    this.published = false,
-    this.failClosed = false,
-    this.flags = const [],
-  });
-
-  /// 可建立為 Draft 的日：未 Published、未 fail-closed、且正文可解析。
-  bool get isDraftable =>
-      !published &&
-      !failClosed &&
-      bookId != null &&
-      chapter != null &&
-      verse != null;
-
-  DailyVersePlanDay copyWith({
-    String? ref,
-    int? bookId,
-    int? chapter,
-    int? verse,
-    String? resolvedText,
-    bool? failClosed,
-    List<String>? flags,
-  }) => DailyVersePlanDay(
-    date: date,
-    ref: ref ?? this.ref,
-    bookId: bookId ?? this.bookId,
-    chapter: chapter ?? this.chapter,
-    verse: verse ?? this.verse,
-    resolvedText: resolvedText ?? this.resolvedText,
-    published: published,
-    failClosed: failClosed ?? this.failClosed,
-    flags: flags ?? this.flags,
-  );
-}
-
-/// 自動選取整體計畫（確定性：同輸入同輸出）。
-class DailyVerseAutoPlan {
-  final List<DailyVersePlanDay> days;
-  final String startYmd;
-  final int requestedDays;
-  final int catalogVersion;
-  final int algoVersion;
-  final List<String> warnings; // 例：'shortfall:N'（N 天無候選、留白待補）
-
-  const DailyVerseAutoPlan({
-    this.days = const [],
-    required this.startYmd,
-    this.requestedDays = 0,
-    this.catalogVersion = 0,
-    this.algoVersion = 0,
-    this.warnings = const [],
-  });
-
-  /// 可建立 Draft 的日（未 Published、未 fail-closed、可解析）。
-  List<DailyVersePlanDay> get draftableDays => [
-    for (final d in days)
-      if (d.isDraftable) d,
-  ];
-
-  /// 已 Published（鎖定）的日。
-  List<DailyVersePlanDay> get publishedDays => [
-    for (final d in days)
-      if (d.published) d,
-  ];
-
-  /// fail-closed（無候選）的日。
-  List<DailyVersePlanDay> get failClosedDays => [
-    for (final d in days)
-      if (d.failClosed) d,
-  ];
-
-  bool get hasFailClosed => failClosedDays.isNotEmpty;
 }
