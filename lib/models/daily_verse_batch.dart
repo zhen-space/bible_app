@@ -89,21 +89,42 @@ class DailyVerseCandidatePool {
         generatedAt: generatedAt ?? this.generatedAt,
       );
 
-  /// 防禦性解析：型別不符退回安全預設、非 Map 的候選項略過，**不丟例外**
-  /// （malformed payload 不得讓讀取路徑崩潰或永久 spinner）。
+  /// 防禦性解析：型別不符退回安全預設，**不丟例外**。
+  /// 任一候選被略過或降級時，整池一律撤銷核准（fail-closed），避免
+  /// 部分／損壞候選池仍被排程。
   factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) {
     final rawList = m['candidates'];
     final candidates = <DailyVerseCandidate>[];
+    var structurallyValid = rawList is List;
     if (rawList is List) {
       for (final e in rawList) {
-        if (e is Map) {
-          candidates.add(DailyVerseCandidate.fromJson(e.cast<String, dynamic>()));
+        if (e is! Map) {
+          structurallyValid = false;
+          continue;
         }
+        final candidateMap = e.cast<String, dynamic>();
+        final ref = candidateMap['ref'];
+        final candidateValid =
+            ref is String &&
+            ref.trim().isNotEmpty &&
+            (!candidateMap.containsKey('title') ||
+                candidateMap['title'] is String) &&
+            (!candidateMap.containsKey('content') ||
+                candidateMap['content'] is String) &&
+            (!candidateMap.containsKey('date') ||
+                candidateMap['date'] is String);
+        if (!candidateValid) {
+          structurallyValid = false;
+          continue;
+        }
+        candidates.add(DailyVerseCandidate.fromJson(candidateMap));
       }
     }
+    final requestedApproved =
+        m['approved'] is bool ? m['approved'] as bool : false;
     return DailyVerseCandidatePool(
       version: m['version'] is int ? m['version'] as int : 0,
-      approved: m['approved'] is bool ? m['approved'] as bool : false,
+      approved: requestedApproved && structurallyValid,
       candidates: candidates,
       source: m['source'] is String ? m['source'] as String : 'manual',
       catalogVersion: m['catalog_version'] is int ? m['catalog_version'] as int : 0,
