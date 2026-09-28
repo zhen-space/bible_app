@@ -283,3 +283,78 @@ class DailyVerseAutoPlan {
 
   bool get hasFailClosed => failClosedDays.isNotEmpty;
 }
+
+enum DailyVerseDraftOutcome {
+  created,
+  alreadyExists,
+  conflict,
+  failed,
+  unknown,
+}
+
+class DailyVerseDraftItemResult {
+  final String date;
+  final DailyVerseDraftOutcome outcome;
+  final String message;
+
+  const DailyVerseDraftItemResult({
+    required this.date,
+    required this.outcome,
+    this.message = '',
+  });
+}
+
+/// A complete, per-date receipt for a batch Draft attempt.
+///
+/// `unknown` means the client stopped waiting for Firestore. The underlying
+/// operation may still settle, so callers must reconcile before retrying.
+class DailyVerseDraftBatchResult {
+  final List<DailyVerseDraftItemResult> items;
+  const DailyVerseDraftBatchResult(this.items);
+
+  int count(DailyVerseDraftOutcome outcome) =>
+      items.where((e) => e.outcome == outcome).length;
+  int get created => count(DailyVerseDraftOutcome.created);
+  int get alreadyExists => count(DailyVerseDraftOutcome.alreadyExists);
+  int get conflicts => count(DailyVerseDraftOutcome.conflict);
+  int get failed => count(DailyVerseDraftOutcome.failed);
+  int get unknown => count(DailyVerseDraftOutcome.unknown);
+  bool get needsReconciliation => conflicts > 0 || failed > 0 || unknown > 0;
+}
+
+class DailyVerseReconciliationItem {
+  final String date;
+  final bool workspaceExists;
+  final String? workspaceStatus;
+  final bool publishedExists;
+  final String? publishedStatus;
+  final int publishedRevisionCount;
+  final List<String> anomalies;
+
+  const DailyVerseReconciliationItem({
+    required this.date,
+    required this.workspaceExists,
+    this.workspaceStatus,
+    required this.publishedExists,
+    this.publishedStatus,
+    this.publishedRevisionCount = 0,
+    this.anomalies = const [],
+  });
+}
+
+class DailyVerseReconciliationResult {
+  final List<DailyVerseReconciliationItem> items;
+  const DailyVerseReconciliationResult(this.items);
+
+  int get workspaceCount => items.where((e) => e.workspaceExists).length;
+  int get publishedCount => items.where((e) => e.publishedExists).length;
+  int get anomalyCount => items.where((e) => e.anomalies.isNotEmpty).length;
+  Map<String, int> get workspaceStatusCounts {
+    final out = <String, int>{};
+    for (final item in items.where((e) => e.workspaceExists)) {
+      final status = item.workspaceStatus ?? 'missing';
+      out[status] = (out[status] ?? 0) + 1;
+    }
+    return out;
+  }
+}

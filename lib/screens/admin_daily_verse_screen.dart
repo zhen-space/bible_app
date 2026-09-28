@@ -40,7 +40,20 @@ class _AdminDailyVerseScreenState extends ConsumerState<AdminDailyVerseScreen> {
       ),
       body: listAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('載入失敗：$e'),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('重試'),
+                onPressed: () => ref.invalidate(adminDailyVerseListProvider),
+              ),
+            ],
+          ),
+        ),
         data: (rows) {
           // §A11：今日無服務中 Published（date==today 且 status==published）→ 高可見度警示。
           final hasTodayPublished = rows.any((r) =>

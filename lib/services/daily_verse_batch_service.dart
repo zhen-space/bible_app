@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/daily_verse_batch.dart';
@@ -17,9 +19,16 @@ import 'daily_verse_scheduler.dart';
 /// ⚠️ 這些方法會寫 Firestore；正式 production 執行需管理員 + 憑證環境。單元測試以
 /// fake_cloud_firestore 驗證，不對 production 寫入。
 class DailyVerseBatchService {
-  DailyVerseBatchService(this._fs, this._workflow);
+  DailyVerseBatchService(
+    this._fs,
+    this._workflow, {
+    this.operationTimeout = const Duration(seconds: 20),
+    this.maxConcurrency = 4,
+  });
   final FirebaseFirestore _fs;
   final ContentWorkflowService _workflow;
+  final Duration operationTimeout;
+  final int maxConcurrency;
 
   static const type = 'daily_verses';
   static const _contentType = 'daily_verse';
@@ -68,10 +77,12 @@ class DailyVerseBatchService {
   /// 讀取現行已 Published 的每日經文，供自動選取「鎖定已發布日期」與「365 天防重複」。
   /// 回傳 (publishedByDate, history)：前者只含**排程視窗涵蓋日期**，後者為全部已發布使用紀錄。
   Future<
-      ({
-        Map<String, ({int bookId, int chapter, int verse})> publishedByDate,
-        List<({String date, int bookId, int chapter, int verse})> history,
-      })> loadPublishedHistory() async {
+    ({
+      Map<String, ({int bookId, int chapter, int verse})> publishedByDate,
+      List<({String date, int bookId, int chapter, int verse})> history,
+    })
+  >
+  loadPublishedHistory() async {
     final snap = await _dailyVerses.get();
     final byDate = <String, ({int bookId, int chapter, int verse})>{};
     final history = <({String date, int bookId, int chapter, int verse})>[];
@@ -99,7 +110,8 @@ class DailyVerseBatchService {
     String? startYmd,
     int days = 30,
   }) async {
-    final start = startYmd ?? DailyVerseScheduler.addDaysYmd(taipeiTodayYmd(), 1);
+    final start =
+        startYmd ?? DailyVerseScheduler.addDaysYmd(taipeiTodayYmd(), 1);
     final hist = await loadPublishedHistory();
     return DailyVerseAutoSelector.generate(
       books: books,
@@ -136,41 +148,167 @@ class DailyVerseBatchService {
 
   // ---- 批次 workflow（沿用 ContentWorkflowService）----
 
-  /// 建立整批 Draft。**fail-closed**：任一 spec ref 無法解析或有重複日期 → 整批拒絕、不寫入。
-  /// 回傳實際建立的日期清單。
-  Future<List<String>> applyDraftBatch(
+  /// 建立整批 Draft。輸入驗證仍為 fail-closed；寫入階段逐日交易、有限並行，
+  /// 並回傳完整 receipt。等值 Draft 會跳過，任何其他既存狀態都拒絕覆寫。
+  Future<DailyVerseDraftBatchResult> applyDraftBatch(
     List<DailyVerseDraftSpec> specs, {
     required String editorEmail,
   }) async {
     final v = DailyVerseScheduler.validate(specs);
     if (specs.isEmpty) throw StateError('沒有可建立的草稿（空批次）。');
     if (!v.allResolve) {
-      throw StateError('有 ref 無法解析，整批拒絕（fail-closed）：${v.unresolvedDates.join(", ")}');
-    }
-    if (v.hasDuplicateDates) throw StateError('批次含重複日期，拒絕。');
-    for (final s in specs) {
-      await _workflow.saveDraft(
-        type,
-        s.date, // contentId = 日期
-        contentType: _contentType,
-        payload: s.toPayload(),
-        editorEmail: editorEmail,
+      throw StateError(
+        '有 ref 無法解析，整批拒絕（fail-closed）：${v.unresolvedDates.join(", ")}',
       );
     }
-    return [for (final s in specs) s.date];
+    if (v.hasDuplicateDates) throw StateError('批次含重複日期，拒絕。');
+    final results = List<DailyVerseDraftItemResult?>.filled(specs.length, null);
+    var next = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = next++;
+        if (index >= specs.length) return;
+        final s = specs[index];
+        try {
+          final created = await _workflow
+              .createDraftIfAbsent(
+                type,
+                s.date,
+                contentType: _contentType,
+                payload: s.toPayload(),
+                editorEmail: editorEmail,
+              )
+              .timeout(operationTimeout);
+          results[index] = DailyVerseDraftItemResult(
+            date: s.date,
+            outcome: created
+                ? DailyVerseDraftOutcome.created
+                : DailyVerseDraftOutcome.alreadyExists,
+          );
+        } on DraftConflictException catch (e) {
+          results[index] = DailyVerseDraftItemResult(
+            date: s.date,
+            outcome: DailyVerseDraftOutcome.conflict,
+            message: e.message,
+          );
+        } on TimeoutException {
+          results[index] = DailyVerseDraftItemResult(
+            date: s.date,
+            outcome: DailyVerseDraftOutcome.unknown,
+            message: '逾時；結果未知，重試前必須 reconciliation',
+          );
+        } catch (e) {
+          results[index] = DailyVerseDraftItemResult(
+            date: s.date,
+            outcome: DailyVerseDraftOutcome.failed,
+            message: e.toString(),
+          );
+        }
+      }
+    }
+
+    final workers = maxConcurrency.clamp(1, specs.length);
+    await Future.wait([for (var i = 0; i < workers; i++) worker()]);
+    return DailyVerseDraftBatchResult(results.cast());
+  }
+
+  /// Read-only reconciliation by exact date/doc id. It performs no query and
+  /// requires no composite index. Published revision count includes current.
+  Future<DailyVerseReconciliationResult> reconcileDates(
+    Iterable<String> dates,
+  ) async {
+    final unique = dates.toSet().toList()..sort();
+    final results = List<DailyVerseReconciliationItem?>.filled(
+      unique.length,
+      null,
+    );
+    var next = 0;
+    Future<void> worker() async {
+      while (true) {
+        final index = next++;
+        if (index >= unique.length) return;
+        final date = unique[index];
+        try {
+          final docs = await Future.wait([
+            _fs.collection('daily_verses_workspace').doc(date).get(),
+            _dailyVerses.doc(date).get(),
+          ]).timeout(operationTimeout);
+          final ws = docs[0];
+          final pub = docs[1];
+          final wsData = ws.data();
+          final pubData = pub.data();
+          final anomalies = <String>[];
+          if (ws.exists) {
+            if (wsData?['content_id'] != date) {
+              anomalies.add('workspace content_id mismatch');
+            }
+            if (!const [
+              'draft',
+              'review',
+              'rejected',
+              'published',
+              'archived',
+            ].contains(wsData?['status'])) {
+              anomalies.add('workspace status missing/unknown');
+            }
+          }
+          if (pub.exists && pubData?['status'] != 'published') {
+            anomalies.add('published mirror status is not published');
+          }
+          final history = pubData?['versions'];
+          if (history != null && history is! List) {
+            anomalies.add('published versions is not a list');
+          }
+          results[index] = DailyVerseReconciliationItem(
+            date: date,
+            workspaceExists: ws.exists,
+            workspaceStatus: wsData?['status'] as String?,
+            publishedExists: pub.exists,
+            publishedStatus: pubData?['status'] as String?,
+            publishedRevisionCount: pub.exists
+                ? 1 + (history is List ? history.length : 0)
+                : 0,
+            anomalies: anomalies,
+          );
+        } catch (e) {
+          results[index] = DailyVerseReconciliationItem(
+            date: date,
+            workspaceExists: false,
+            publishedExists: false,
+            anomalies: ['read failed/unknown: $e'],
+          );
+        }
+      }
+    }
+
+    if (unique.isNotEmpty) {
+      final workers = maxConcurrency.clamp(1, unique.length);
+      await Future.wait([for (var i = 0; i < workers; i++) worker()]);
+    }
+    return DailyVerseReconciliationResult(results.cast());
   }
 
   /// 批次送審（逐日 submitForReview）。
-  Future<void> submitBatchForReview(List<String> dates, {required String editorEmail}) async {
+  Future<void> submitBatchForReview(
+    List<String> dates, {
+    required String editorEmail,
+  }) async {
     for (final ymd in dates) {
       await _workflow.submitForReview(type, ymd, editorEmail);
     }
   }
 
   /// 批次發佈（逐日 approveAndPublish）。one-active-per-date 由 doc-id=date 保證。
-  Future<void> publishBatch(List<String> dates, {required String publisherEmail}) async {
+  Future<void> publishBatch(
+    List<String> dates, {
+    required String publisherEmail,
+  }) async {
     for (final ymd in dates) {
-      await _workflow.approveAndPublish(type, ymd, publisherEmail: publisherEmail);
+      await _workflow.approveAndPublish(
+        type,
+        ymd,
+        publisherEmail: publisherEmail,
+      );
     }
   }
 }

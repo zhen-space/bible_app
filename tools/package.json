@@ -16,6 +16,7 @@
     "test:backfill-qa": "node backfill_qa_audience_test.mjs",
     "test:audience-audit": "node audience_preflight_audit_test.mjs",
     "audit:audience": "node audience_preflight_audit.mjs",
+    "audit:daily-verse-window": "node audit_daily_verse_window.mjs",
     "backfill:qa:dryrun": "node backfill_qa_audience.mjs",
     "backfill:qa:apply": "node backfill_qa_audience.mjs --apply",
     "test:rules": "firebase emulators:exec --only firestore \"node rules_test.mjs\""

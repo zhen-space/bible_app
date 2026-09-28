@@ -52,6 +52,7 @@ await env.withSecurityRulesDisabled(async (ctx) => {
   await setDoc(doc(db, 'daily_verses/2026-01-01'), { status: 'published', book_id: 1, chapter: 1, verse: 1 });
   await setDoc(doc(db, 'daily_verses/2026-01-02'), { status: 'draft', book_id: 1, chapter: 1, verse: 2 });
   await setDoc(doc(db, 'daily_verses/2026-01-03'), { status: 'archived', book_id: 1, chapter: 1, verse: 3 });
+  await setDoc(doc(db, 'daily_verses_workspace/2026-01-04'), { content_id: '2026-01-04', content_type: 'daily_verse', status: 'draft', version: 0 });
   // 每日經文批次候選池（admin-only；學生/匿名完全不可讀）。
   await setDoc(doc(db, 'daily_verse_pool/current'), { version: 1, approved: true, candidates: [{ ref: '約3:16', title: '', content: '' }] });
   await setDoc(doc(db, 'knowledge/data'), { status: 'published', version: 1 });
@@ -156,6 +157,10 @@ await ok('admin(claim) 可寫 workspace（review transition）',
 await ok('guest 可讀 Published daily verse', assertSucceeds(getDoc(doc(guest, 'daily_verses/2026-01-01'))));
 await ok('guest 不可讀 Draft daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-02'))));
 await ok('guest 不可讀 Archived daily verse', assertFails(getDoc(doc(guest, 'daily_verses/2026-01-03'))));
+await ok('guest 不可讀 daily_verses_workspace', assertFails(getDoc(doc(guest, 'daily_verses_workspace/2026-01-04'))));
+await ok('student 不可讀 daily_verses_workspace', assertFails(getDoc(doc(student, 'daily_verses_workspace/2026-01-04'))));
+await ok('admin(email) 可讀 daily_verses_workspace', assertSucceeds(getDoc(doc(admin, 'daily_verses_workspace/2026-01-04'))));
+await ok('admin(claim) 可建立 daily_verses_workspace Draft', assertSucceeds(setDoc(doc(claimAdmin, 'daily_verses_workspace/2026-01-05'), { content_id: '2026-01-05', content_type: 'daily_verse', status: 'draft', version: 0 })));
 
 // daily_verse_pool：批次候選池 admin-only；學生/匿名完全不可讀寫。
 await ok('guest 不可讀 daily_verse_pool', assertFails(getDoc(doc(guest, 'daily_verse_pool/current'))));

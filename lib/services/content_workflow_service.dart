@@ -80,6 +80,25 @@ class ContentWorkflowService {
         if (c.audience != null) 'allowed_church_ids': c.allowedChurchIds,
       };
 
+  /// 深層值比較（Map/List/純量），供 createDraftIfAbsent 判定「等值 Draft」。
+  static bool _sameValue(Object? a, Object? b) {
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key) || !_sameValue(a[key], b[key])) return false;
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_sameValue(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
+  }
+
   // ---- 讀取（管理端）----
 
   Future<ManagedContent?> getWorkspace(String type, String contentId) async {
@@ -142,6 +161,61 @@ class ContentWorkflowService {
       payload: payload,
     );
     await _workspace(type).doc(contentId).set(_flat(c));
+  }
+
+  /// 交易式「不存在才建立 Draft」：只有在 workspace 與 published mirror 皆不存在時才建立。
+  /// 等值的既有 Draft 視為 idempotent 成功（回 false，不重建、不產生重複 revision）；
+  /// 任何其他既有狀態（不同內容的 Draft、或 review/rejected/published/archived）都視為
+  /// conflict（丟 [DraftConflictException]），**絕不覆寫**。整個判斷在 transaction 內完成，
+  /// 因此逾時後底層 Future 若稍後才 commit 仍為安全的「不存在才建立」，不會重複或覆寫。
+  Future<bool> createDraftIfAbsent(
+    String type,
+    String contentId, {
+    required String contentType,
+    required Map<String, dynamic> payload,
+    required String editorEmail,
+    ContentProvenance provenance = const ContentProvenance(),
+  }) async {
+    final wsRef = _workspace(type).doc(contentId);
+    final pubRef = _published(type).doc(contentId);
+    return _fs.runTransaction((tx) async {
+      final ws = await tx.get(wsRef);
+      final pub = await tx.get(pubRef);
+
+      if (ws.exists) {
+        final data = ws.data()!;
+        final validEnvelope = data['content_id'] == contentId &&
+            data['content_type'] == contentType &&
+            data['version'] is int;
+        if (data['status'] == ContentStatus.draft.name &&
+            validEnvelope &&
+            _sameValue(payloadOf(data), payload)) {
+          return false;
+        }
+        throw DraftConflictException(
+          '$type/$contentId 已有不相同或非 Draft 的 workspace',
+        );
+      }
+      if (pub.exists) {
+        throw DraftConflictException('$type/$contentId 已有 published mirror');
+      }
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final draft = ManagedContent(
+        contentId: contentId,
+        contentType: contentType,
+        status: ContentStatus.draft,
+        version: 0,
+        createdAt: now,
+        createdBy: editorEmail,
+        updatedAt: now,
+        updatedBy: editorEmail,
+        provenance: provenance,
+        payload: payload,
+      );
+      tx.set(wsRef, _flat(draft));
+      return true;
+    });
   }
 
   /// 從目前 Published version 建立新的 workspace 草稿（**不動 Published live 版本**）。
@@ -297,4 +371,12 @@ class ContentWorkflowService {
       });
     }
   }
+}
+
+/// createDraftIfAbsent 遇到既有的不同內容 Draft 或非 Draft 狀態時丟出（拒絕覆寫）。
+class DraftConflictException implements Exception {
+  final String message;
+  const DraftConflictException(this.message);
+  @override
+  String toString() => message;
 }

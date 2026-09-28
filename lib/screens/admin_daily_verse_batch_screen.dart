@@ -31,6 +31,8 @@ class _AdminDailyVerseBatchScreenState
   bool _busy = false;
   bool _dirty = false; // 計畫已編輯、與已核准池不一致 → 需重新核准
   bool _showManual = false; // 進階手動覆寫
+  DailyVerseDraftBatchResult? _draftResult;
+  DailyVerseReconciliationResult? _reconciliation;
 
   @override
   void dispose() {
@@ -44,8 +46,9 @@ class _AdminDailyVerseBatchScreenState
       await action();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('失敗：$e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('失敗：$e')));
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -74,8 +77,17 @@ class _AdminDailyVerseBatchScreenState
             if (_plan != null) ...[
               _planSummary(_plan!, pool),
               const SizedBox(height: 8),
-              ..._plan!.days.asMap().entries.map((e) =>
-                  _dayTile(svc, books, e.key, e.value)),
+              if (_draftResult != null) ...[
+                _draftResultCard(_draftResult!),
+                const SizedBox(height: 8),
+              ],
+              if (_reconciliation != null) ...[
+                _reconciliationCard(_reconciliation!),
+                const SizedBox(height: 8),
+              ],
+              ..._plan!.days.asMap().entries.map(
+                (e) => _dayTile(svc, books, e.key, e.value),
+              ),
               const SizedBox(height: 12),
               _workflowActions(svc, pool, email),
             ],
@@ -89,58 +101,73 @@ class _AdminDailyVerseBatchScreenState
 
   // ---- 候選池狀態 ----
   Widget _poolStatus(DailyVerseCandidatePool pool) => Card(
-        child: ListTile(
-          leading: Icon(pool.approved ? Icons.verified : Icons.edit_note,
-              color: pool.approved ? Colors.green.shade700 : Colors.orange),
-          title: Text('候選池 v${pool.version}｜${pool.candidates.length} 筆'
-              '｜${pool.approved ? "已核准" : "未核准"}'
-              '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}'),
-          subtitle: Text([
-            if (pool.source == 'auto')
-              'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
-            _dirty ? '計畫已編輯，需重新核准' : (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
-          ].join('　·　')),
-        ),
-      );
+    child: ListTile(
+      leading: Icon(
+        pool.approved ? Icons.verified : Icons.edit_note,
+        color: pool.approved ? Colors.green.shade700 : Colors.orange,
+      ),
+      title: Text(
+        '候選池 v${pool.version}｜${pool.candidates.length} 筆'
+        '｜${pool.approved ? "已核准" : "未核准"}'
+        '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}',
+      ),
+      subtitle: Text(
+        [
+          if (pool.source == 'auto')
+            'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
+          _dirty
+              ? '計畫已編輯，需重新核准'
+              : (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
+        ].join('　·　'),
+      ),
+    ),
+  );
 
   // ---- 自動選取動作 ----
-  Widget _autoActions(dynamic svc, List<Book> books, DailyVerseCandidatePool pool) =>
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        FilledButton.icon(
-          icon: const Icon(Icons.auto_awesome),
-          label: const Text('自動產生候選（未來30天）'),
+  Widget _autoActions(
+    dynamic svc,
+    List<Book> books,
+    DailyVerseCandidatePool pool,
+  ) => Wrap(
+    spacing: 8,
+    runSpacing: 8,
+    children: [
+      FilledButton.icon(
+        icon: const Icon(Icons.auto_awesome),
+        label: const Text('自動產生候選（未來30天）'),
+        onPressed: _busy || books.isEmpty
+            ? null
+            : () => _run(() async {
+                final plan = await svc.generateAutoPlan(books: books, days: 30);
+                setState(() {
+                  _plan = plan;
+                  _dirty = true; // 尚未核准
+                });
+              }),
+      ),
+      if (_plan == null &&
+          pool.source == 'auto' &&
+          pool.candidates.any((c) => c.date != null))
+        OutlinedButton.icon(
+          icon: const Icon(Icons.history),
+          label: const Text('載入先前產生的候選'),
           onPressed: _busy || books.isEmpty
               ? null
               : () => _run(() async {
-                    final plan = await svc.generateAutoPlan(books: books, days: 30);
-                    setState(() {
-                      _plan = plan;
-                      _dirty = true; // 尚未核准
-                    });
-                  }),
+                  final hist = await svc.loadPublishedHistory();
+                  final plan = DailyVerseAutoSelector.planFromDatedPool(
+                    books: books,
+                    pool: pool,
+                    publishedByDate: hist.publishedByDate,
+                  );
+                  setState(() {
+                    _plan = plan;
+                    _dirty = !pool.approved;
+                  });
+                }),
         ),
-        if (_plan == null &&
-            pool.source == 'auto' &&
-            pool.candidates.any((c) => c.date != null))
-          OutlinedButton.icon(
-            icon: const Icon(Icons.history),
-            label: const Text('載入先前產生的候選'),
-            onPressed: _busy || books.isEmpty
-                ? null
-                : () => _run(() async {
-                      final hist = await svc.loadPublishedHistory();
-                      final plan = DailyVerseAutoSelector.planFromDatedPool(
-                        books: books,
-                        pool: pool,
-                        publishedByDate: hist.publishedByDate,
-                      );
-                      setState(() {
-                        _plan = plan;
-                        _dirty = !pool.approved;
-                      });
-                    }),
-          ),
-      ]);
+    ],
+  );
 
   // ---- 計畫摘要（排除/解析失敗/重複/書卷集中）----
   Widget _planSummary(DailyVerseAutoPlan plan, DailyVerseCandidatePool pool) {
@@ -156,7 +183,7 @@ class _AdminDailyVerseBatchScreenState
     // 重複（防禦性；正常不應發生）。
     final keys = [
       for (final d in plan.days)
-        if (d.bookId != null) '${d.bookId}:${d.chapter}:${d.verse}'
+        if (d.bookId != null) '${d.bookId}:${d.chapter}:${d.verse}',
     ];
     final dup = keys.length != keys.toSet().length;
     final warn = failClosed > 0 || dup;
@@ -169,20 +196,28 @@ class _AdminDailyVerseBatchScreenState
             : Theme.of(context).colorScheme.secondaryContainer,
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Text([
-        '共 ${plan.days.length} 天',
-        '可建立 $draftable',
-        if (published > 0) '已發布鎖定 $published',
-        if (failClosed > 0) '⚠️ 留白（無候選）$failClosed（不自動補位，請調整）',
-        if (dup) '⚠️ 有重複節位',
-        if (concentrated > 0) '書卷集中：$concentrated 卷 ≥4 天',
-        if (plan.warnings.isNotEmpty) plan.warnings.join('／'),
-        _dirty ? '尚未核准' : (pool.approved ? '已核准' : '未核准'),
-      ].join('　·　'), style: const TextStyle(fontSize: 13)),
+      child: Text(
+        [
+          '共 ${plan.days.length} 天',
+          '可建立 $draftable',
+          if (published > 0) '已發布鎖定 $published',
+          if (failClosed > 0) '⚠️ 留白（無候選）$failClosed（不自動補位，請調整）',
+          if (dup) '⚠️ 有重複節位',
+          if (concentrated > 0) '書卷集中：$concentrated 卷 ≥4 天',
+          if (plan.warnings.isNotEmpty) plan.warnings.join('／'),
+          _dirty ? '尚未核准' : (pool.approved ? '已核准' : '未核准'),
+        ].join('　·　'),
+        style: const TextStyle(fontSize: 13),
+      ),
     );
   }
 
-  Widget _dayTile(dynamic svc, List<Book> books, int index, DailyVersePlanDay d) {
+  Widget _dayTile(
+    dynamic svc,
+    List<Book> books,
+    int index,
+    DailyVersePlanDay d,
+  ) {
     final cs = Theme.of(context).colorScheme;
     Widget trailing;
     if (d.published) {
@@ -190,47 +225,87 @@ class _AdminDailyVerseBatchScreenState
     } else if (d.failClosed) {
       trailing = Icon(Icons.error_outline, color: cs.error);
     } else {
-      trailing = Row(mainAxisSize: MainAxisSize.min, children: [
-        IconButton(
-          tooltip: '替換',
-          icon: const Icon(Icons.swap_horiz),
-          onPressed: _busy ? null : () => _replaceDay(books, index, d),
-        ),
-        IconButton(
-          tooltip: '移除（留白）',
-          icon: const Icon(Icons.remove_circle_outline),
-          onPressed: _busy ? null : () => _removeDay(index, d),
-        ),
-      ]);
+      trailing = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: '替換',
+            icon: const Icon(Icons.swap_horiz),
+            onPressed: _busy ? null : () => _replaceDay(books, index, d),
+          ),
+          IconButton(
+            tooltip: '移除（留白）',
+            icon: const Icon(Icons.remove_circle_outline),
+            onPressed: _busy ? null : () => _removeDay(index, d),
+          ),
+        ],
+      );
     }
     final subtitle = d.published
         ? '已發布・鎖定不覆寫：${d.resolvedText ?? ""}'
         : d.failClosed
-            ? '留白（無合規候選，不 fabricate）'
-            : d.resolvedText ?? '';
+        ? '留白（無合規候選，不 fabricate）'
+        : d.resolvedText ?? '';
     return ListTile(
       dense: true,
       leading: Text(d.date.length >= 5 ? d.date.substring(5) : d.date),
-      title: Row(children: [
-        Flexible(child: Text(d.ref.isEmpty ? '—' : d.ref)),
-        for (final f in d.flags) ...[
-          const SizedBox(width: 6),
-          _chip(f == 'pronoun_start' ? '代名詞開頭' : f, cs.tertiaryContainer),
+      title: Row(
+        children: [
+          Flexible(child: Text(d.ref.isEmpty ? '—' : d.ref)),
+          for (final f in d.flags) ...[
+            const SizedBox(width: 6),
+            _chip(f == 'pronoun_start' ? '代名詞開頭' : f, cs.tertiaryContainer),
+          ],
         ],
-      ]),
-      subtitle: Text(subtitle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: d.failClosed ? TextStyle(color: cs.error) : null),
+      ),
+      subtitle: Text(
+        subtitle,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: d.failClosed ? TextStyle(color: cs.error) : null,
+      ),
       trailing: trailing,
     );
   }
 
   Widget _chip(String text, Color bg) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-        child: Text(text, style: const TextStyle(fontSize: 11)),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Text(text, style: const TextStyle(fontSize: 11)),
+  );
+
+  Widget _draftResultCard(DailyVerseDraftBatchResult result) => Card(
+    child: ListTile(
+      leading: Icon(
+        result.needsReconciliation ? Icons.warning_amber : Icons.check_circle,
+        color: result.needsReconciliation ? Colors.orange : Colors.green,
+      ),
+      title: const Text('最近一次 Draft 建立結果'),
+      subtitle: Text(
+        '建立 ${result.created}｜已存在且相同 ${result.alreadyExists}｜'
+        '衝突 ${result.conflicts}｜失敗 ${result.failed}｜結果未知 ${result.unknown}'
+        '${result.needsReconciliation ? "\n重試前請先執行唯讀 reconciliation。" : ""}',
+      ),
+    ),
+  );
+
+  Widget _reconciliationCard(DailyVerseReconciliationResult result) => Card(
+    child: ListTile(
+      leading: Icon(
+        result.anomalyCount == 0 ? Icons.fact_check : Icons.warning,
+        color: result.anomalyCount == 0 ? Colors.green : Colors.orange,
+      ),
+      title: const Text('Production 唯讀 reconciliation'),
+      subtitle: Text(
+        'workspace ${result.workspaceCount}｜'
+        'status ${result.workspaceStatusCounts}｜published ${result.publishedCount}｜'
+        '異常/讀取未知 ${result.anomalyCount}',
+      ),
+    ),
+  );
 
   void _removeDay(int index, DailyVersePlanDay d) {
     setState(() {
@@ -239,7 +314,11 @@ class _AdminDailyVerseBatchScreenState
     });
   }
 
-  Future<void> _replaceDay(List<Book> books, int index, DailyVersePlanDay d) async {
+  Future<void> _replaceDay(
+    List<Book> books,
+    int index,
+    DailyVersePlanDay d,
+  ) async {
     final ctrl = TextEditingController(text: d.ref);
     final ref = await showDialog<String>(
       context: context,
@@ -249,13 +328,19 @@ class _AdminDailyVerseBatchScreenState
           controller: ctrl,
           autofocus: true,
           decoration: const InputDecoration(
-              labelText: '節位（例：約3:16）', hintText: '由 corpus 解析，正文不可自行輸入'),
+            labelText: '節位（例：約3:16）',
+            hintText: '由 corpus 解析，正文不可自行輸入',
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
-              child: const Text('替換')),
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('替換'),
+          ),
         ],
       ),
     );
@@ -263,8 +348,9 @@ class _AdminDailyVerseBatchScreenState
     final day = DailyVerseAutoSelector.dayFromRef(books, d.date, ref);
     if (day == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('無法解析此節位（corpus 找不到單節）。')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('無法解析此節位（corpus 找不到單節）。')));
       }
       return;
     }
@@ -276,17 +362,23 @@ class _AdminDailyVerseBatchScreenState
 
   // ---- 核准 → Draft → Review → Publish ----
   Widget _workflowActions(
-      dynamic svc, DailyVerseCandidatePool pool, String email) {
+    dynamic svc,
+    DailyVerseCandidatePool pool,
+    String email,
+  ) {
     final plan = _plan!;
     final canApprove = plan.draftableDays.isNotEmpty;
     final canDraft = pool.approved && !_dirty && plan.draftableDays.isNotEmpty;
-    return Wrap(spacing: 8, runSpacing: 8, children: [
-      FilledButton.icon(
-        icon: const Icon(Icons.verified_outlined),
-        label: const Text('人工核准候選池'),
-        onPressed: _busy || !canApprove
-            ? null
-            : () => _confirm(
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          icon: const Icon(Icons.verified_outlined),
+          label: const Text('人工核准候選池'),
+          onPressed: _busy || !canApprove
+              ? null
+              : () => _confirm(
                   '核准 ${plan.draftableDays.length} 筆候選？'
                   '${plan.hasFailClosed ? "（含 ${plan.failClosedDays.length} 天留白將略過）" : ""}',
                   () async {
@@ -296,41 +388,71 @@ class _AdminDailyVerseBatchScreenState
                     setState(() => _dirty = false);
                   },
                 ),
-      ),
-      OutlinedButton.icon(
-        icon: const Icon(Icons.playlist_add),
-        label: Text('建立 ${plan.draftableDays.length} 筆 Draft'),
-        onPressed: _busy || !canDraft
-            ? null
-            : () => _confirm('建立 ${plan.draftableDays.length} 筆 Draft？', () async {
-                  final specs = DailyVerseAutoSelector.planToSpecs(plan);
-                  await svc.applyDraftBatch(specs, editorEmail: email);
-                  ref.invalidate(adminDailyVerseListProvider);
+        ),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.playlist_add),
+          label: Text('建立 ${plan.draftableDays.length} 筆 Draft'),
+          onPressed: _busy || !canDraft
+              ? null
+              : () => _confirm(
+                  '建立 ${plan.draftableDays.length} 筆 Draft？',
+                  () async {
+                    final specs = DailyVerseAutoSelector.planToSpecs(plan);
+                    final result = await svc.applyDraftBatch(
+                      specs,
+                      editorEmail: email,
+                    );
+                    if (mounted) setState(() => _draftResult = result);
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            'Draft 結果：建立 ${result.created}、已存在 ${result.alreadyExists}、'
+                            '衝突 ${result.conflicts}、失敗 ${result.failed}、未知 ${result.unknown}',
+                          ),
+                        ),
+                      );
+                    }
+                    ref.invalidate(adminDailyVerseListProvider);
+                  },
+                  showCompleted: false,
+                ),
+        ),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.fact_check_outlined),
+          label: const Text('唯讀核對這 30 天'),
+          onPressed: _busy
+              ? null
+              : () => _run(() async {
+                  final dates = [for (final d in plan.days) d.date];
+                  final result = await svc.reconcileDates(dates);
+                  if (mounted) setState(() => _reconciliation = result);
                 }),
-      ),
-      OutlinedButton.icon(
-        icon: const Icon(Icons.rate_review_outlined),
-        label: const Text('批次送 Review'),
-        onPressed: _busy || !canDraft
-            ? null
-            : () => _confirm('把這批草稿送審？', () async {
+        ),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.rate_review_outlined),
+          label: const Text('批次送 Review'),
+          onPressed: _busy || !canDraft
+              ? null
+              : () => _confirm('把這批草稿送審？', () async {
                   final dates = [for (final s in plan.draftableDays) s.date];
                   await svc.submitBatchForReview(dates, editorEmail: email);
                   ref.invalidate(adminDailyVerseListProvider);
                 }),
-      ),
-      OutlinedButton.icon(
-        icon: const Icon(Icons.publish_outlined),
-        label: const Text('批次 Publish'),
-        onPressed: _busy || !canDraft
-            ? null
-            : () => _confirm('發佈這批每日經文？學生將於各指定日期讀到。', () async {
+        ),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.publish_outlined),
+          label: const Text('批次 Publish'),
+          onPressed: _busy || !canDraft
+              ? null
+              : () => _confirm('發佈這批每日經文？學生將於各指定日期讀到。', () async {
                   final dates = [for (final s in plan.draftableDays) s.date];
                   await svc.publishBatch(dates, publisherEmail: email);
                   ref.invalidate(adminDailyVerseListProvider);
                 }),
-      ),
-    ]);
+        ),
+      ],
+    );
   }
 
   // ---- 進階：手動輸入覆寫（保留舊行為，非唯一方法）----
@@ -338,55 +460,72 @@ class _AdminDailyVerseBatchScreenState
     return ExpansionTile(
       initiallyExpanded: _showManual,
       onExpansionChanged: (v) => setState(() => _showManual = v),
-      title: const Text('進階：手動輸入候選（覆寫）',
-          style: TextStyle(fontWeight: FontWeight.w600)),
+      title: const Text(
+        '進階：手動輸入候選（覆寫）',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
       childrenPadding: const EdgeInsets.all(8),
       children: [
         const Align(
           alignment: Alignment.centerLeft,
-          child: Text('每行：ref | 標題 | 內文（標題/內文選填，由你親撰）。'
-              '手動候選依池序逐日指派（不自動跳過已發布日期）。',
-              style: TextStyle(fontSize: 12)),
+          child: Text(
+            '每行：ref | 標題 | 內文（標題/內文選填，由你親撰）。'
+            '手動候選依池序逐日指派（不自動跳過已發布日期）。',
+            style: TextStyle(fontSize: 12),
+          ),
         ),
         const SizedBox(height: 6),
         TextField(
           controller: _manualEditor,
           maxLines: 6,
           decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              hintText: '約3:16 | 神的愛 | …\n詩23:1 | 耶和華是我的牧者 |'),
+            border: OutlineInputBorder(),
+            hintText: '約3:16 | 神的愛 | …\n詩23:1 | 耶和華是我的牧者 |',
+          ),
         ),
         const SizedBox(height: 8),
-        Wrap(spacing: 8, children: [
-          OutlinedButton.icon(
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('儲存手動候選（重置核准）'),
-            onPressed: _busy
-                ? null
-                : () => _run(() async {
-                      await svc.saveCandidates(_parseManual(_manualEditor.text));
+        Wrap(
+          spacing: 8,
+          children: [
+            OutlinedButton.icon(
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('儲存手動候選（重置核准）'),
+              onPressed: _busy
+                  ? null
+                  : () => _run(() async {
+                      await svc.saveCandidates(
+                        _parseManual(_manualEditor.text),
+                      );
                       ref.invalidate(dailyVersePoolProvider);
                       setState(() => _plan = null);
                     }),
-          ),
-          OutlinedButton.icon(
-            icon: const Icon(Icons.event_note),
-            label: const Text('由手動候選排程並預覽'),
-            onPressed: _busy || books.isEmpty
-                ? null
-                : () => _run(() async {
+            ),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.event_note),
+              label: const Text('由手動候選排程並預覽'),
+              onPressed: _busy || books.isEmpty
+                  ? null
+                  : () => _run(() async {
                       final pool = await svc.loadPool();
-                      final sched = DailyVerseScheduler.scheduleDays(pool,
-                          startYmd: DailyVerseScheduler.addDaysYmd(
-                              _todayTaipei(), 1),
-                          days: 30);
+                      final sched = DailyVerseScheduler.scheduleDays(
+                        pool,
+                        startYmd: DailyVerseScheduler.addDaysYmd(
+                          _todayTaipei(),
+                          1,
+                        ),
+                        days: 30,
+                      );
                       if (!sched.ok) {
-                        throw StateError(sched.failClosedReason == 'pool_not_approved'
-                            ? '候選池尚未核准'
-                            : '候選池為空');
+                        throw StateError(
+                          sched.failClosedReason == 'pool_not_approved'
+                              ? '候選池尚未核准'
+                              : '候選池為空',
+                        );
                       }
-                      final specs =
-                          DailyVerseScheduler.buildDraftSpecs(sched, books);
+                      final specs = DailyVerseScheduler.buildDraftSpecs(
+                        sched,
+                        books,
+                      );
                       setState(() {
                         _plan = DailyVerseAutoPlan(
                           startYmd: specs.isEmpty ? '' : specs.first.date,
@@ -401,14 +540,15 @@ class _AdminDailyVerseBatchScreenState
                                 verse: s.verse,
                                 resolvedText: s.resolvedText,
                                 failClosed: !s.refResolves,
-                              )
+                              ),
                           ],
                         );
                         _dirty = !pool.approved;
                       });
                     }),
-          ),
-        ]),
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -422,19 +562,23 @@ class _AdminDailyVerseBatchScreenState
   }
 
   List<DailyVerseCandidate> _parseManual(String text) => [
-        for (final raw in text.split('\n'))
-          if (raw.trim().isNotEmpty)
-            () {
-              final parts = raw.split('|').map((e) => e.trim()).toList();
-              return DailyVerseCandidate(
-                ref: parts[0],
-                title: parts.length > 1 ? parts[1] : '',
-                content: parts.length > 2 ? parts.sublist(2).join(' | ') : '',
-              );
-            }()
-      ];
+    for (final raw in text.split('\n'))
+      if (raw.trim().isNotEmpty)
+        () {
+          final parts = raw.split('|').map((e) => e.trim()).toList();
+          return DailyVerseCandidate(
+            ref: parts[0],
+            title: parts.length > 1 ? parts[1] : '',
+            content: parts.length > 2 ? parts.sublist(2).join(' | ') : '',
+          );
+        }(),
+  ];
 
-  void _confirm(String msg, Future<void> Function() action) async {
+  void _confirm(
+    String msg,
+    Future<void> Function() action, {
+    bool showCompleted = true,
+  }) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
@@ -442,20 +586,23 @@ class _AdminDailyVerseBatchScreenState
         content: Text(msg),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('確定')),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('確定'),
+          ),
         ],
       ),
     );
     if (ok == true) {
       await _run(() async {
         await action();
-        if (mounted) {
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('完成')));
+        if (mounted && showCompleted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('完成')));
         }
       });
     }
