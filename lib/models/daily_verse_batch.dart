@@ -25,7 +25,8 @@ class DailyVerseCandidate {
     this.date,
   });
 
-  factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) => DailyVerseCandidate(
+  factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) =>
+      DailyVerseCandidate(
         ref: (m['ref'] as String?) ?? '',
         title: (m['title'] as String?) ?? '',
         content: (m['content'] as String?) ?? '',
@@ -33,11 +34,11 @@ class DailyVerseCandidate {
       );
 
   Map<String, dynamic> toJson() => {
-        'ref': ref,
-        'title': title,
-        'content': content,
-        if (date != null) 'date': date,
-      };
+    'ref': ref,
+    'title': title,
+    'content': content,
+    if (date != null) 'date': date,
+  };
 }
 
 /// 版本化候選池。**只有 approved 且非空**才可被排程（[isSchedulable]）。
@@ -76,23 +77,26 @@ class DailyVerseCandidatePool {
     int? catalogVersion,
     int? algoVersion,
     int? generatedAt,
-  }) =>
-      DailyVerseCandidatePool(
-        version: version ?? this.version,
-        approved: approved ?? this.approved,
-        candidates: candidates ?? this.candidates,
-        source: source ?? this.source,
-        catalogVersion: catalogVersion ?? this.catalogVersion,
-        algoVersion: algoVersion ?? this.algoVersion,
-        generatedAt: generatedAt ?? this.generatedAt,
-      );
+  }) => DailyVerseCandidatePool(
+    version: version ?? this.version,
+    approved: approved ?? this.approved,
+    candidates: candidates ?? this.candidates,
+    source: source ?? this.source,
+    catalogVersion: catalogVersion ?? this.catalogVersion,
+    algoVersion: algoVersion ?? this.algoVersion,
+    generatedAt: generatedAt ?? this.generatedAt,
+  );
 
   factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) =>
       DailyVerseCandidatePool(
         version: (m['version'] as int?) ?? 0,
         approved: (m['approved'] as bool?) ?? false,
         candidates: ((m['candidates'] as List?) ?? const [])
-            .map((e) => DailyVerseCandidate.fromJson((e as Map).cast<String, dynamic>()))
+            .map(
+              (e) => DailyVerseCandidate.fromJson(
+                (e as Map).cast<String, dynamic>(),
+              ),
+            )
             .toList(),
         source: (m['source'] as String?) ?? 'manual',
         catalogVersion: (m['catalog_version'] as int?) ?? 0,
@@ -101,14 +105,14 @@ class DailyVerseCandidatePool {
       );
 
   Map<String, dynamic> toJson() => {
-        'version': version,
-        'approved': approved,
-        'candidates': [for (final c in candidates) c.toJson()],
-        'source': source,
-        'catalog_version': catalogVersion,
-        'algo_version': algoVersion,
-        if (generatedAt != null) 'generated_at': generatedAt,
-      };
+    'version': version,
+    'approved': approved,
+    'candidates': [for (final c in candidates) c.toJson()],
+    'source': source,
+    'catalog_version': catalogVersion,
+    'algo_version': algoVersion,
+    if (generatedAt != null) 'generated_at': generatedAt,
+  };
 }
 
 /// 排程結果一筆：日期（台北 YYYY-MM-DD）→ 指派到的候選（含其在池中的索引）。
@@ -168,14 +172,14 @@ class DailyVerseDraftSpec {
   /// 寫入 workspace 草稿用的 payload（與既有 admin_daily_verse_screen 完全一致）。
   /// 正文不落 payload（讀取端一律由 corpus 依 book/chapter/verse 取得）。
   Map<String, dynamic> toPayload() => {
-        'date': date,
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'ref_text': ref,
-        'title': title,
-        'content': content,
-      };
+    'date': date,
+    'book_id': bookId,
+    'chapter': chapter,
+    'verse': verse,
+    'ref_text': ref,
+    'title': title,
+    'content': content,
+  };
 }
 
 /// 批次驗證結果（送出前的整批健檢）。
@@ -192,6 +196,81 @@ class DailyVerseBatchValidation {
 
   bool get allResolve => unresolvedDates.isEmpty;
   bool get canSubmit => count > 0 && allResolve && !hasDuplicateDates;
+}
+
+enum DailyVerseDraftOutcome {
+  created,
+  alreadyExists,
+  conflict,
+  failed,
+  unknown,
+}
+
+class DailyVerseDraftItemResult {
+  final String date;
+  final DailyVerseDraftOutcome outcome;
+  final String message;
+
+  const DailyVerseDraftItemResult({
+    required this.date,
+    required this.outcome,
+    this.message = '',
+  });
+}
+
+/// A complete, per-date receipt for a batch Draft attempt.
+///
+/// `unknown` means the client stopped waiting for Firestore. The underlying
+/// operation may still settle, so callers must reconcile before retrying.
+class DailyVerseDraftBatchResult {
+  final List<DailyVerseDraftItemResult> items;
+  const DailyVerseDraftBatchResult(this.items);
+
+  int count(DailyVerseDraftOutcome outcome) =>
+      items.where((e) => e.outcome == outcome).length;
+  int get created => count(DailyVerseDraftOutcome.created);
+  int get alreadyExists => count(DailyVerseDraftOutcome.alreadyExists);
+  int get conflicts => count(DailyVerseDraftOutcome.conflict);
+  int get failed => count(DailyVerseDraftOutcome.failed);
+  int get unknown => count(DailyVerseDraftOutcome.unknown);
+  bool get needsReconciliation => conflicts > 0 || failed > 0 || unknown > 0;
+}
+
+class DailyVerseReconciliationItem {
+  final String date;
+  final bool workspaceExists;
+  final String? workspaceStatus;
+  final bool publishedExists;
+  final String? publishedStatus;
+  final int publishedRevisionCount;
+  final List<String> anomalies;
+
+  const DailyVerseReconciliationItem({
+    required this.date,
+    required this.workspaceExists,
+    this.workspaceStatus,
+    required this.publishedExists,
+    this.publishedStatus,
+    this.publishedRevisionCount = 0,
+    this.anomalies = const [],
+  });
+}
+
+class DailyVerseReconciliationResult {
+  final List<DailyVerseReconciliationItem> items;
+  const DailyVerseReconciliationResult(this.items);
+
+  int get workspaceCount => items.where((e) => e.workspaceExists).length;
+  int get publishedCount => items.where((e) => e.publishedExists).length;
+  int get anomalyCount => items.where((e) => e.anomalies.isNotEmpty).length;
+  Map<String, int> get workspaceStatusCounts {
+    final out = <String, int>{};
+    for (final item in items.where((e) => e.workspaceExists)) {
+      final status = item.workspaceStatus ?? 'missing';
+      out[status] = (out[status] ?? 0) + 1;
+    }
+    return out;
+  }
 }
 
 // ===========================================================================
@@ -227,7 +306,11 @@ class DailyVersePlanDay {
 
   /// 可建立為 Draft 的日：未 Published、未 fail-closed、且正文可解析。
   bool get isDraftable =>
-      !published && !failClosed && bookId != null && chapter != null && verse != null;
+      !published &&
+      !failClosed &&
+      bookId != null &&
+      chapter != null &&
+      verse != null;
 
   DailyVersePlanDay copyWith({
     String? ref,
@@ -237,18 +320,17 @@ class DailyVersePlanDay {
     String? resolvedText,
     bool? failClosed,
     List<String>? flags,
-  }) =>
-      DailyVersePlanDay(
-        date: date,
-        ref: ref ?? this.ref,
-        bookId: bookId ?? this.bookId,
-        chapter: chapter ?? this.chapter,
-        verse: verse ?? this.verse,
-        resolvedText: resolvedText ?? this.resolvedText,
-        published: published,
-        failClosed: failClosed ?? this.failClosed,
-        flags: flags ?? this.flags,
-      );
+  }) => DailyVersePlanDay(
+    date: date,
+    ref: ref ?? this.ref,
+    bookId: bookId ?? this.bookId,
+    chapter: chapter ?? this.chapter,
+    verse: verse ?? this.verse,
+    resolvedText: resolvedText ?? this.resolvedText,
+    published: published,
+    failClosed: failClosed ?? this.failClosed,
+    flags: flags ?? this.flags,
+  );
 }
 
 /// 自動選取整體計畫（確定性：同輸入同輸出）。
@@ -270,16 +352,22 @@ class DailyVerseAutoPlan {
   });
 
   /// 可建立 Draft 的日（未 Published、未 fail-closed、可解析）。
-  List<DailyVersePlanDay> get draftableDays =>
-      [for (final d in days) if (d.isDraftable) d];
+  List<DailyVersePlanDay> get draftableDays => [
+    for (final d in days)
+      if (d.isDraftable) d,
+  ];
 
   /// 已 Published（鎖定）的日。
-  List<DailyVersePlanDay> get publishedDays =>
-      [for (final d in days) if (d.published) d];
+  List<DailyVersePlanDay> get publishedDays => [
+    for (final d in days)
+      if (d.published) d,
+  ];
 
   /// fail-closed（無候選）的日。
-  List<DailyVersePlanDay> get failClosedDays =>
-      [for (final d in days) if (d.failClosed) d];
+  List<DailyVersePlanDay> get failClosedDays => [
+    for (final d in days)
+      if (d.failClosed) d,
+  ];
 
   bool get hasFailClosed => failClosedDays.isNotEmpty;
 }
