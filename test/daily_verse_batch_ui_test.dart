@@ -85,6 +85,15 @@ DailyVerseReconciliationItem _item(String date, String status) =>
       publishedStatus: status == 'published' ? 'published' : null,
     );
 
+bool _btnEnabled(WidgetTester tester, String label) {
+  final f = find.ancestor(
+    of: find.text(label),
+    matching: find.bySubtype<OutlinedButton>(),
+  );
+  final w = tester.widget<OutlinedButton>(f);
+  return w.onPressed != null;
+}
+
 DailyVerseCandidatePool _approvedAutoPool() => const DailyVerseCandidatePool(
       version: 1,
       approved: true,
@@ -120,27 +129,27 @@ void main() {
     );
     await tester.pumpAndSettle();
     // 載入先前產生的候選 → 由帶 date 的池建計畫（approved → 不 dirty → 可建立 Draft）。
-    await tester.tap(find.widgetWithText(OutlinedButton, '載入先前產生的候選'));
+    // 注意：按鈕以 *.icon 建立，其 runtime 型別是 OutlinedButton 的子型別，
+    // find.byType（精確型別）無法匹配，故一律以文字定位點擊。
+    await tester.tap(find.text('載入先前產生的候選'));
     await tester.pumpAndSettle();
     return fake;
   }
 
   Future<void> tapConfirm(WidgetTester tester, String buttonLabel) async {
-    await tester.tap(find.widgetWithText(OutlinedButton, buttonLabel));
+    await tester.tap(find.text(buttonLabel));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(FilledButton, '確定'));
+    await tester.tap(find.text('確定'));
     await tester.pumpAndSettle();
   }
 
-  bool enabled(WidgetTester tester, Type type, String label) {
-    final w = tester.widget(find.widgetWithText(type, label));
-    final onPressed = (w as dynamic).onPressed;
-    return onPressed != null;
-  }
+  // *.icon 按鈕 → 以 bySubtype 找按鈕本體讀 onPressed 判斷是否啟用。
+  bool reviewEnabled(WidgetTester tester) => _btnEnabled(tester, '批次送 Review');
+  bool publishEnabled(WidgetTester tester) => _btnEnabled(tester, '批次 Publish');
 
   testWidgets('計畫載入後可見「建立 Draft」', (tester) async {
     await pump(tester, configure: (_) {});
-    expect(find.widgetWithText(OutlinedButton, '建立 2 筆 Draft'), findsOneWidget);
+    expect(find.text('建立 2 筆 Draft'), findsOneWidget);
   });
 
   testWidgets('Draft receipt 在後續 reconciliation 失敗後仍可見；佐證卡不出現', (tester) async {
@@ -160,7 +169,7 @@ void main() {
       ]);
     });
     // 先唯讀核對 → 佐證卡出現。
-    await tester.tap(find.widgetWithText(OutlinedButton, '唯讀核對這 30 天'));
+    await tester.tap(find.text('唯讀核對這 30 天'));
     await tester.pumpAndSettle();
     expect(find.text('Production 唯讀 reconciliation'), findsOneWidget);
     // 之後 Draft 的 reconcile 失敗 → 佐證卡消失、draft receipt 出現。
@@ -177,10 +186,10 @@ void main() {
         _item('2026-09-23', 'review'),
       ]);
     });
-    await tester.tap(find.widgetWithText(OutlinedButton, '唯讀核對這 30 天'));
+    await tester.tap(find.text('唯讀核對這 30 天'));
     await tester.pumpAndSettle();
-    expect(enabled(tester, OutlinedButton, '批次送 Review'), isTrue);
-    expect(enabled(tester, OutlinedButton, '批次 Publish'), isFalse);
+    expect(reviewEnabled(tester), isTrue);
+    expect(publishEnabled(tester), isFalse);
   });
 
   testWidgets('review/published 佐證（部分發佈後）：只開放 Publish（Review 鎖）', (tester) async {
@@ -190,18 +199,18 @@ void main() {
         _item('2026-09-23', 'review'),
       ]);
     });
-    await tester.tap(find.widgetWithText(OutlinedButton, '唯讀核對這 30 天'));
+    await tester.tap(find.text('唯讀核對這 30 天'));
     await tester.pumpAndSettle();
-    expect(enabled(tester, OutlinedButton, '批次 Publish'), isTrue);
-    expect(enabled(tester, OutlinedButton, '批次送 Review'), isFalse);
+    expect(publishEnabled(tester), isTrue);
+    expect(reviewEnabled(tester), isFalse);
   });
 
   testWidgets('reconciliation 失敗/未知 → Review 與 Publish 皆保持封鎖', (tester) async {
     await pump(tester, configure: (f) => f.reconcileThrows = true);
-    await tester.tap(find.widgetWithText(OutlinedButton, '唯讀核對這 30 天'));
+    await tester.tap(find.text('唯讀核對這 30 天'));
     await tester.pumpAndSettle();
-    expect(enabled(tester, OutlinedButton, '批次送 Review'), isFalse);
-    expect(enabled(tester, OutlinedButton, '批次 Publish'), isFalse);
+    expect(reviewEnabled(tester), isFalse);
+    expect(publishEnabled(tester), isFalse);
   });
 
   group('dailyVerseStageAdvisory（純函式）：不得在佐證 null 時宣稱已核對', () {
