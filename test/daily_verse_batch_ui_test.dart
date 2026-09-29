@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -24,8 +23,7 @@ List<Book> loadBooks() {
 
 /// 可程式化控制的假服務：只覆寫畫面用到的方法，讓 UI/state 行為可被斷言。
 class _FakeBatchService extends DailyVerseBatchService {
-  _FakeBatchService(FirebaseFirestore fs, ContentWorkflowService wf)
-      : super(fs, wf);
+  _FakeBatchService(super.fs, super.wf);
 
   DailyVerseDraftBatchResult draftResult = const DailyVerseDraftBatchResult([
     DailyVerseDraftItemResult(
@@ -43,8 +41,10 @@ class _FakeBatchService extends DailyVerseBatchService {
       ({
         Map<String, ({int bookId, int chapter, int verse})> publishedByDate,
         List<({String date, int bookId, int chapter, int verse})> history,
-      })> loadPublishedHistory() async =>
-      (publishedByDate: const {}, history: const []);
+      })> loadPublishedHistory() async => (
+        publishedByDate: const <String, ({int bookId, int chapter, int verse})>{},
+        history: const <({String date, int bookId, int chapter, int verse})>[],
+      );
 
   @override
   Future<DailyVerseDraftBatchResult> applyDraftBatch(
@@ -84,8 +84,6 @@ DailyVerseReconciliationItem _item(String date, String status) =>
       publishedExists: status == 'published',
       publishedStatus: status == 'published' ? 'published' : null,
     );
-
-const _dates = ['2026-09-22', '2026-09-23'];
 
 DailyVerseCandidatePool _approvedAutoPool() => const DailyVerseCandidatePool(
       version: 1,
