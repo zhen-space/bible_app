@@ -116,7 +116,11 @@ class _AdminDailyVerseBatchScreenState
                 const SizedBox(height: 8),
               ],
               if (_stageResult != null) ...[
-                _stageResultCard(_stageLabel ?? '狀態轉移', _stageResult!),
+                _stageResultCard(
+                  _stageLabel ?? '狀態轉移',
+                  _stageResult!,
+                  _reconciliation != null,
+                ),
                 const SizedBox(height: 8),
               ],
               if (_reconciliation != null) ...[
@@ -347,20 +351,38 @@ class _AdminDailyVerseBatchScreenState
     ),
   );
 
-  Widget _stageResultCard(String label, DailyVerseStageBatchResult r) => Card(
-    child: ListTile(
-      leading: Icon(
-        r.needsReconciliation ? Icons.warning_amber : Icons.check_circle,
-        color: r.needsReconciliation ? Colors.orange : Colors.green,
+  Widget _stageResultCard(
+    String label,
+    DailyVerseStageBatchResult r,
+    bool reconciled,
+  ) {
+    // 佐證失敗/未完成（reconciled==false）→ 用紅色警示，且文字不得宣稱「已重新核對」。
+    final unresolved = r.needsReconciliation && !reconciled;
+    final advisory = dailyVerseStageAdvisory(
+      needsReconciliation: r.needsReconciliation,
+      reconciled: reconciled,
+    );
+    return Card(
+      child: ListTile(
+        leading: Icon(
+          !r.needsReconciliation
+              ? Icons.check_circle
+              : (unresolved ? Icons.error_outline : Icons.warning_amber),
+          color: !r.needsReconciliation
+              ? Colors.green
+              : (unresolved
+                    ? Theme.of(context).colorScheme.error
+                    : Colors.orange),
+        ),
+        title: Text('最近一次「$label」結果'),
+        subtitle: Text(
+          '轉移 ${r.transitioned}｜略過(已完成) ${r.skipped}｜'
+          '衝突 ${r.conflicts}｜失敗 ${r.failed}｜結果未知 ${r.unknown}'
+          '${advisory.isEmpty ? "" : "\n$advisory"}',
+        ),
       ),
-      title: Text('最近一次「$label」結果'),
-      subtitle: Text(
-        '轉移 ${r.transitioned}｜略過(已完成) ${r.skipped}｜'
-        '衝突 ${r.conflicts}｜失敗 ${r.failed}｜結果未知 ${r.unknown}'
-        '${r.needsReconciliation ? "\n有未完成/未知項；已重新核對，續作只處理仍合資格者，不重做已完成。" : ""}',
-      ),
-    ),
-  );
+    );
+  }
 
   Widget _reconciliationCard(DailyVerseReconciliationResult result) => Card(
     child: ListTile(

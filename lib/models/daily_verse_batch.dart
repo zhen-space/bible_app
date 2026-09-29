@@ -447,6 +447,19 @@ class DailyVerseStageBatchResult {
   bool get needsReconciliation => conflicts > 0 || failed > 0 || unknown > 0;
 }
 
+/// 狀態轉移 receipt 卡片的**建議文字**（純函式，可測）。
+/// [reconciled]＝本次操作後的 reconciliation 是否成功（佐證存在）。
+/// **絕不在佐證為 null（reconciliation 失敗/未完成）時宣稱「已重新核對」。**
+String dailyVerseStageAdvisory({
+  required bool needsReconciliation,
+  required bool reconciled,
+}) {
+  if (!needsReconciliation) return '';
+  return reconciled
+      ? '有未完成/未知項；已重新核對，續作只處理仍合資格者，不重做已完成。'
+      : 'reconciliation 失敗或未完成，狀態未知；後續操作已封鎖，請重新「唯讀核對」後再續作。';
+}
+
 /// **純函式**批次閘門：由「預期日期集合」＋「最新 reconciliation 佐證」推導
 /// 送 Review／Publish 是否可安全進行。佐證必須新鮮且完整（涵蓋所有預期日期、
 /// 無異常、workspace 皆存在），否則一律 blocked（不可送審／發佈）。
