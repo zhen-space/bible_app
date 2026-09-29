@@ -25,11 +25,13 @@ class DailyVerseCandidate {
     this.date,
   });
 
+  /// 防禦性解析：任何欄位型別不符一律退回安全預設，**不丟例外**
+  /// （malformed payload 不得讓讀取路徑崩潰或永久 spinner）。
   factory DailyVerseCandidate.fromJson(Map<String, dynamic> m) => DailyVerseCandidate(
-        ref: (m['ref'] as String?) ?? '',
-        title: (m['title'] as String?) ?? '',
-        content: (m['content'] as String?) ?? '',
-        date: m['date'] as String?,
+        ref: m['ref'] is String ? m['ref'] as String : '',
+        title: m['title'] is String ? m['title'] as String : '',
+        content: m['content'] is String ? m['content'] as String : '',
+        date: m['date'] is String ? m['date'] as String : null,
       );
 
   Map<String, dynamic> toJson() => {
@@ -54,6 +56,8 @@ class DailyVerseCandidatePool {
   final int catalogVersion;
   final int algoVersion;
   final int? generatedAt; // epoch millis（auto 產生時）
+  /// 讀取時偵測到候選資料損壞；僅供 Admin 顯示，永不寫回 Firestore。
+  final bool hasMalformedCandidates;
 
   const DailyVerseCandidatePool({
     this.version = 0,
@@ -63,6 +67,7 @@ class DailyVerseCandidatePool {
     this.catalogVersion = 0,
     this.algoVersion = 0,
     this.generatedAt,
+    this.hasMalformedCandidates = false,
   });
 
   /// 排程前置條件：人工已核准且候選非空。不符即 fail-closed。
@@ -76,6 +81,7 @@ class DailyVerseCandidatePool {
     int? catalogVersion,
     int? algoVersion,
     int? generatedAt,
+    bool? hasMalformedCandidates,
   }) =>
       DailyVerseCandidatePool(
         version: version ?? this.version,
@@ -85,20 +91,54 @@ class DailyVerseCandidatePool {
         catalogVersion: catalogVersion ?? this.catalogVersion,
         algoVersion: algoVersion ?? this.algoVersion,
         generatedAt: generatedAt ?? this.generatedAt,
+        hasMalformedCandidates:
+            hasMalformedCandidates ?? this.hasMalformedCandidates,
       );
 
-  factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) =>
-      DailyVerseCandidatePool(
-        version: (m['version'] as int?) ?? 0,
-        approved: (m['approved'] as bool?) ?? false,
-        candidates: ((m['candidates'] as List?) ?? const [])
-            .map((e) => DailyVerseCandidate.fromJson((e as Map).cast<String, dynamic>()))
-            .toList(),
-        source: (m['source'] as String?) ?? 'manual',
-        catalogVersion: (m['catalog_version'] as int?) ?? 0,
-        algoVersion: (m['algo_version'] as int?) ?? 0,
-        generatedAt: m['generated_at'] as int?,
-      );
+  /// 防禦性解析：型別不符退回安全預設，**不丟例外**。
+  /// 任一候選被略過或降級時，整池一律撤銷核准（fail-closed），避免
+  /// 部分／損壞候選池仍被排程。
+  factory DailyVerseCandidatePool.fromJson(Map<String, dynamic> m) {
+    final rawList = m['candidates'];
+    final candidates = <DailyVerseCandidate>[];
+    var structurallyValid = rawList is List;
+    if (rawList is List) {
+      for (final e in rawList) {
+        if (e is! Map) {
+          structurallyValid = false;
+          continue;
+        }
+        final candidateMap = e.cast<String, dynamic>();
+        final ref = candidateMap['ref'];
+        final candidateValid =
+            ref is String &&
+            ref.trim().isNotEmpty &&
+            (!candidateMap.containsKey('title') ||
+                candidateMap['title'] is String) &&
+            (!candidateMap.containsKey('content') ||
+                candidateMap['content'] is String) &&
+            (!candidateMap.containsKey('date') ||
+                candidateMap['date'] is String);
+        if (!candidateValid) {
+          structurallyValid = false;
+          continue;
+        }
+        candidates.add(DailyVerseCandidate.fromJson(candidateMap));
+      }
+    }
+    final requestedApproved =
+        m['approved'] is bool ? m['approved'] as bool : false;
+    return DailyVerseCandidatePool(
+      version: m['version'] is int ? m['version'] as int : 0,
+      approved: requestedApproved && structurallyValid,
+      candidates: candidates,
+      source: m['source'] is String ? m['source'] as String : 'manual',
+      catalogVersion: m['catalog_version'] is int ? m['catalog_version'] as int : 0,
+      algoVersion: m['algo_version'] is int ? m['algo_version'] as int : 0,
+      generatedAt: m['generated_at'] is int ? m['generated_at'] as int : null,
+      hasMalformedCandidates: !structurallyValid,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'version': version,
@@ -356,5 +396,134 @@ class DailyVerseReconciliationResult {
       out[status] = (out[status] ?? 0) + 1;
     }
     return out;
+  }
+}
+
+// ===========================================================================
+// 批次狀態轉移（送 Review / Publish）逐日 receipt。與 Draft 建立同樣「永不中斷、
+// 逐筆結果、可安全重試」：跳過已完成、絕不覆寫已完成，單筆失敗不影響其他筆。
+// ===========================================================================
+
+enum DailyVerseStageOutcome {
+  /// 成功轉移到目標狀態。
+  transitioned,
+
+  /// 已在目標狀態（idempotent）→ 略過，不重做（含**絕不重新發佈已發佈日期**）。
+  skipped,
+
+  /// 目前狀態不符前置條件（例：publish 時仍為 draft、或 workspace 不存在）→ 不動作。
+  conflict,
+
+  /// 逾時；結果未知，重試前必須 reconciliation。
+  unknown,
+
+  /// 其他錯誤。
+  failed,
+}
+
+class DailyVerseStageItemResult {
+  final String date;
+  final DailyVerseStageOutcome outcome;
+  final String message;
+  const DailyVerseStageItemResult({
+    required this.date,
+    required this.outcome,
+    this.message = '',
+  });
+}
+
+/// 一次批次狀態轉移的完整逐日 receipt。單筆逾時/失敗不中斷整批。
+class DailyVerseStageBatchResult {
+  final List<DailyVerseStageItemResult> items;
+  const DailyVerseStageBatchResult(this.items);
+
+  int count(DailyVerseStageOutcome o) =>
+      items.where((e) => e.outcome == o).length;
+  int get transitioned => count(DailyVerseStageOutcome.transitioned);
+  int get skipped => count(DailyVerseStageOutcome.skipped);
+  int get conflicts => count(DailyVerseStageOutcome.conflict);
+  int get unknown => count(DailyVerseStageOutcome.unknown);
+  int get failed => count(DailyVerseStageOutcome.failed);
+  bool get needsReconciliation => conflicts > 0 || failed > 0 || unknown > 0;
+}
+
+/// 狀態轉移 receipt 卡片的**建議文字**（純函式，可測）。
+/// [reconciled]＝本次操作後的 reconciliation 是否成功（佐證存在）。
+/// **絕不在佐證為 null（reconciliation 失敗/未完成）時宣稱「已重新核對」。**
+String dailyVerseStageAdvisory({
+  required bool needsReconciliation,
+  required bool reconciled,
+}) {
+  if (!needsReconciliation) return '';
+  return reconciled
+      ? '有未完成/未知項；已重新核對，續作只處理仍合資格者，不重做已完成。'
+      : 'reconciliation 失敗或未完成，狀態未知；後續操作已封鎖，請重新「唯讀核對」後再續作。';
+}
+
+/// **純函式**批次閘門：由「預期日期集合」＋「最新 reconciliation 佐證」推導
+/// 送 Review／Publish 是否可安全進行。佐證必須新鮮且完整（涵蓋所有預期日期、
+/// 無異常、workspace 皆存在），否則一律 blocked（不可送審／發佈）。
+///
+/// 復原語義（部分失敗後仍可續作，且絕不覆寫已完成）：
+/// - canReview：仍有日期停在 draft（把落單的補送審；其餘已在 review/published 會被服務略過）。
+/// - canPublish：已無日期停在 draft，且至少一日在 review（發佈剩餘 review；published 會被略過）。
+class DailyVerseStageGate {
+  final bool evidenceComplete;
+  final bool canReview;
+  final bool canPublish;
+  final String reason;
+
+  const DailyVerseStageGate({
+    required this.evidenceComplete,
+    required this.canReview,
+    required this.canPublish,
+    this.reason = '',
+  });
+
+  factory DailyVerseStageGate.evaluate({
+    required Set<String> expectedDates,
+    required DailyVerseReconciliationResult? evidence,
+  }) {
+    if (expectedDates.isEmpty) {
+      return const DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: '無可操作日期',
+      );
+    }
+    if (evidence == null) {
+      return const DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: '尚無 reconciliation 佐證（請先唯讀核對）',
+      );
+    }
+    final byDate = {for (final i in evidence.items) i.date: i};
+    final complete = expectedDates.every(
+      (d) => byDate[d] != null && byDate[d]!.workspaceExists,
+    );
+    if (!complete || evidence.anomalyCount > 0) {
+      return DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: evidence.anomalyCount > 0
+            ? 'reconciliation 有異常，狀態未知（blocked）'
+            : 'reconciliation 未涵蓋全部日期（blocked）',
+      );
+    }
+    final statuses = {
+      for (final d in expectedDates) byDate[d]!.workspaceStatus,
+    };
+    final anyDraft = statuses.contains('draft');
+    final anyReview = statuses.contains('review');
+    return DailyVerseStageGate(
+      evidenceComplete: true,
+      canReview: anyDraft,
+      canPublish: anyReview && !anyDraft,
+      reason: '',
+    );
   }
 }

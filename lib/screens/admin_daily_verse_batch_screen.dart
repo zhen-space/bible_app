@@ -32,12 +32,30 @@ class _AdminDailyVerseBatchScreenState
   bool _dirty = false; // 計畫已編輯、與已核准池不一致 → 需重新核准
   bool _showManual = false; // 進階手動覆寫
   DailyVerseDraftBatchResult? _draftResult;
+  DailyVerseStageBatchResult? _stageResult;
+  String? _stageLabel; // 「送 Review」/「Publish」
   DailyVerseReconciliationResult? _reconciliation;
 
   @override
   void dispose() {
     _manualEditor.dispose();
     super.dispose();
+  }
+
+  /// 操作後的 reconciliation：**與 receipt 分離**，其失敗不得丟棄已知 receipt，
+  /// 且失敗時佐證一律清空（blocked/未知），絕不保留舊佐證。
+  Future<void> _reconcileAfter(dynamic svc, List<String> dates) async {
+    try {
+      final rec = await svc.reconcileDates(dates);
+      if (mounted) setState(() => _reconciliation = rec);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _reconciliation = null);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('reconciliation 失敗（狀態未知，已封鎖後續操作）：$e')),
+        );
+      }
+    }
   }
 
   Future<void> _run(Future<void> Function() action) async {
@@ -66,7 +84,23 @@ class _AdminDailyVerseBatchScreenState
       appBar: AppBar(title: const Text('每日經文 · 批次排程')),
       body: poolAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('候選池載入失敗：$e')),
+        error: (e, _) => Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Text('候選池載入失敗：$e', textAlign: TextAlign.center),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('重試'),
+                onPressed: () => ref.invalidate(dailyVersePoolProvider),
+              ),
+            ],
+          ),
+        ),
         data: (pool) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
@@ -79,6 +113,14 @@ class _AdminDailyVerseBatchScreenState
               const SizedBox(height: 8),
               if (_draftResult != null) ...[
                 _draftResultCard(_draftResult!),
+                const SizedBox(height: 8),
+              ],
+              if (_stageResult != null) ...[
+                _stageResultCard(
+                  _stageLabel ?? '狀態轉移',
+                  _stageResult!,
+                  _reconciliation != null,
+                ),
                 const SizedBox(height: 8),
               ],
               if (_reconciliation != null) ...[
@@ -100,28 +142,39 @@ class _AdminDailyVerseBatchScreenState
   }
 
   // ---- 候選池狀態 ----
-  Widget _poolStatus(DailyVerseCandidatePool pool) => Card(
-    child: ListTile(
-      leading: Icon(
-        pool.approved ? Icons.verified : Icons.edit_note,
-        color: pool.approved ? Colors.green.shade700 : Colors.orange,
+  Widget _poolStatus(DailyVerseCandidatePool pool) {
+    final malformed = pool.hasMalformedCandidates;
+    return Card(
+      color: malformed ? Theme.of(context).colorScheme.errorContainer : null,
+      child: ListTile(
+        leading: Icon(
+          malformed
+              ? Icons.report_problem_outlined
+              : (pool.approved ? Icons.verified : Icons.edit_note),
+          color: malformed
+              ? Theme.of(context).colorScheme.error
+              : (pool.approved ? Colors.green.shade700 : Colors.orange),
+        ),
+        title: Text(
+          '候選池 v${pool.version}｜${pool.candidates.length} 筆'
+          '｜${pool.approved ? "已核准" : "未核准"}'
+          '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}',
+        ),
+        subtitle: Text(
+          [
+            if (pool.source == 'auto')
+              'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
+            if (malformed)
+              '⚠️ 偵測到損壞或型別錯誤的候選；已自動撤銷核准，請重新產生或修正後再核准'
+            else if (_dirty)
+              '計畫已編輯，需重新核准'
+            else
+              (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
+          ].join('　·　'),
+        ),
       ),
-      title: Text(
-        '候選池 v${pool.version}｜${pool.candidates.length} 筆'
-        '｜${pool.approved ? "已核准" : "未核准"}'
-        '｜來源：${pool.source == "auto" ? "自動選取" : "手動輸入"}',
-      ),
-      subtitle: Text(
-        [
-          if (pool.source == 'auto')
-            'catalog v${pool.catalogVersion}・algo v${pool.algoVersion}',
-          _dirty
-              ? '計畫已編輯，需重新核准'
-              : (pool.isSchedulable ? '可排程' : '不可排程（需核准且非空）'),
-        ].join('　·　'),
-      ),
-    ),
-  );
+    );
+  }
 
   // ---- 自動選取動作 ----
   Widget _autoActions(
@@ -142,6 +195,9 @@ class _AdminDailyVerseBatchScreenState
                 setState(() {
                   _plan = plan;
                   _dirty = true; // 尚未核准
+                  _draftResult = null;
+                  _reconciliation = null;
+                  _stageResult = null;
                 });
               }),
       ),
@@ -163,6 +219,9 @@ class _AdminDailyVerseBatchScreenState
                   setState(() {
                     _plan = plan;
                     _dirty = !pool.approved;
+                    _draftResult = null;
+                    _reconciliation = null;
+                    _stageResult = null;
                   });
                 }),
         ),
@@ -292,6 +351,39 @@ class _AdminDailyVerseBatchScreenState
     ),
   );
 
+  Widget _stageResultCard(
+    String label,
+    DailyVerseStageBatchResult r,
+    bool reconciled,
+  ) {
+    // 佐證失敗/未完成（reconciled==false）→ 用紅色警示，且文字不得宣稱「已重新核對」。
+    final unresolved = r.needsReconciliation && !reconciled;
+    final advisory = dailyVerseStageAdvisory(
+      needsReconciliation: r.needsReconciliation,
+      reconciled: reconciled,
+    );
+    return Card(
+      child: ListTile(
+        leading: Icon(
+          !r.needsReconciliation
+              ? Icons.check_circle
+              : (unresolved ? Icons.error_outline : Icons.warning_amber),
+          color: !r.needsReconciliation
+              ? Colors.green
+              : (unresolved
+                    ? Theme.of(context).colorScheme.error
+                    : Colors.orange),
+        ),
+        title: Text('最近一次「$label」結果'),
+        subtitle: Text(
+          '轉移 ${r.transitioned}｜略過(已完成) ${r.skipped}｜'
+          '衝突 ${r.conflicts}｜失敗 ${r.failed}｜結果未知 ${r.unknown}'
+          '${advisory.isEmpty ? "" : "\n$advisory"}',
+        ),
+      ),
+    );
+  }
+
   Widget _reconciliationCard(DailyVerseReconciliationResult result) => Card(
     child: ListTile(
       leading: Icon(
@@ -311,6 +403,9 @@ class _AdminDailyVerseBatchScreenState
     setState(() {
       _plan!.days[index] = DailyVersePlanDay(date: d.date, failClosed: true);
       _dirty = true;
+      _draftResult = null;
+      _reconciliation = null;
+      _stageResult = null;
     });
   }
 
@@ -357,6 +452,9 @@ class _AdminDailyVerseBatchScreenState
     setState(() {
       _plan!.days[index] = day;
       _dirty = true;
+      _draftResult = null;
+      _reconciliation = null;
+      _stageResult = null;
     });
   }
 
@@ -369,6 +467,15 @@ class _AdminDailyVerseBatchScreenState
     final plan = _plan!;
     final canApprove = plan.draftableDays.isNotEmpty;
     final canDraft = pool.approved && !_dirty && plan.draftableDays.isNotEmpty;
+    final expectedDates = {for (final d in plan.draftableDays) d.date};
+    // 純函式閘門：新鮮完整佐證才可續作；部分失敗後可對「仍合資格」的子集續作，
+    // 已完成者由服務略過（絕不覆寫、絕不重新發佈）。
+    final gate = DailyVerseStageGate.evaluate(
+      expectedDates: expectedDates,
+      evidence: _reconciliation,
+    );
+    final canReview = canDraft && gate.canReview;
+    final canPublish = canDraft && gate.canPublish;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
@@ -397,11 +504,18 @@ class _AdminDailyVerseBatchScreenState
               : () => _confirm(
                   '建立 ${plan.draftableDays.length} 筆 Draft？',
                   () async {
+                    // 操作開始即作廢舊佐證與舊 receipt（避免以過時佐證續作）。
+                    setState(() {
+                      _reconciliation = null;
+                      _stageResult = null;
+                      _draftResult = null;
+                    });
                     final specs = DailyVerseAutoSelector.planToSpecs(plan);
                     final result = await svc.applyDraftBatch(
                       specs,
                       editorEmail: email,
                     );
+                    // receipt **立即**保存/顯示，早於 reconciliation。
                     if (mounted) setState(() => _draftResult = result);
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -413,6 +527,9 @@ class _AdminDailyVerseBatchScreenState
                         ),
                       );
                     }
+                    // reconciliation 分離：其失敗不丟棄上面的 receipt（見 _reconcileAfter）。
+                    final dates = [for (final d in plan.draftableDays) d.date];
+                    await _reconcileAfter(svc, dates);
                     ref.invalidate(adminDailyVerseListProvider);
                   },
                   showCompleted: false,
@@ -424,32 +541,64 @@ class _AdminDailyVerseBatchScreenState
           onPressed: _busy
               ? null
               : () => _run(() async {
+                  if (mounted) setState(() => _reconciliation = null);
                   final dates = [for (final d in plan.days) d.date];
-                  final result = await svc.reconcileDates(dates);
-                  if (mounted) setState(() => _reconciliation = result);
+                  await _reconcileAfter(svc, dates);
                 }),
         ),
         OutlinedButton.icon(
           icon: const Icon(Icons.rate_review_outlined),
           label: const Text('批次送 Review'),
-          onPressed: _busy || !canDraft
+          onPressed: _busy || !canReview
               ? null
-              : () => _confirm('把這批草稿送審？', () async {
+              : () => _confirm('把仍為 draft 的日期送審？（已 review 者略過，不重做）', () async {
+                  setState(() {
+                    _reconciliation = null;
+                    _stageResult = null;
+                  });
                   final dates = [for (final s in plan.draftableDays) s.date];
-                  await svc.submitBatchForReview(dates, editorEmail: email);
+                  final result = await svc.submitBatchForReview(
+                    dates,
+                    editorEmail: email,
+                  );
+                  if (mounted) {
+                    setState(() {
+                      _stageResult = result;
+                      _stageLabel = '送 Review';
+                    });
+                  }
+                  await _reconcileAfter(svc, dates);
                   ref.invalidate(adminDailyVerseListProvider);
                 }),
         ),
         OutlinedButton.icon(
           icon: const Icon(Icons.publish_outlined),
           label: const Text('批次 Publish'),
-          onPressed: _busy || !canDraft
+          onPressed: _busy || !canPublish
               ? null
-              : () => _confirm('發佈這批每日經文？學生將於各指定日期讀到。', () async {
-                  final dates = [for (final s in plan.draftableDays) s.date];
-                  await svc.publishBatch(dates, publisherEmail: email);
-                  ref.invalidate(adminDailyVerseListProvider);
-                }),
+              : () => _confirm(
+                  '發佈仍為 Review 的每日經文？學生將於各指定日期讀到。'
+                  '（已發佈者略過，絕不重新發佈）',
+                  () async {
+                    setState(() {
+                      _reconciliation = null;
+                      _stageResult = null;
+                    });
+                    final dates = [for (final s in plan.draftableDays) s.date];
+                    final result = await svc.publishBatch(
+                      dates,
+                      publisherEmail: email,
+                    );
+                    if (mounted) {
+                      setState(() {
+                        _stageResult = result;
+                        _stageLabel = 'Publish';
+                      });
+                    }
+                    await _reconcileAfter(svc, dates);
+                    ref.invalidate(adminDailyVerseListProvider);
+                  },
+                ),
         ),
       ],
     );
