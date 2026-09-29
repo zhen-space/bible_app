@@ -398,3 +398,119 @@ class DailyVerseReconciliationResult {
     return out;
   }
 }
+
+// ===========================================================================
+// 批次狀態轉移（送 Review / Publish）逐日 receipt。與 Draft 建立同樣「永不中斷、
+// 逐筆結果、可安全重試」：跳過已完成、絕不覆寫已完成，單筆失敗不影響其他筆。
+// ===========================================================================
+
+enum DailyVerseStageOutcome {
+  /// 成功轉移到目標狀態。
+  transitioned,
+
+  /// 已在目標狀態（idempotent）→ 略過，不重做（含**絕不重新發佈已發佈日期**）。
+  skipped,
+
+  /// 目前狀態不符前置條件（例：publish 時仍為 draft、或 workspace 不存在）→ 不動作。
+  conflict,
+
+  /// 逾時；結果未知，重試前必須 reconciliation。
+  unknown,
+
+  /// 其他錯誤。
+  failed,
+}
+
+class DailyVerseStageItemResult {
+  final String date;
+  final DailyVerseStageOutcome outcome;
+  final String message;
+  const DailyVerseStageItemResult({
+    required this.date,
+    required this.outcome,
+    this.message = '',
+  });
+}
+
+/// 一次批次狀態轉移的完整逐日 receipt。單筆逾時/失敗不中斷整批。
+class DailyVerseStageBatchResult {
+  final List<DailyVerseStageItemResult> items;
+  const DailyVerseStageBatchResult(this.items);
+
+  int count(DailyVerseStageOutcome o) =>
+      items.where((e) => e.outcome == o).length;
+  int get transitioned => count(DailyVerseStageOutcome.transitioned);
+  int get skipped => count(DailyVerseStageOutcome.skipped);
+  int get conflicts => count(DailyVerseStageOutcome.conflict);
+  int get unknown => count(DailyVerseStageOutcome.unknown);
+  int get failed => count(DailyVerseStageOutcome.failed);
+  bool get needsReconciliation => conflicts > 0 || failed > 0 || unknown > 0;
+}
+
+/// **純函式**批次閘門：由「預期日期集合」＋「最新 reconciliation 佐證」推導
+/// 送 Review／Publish 是否可安全進行。佐證必須新鮮且完整（涵蓋所有預期日期、
+/// 無異常、workspace 皆存在），否則一律 blocked（不可送審／發佈）。
+///
+/// 復原語義（部分失敗後仍可續作，且絕不覆寫已完成）：
+/// - canReview：仍有日期停在 draft（把落單的補送審；其餘已在 review/published 會被服務略過）。
+/// - canPublish：已無日期停在 draft，且至少一日在 review（發佈剩餘 review；published 會被略過）。
+class DailyVerseStageGate {
+  final bool evidenceComplete;
+  final bool canReview;
+  final bool canPublish;
+  final String reason;
+
+  const DailyVerseStageGate({
+    required this.evidenceComplete,
+    required this.canReview,
+    required this.canPublish,
+    this.reason = '',
+  });
+
+  factory DailyVerseStageGate.evaluate({
+    required Set<String> expectedDates,
+    required DailyVerseReconciliationResult? evidence,
+  }) {
+    if (expectedDates.isEmpty) {
+      return const DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: '無可操作日期',
+      );
+    }
+    if (evidence == null) {
+      return const DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: '尚無 reconciliation 佐證（請先唯讀核對）',
+      );
+    }
+    final byDate = {for (final i in evidence.items) i.date: i};
+    final complete = expectedDates.every(
+      (d) => byDate[d] != null && byDate[d]!.workspaceExists,
+    );
+    if (!complete || evidence.anomalyCount > 0) {
+      return DailyVerseStageGate(
+        evidenceComplete: false,
+        canReview: false,
+        canPublish: false,
+        reason: evidence.anomalyCount > 0
+            ? 'reconciliation 有異常，狀態未知（blocked）'
+            : 'reconciliation 未涵蓋全部日期（blocked）',
+      );
+    }
+    final statuses = {
+      for (final d in expectedDates) byDate[d]!.workspaceStatus,
+    };
+    final anyDraft = statuses.contains('draft');
+    final anyReview = statuses.contains('review');
+    return DailyVerseStageGate(
+      evidenceComplete: true,
+      canReview: anyDraft,
+      canPublish: anyReview && !anyDraft,
+      reason: '',
+    );
+  }
+}

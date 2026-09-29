@@ -300,27 +300,97 @@ class DailyVerseBatchService {
     return DailyVerseReconciliationResult(results.cast());
   }
 
-  /// 批次送審（逐日 submitForReview）。
-  Future<void> submitBatchForReview(
+  DocumentReference<Map<String, dynamic>> _workspaceDoc(String ymd) =>
+      _fs.collection('${type}_workspace').doc(ymd);
+
+  /// 逐日狀態轉移的共用核心：**永不中斷、逐筆 receipt、可安全重試**。
+  /// 每筆先以 live workspace status 判定資格：
+  /// - status == [idempotentAt]（已在目標狀態）→ skipped（不重做；publish 時＝**絕不重新發佈**）。
+  /// - status == [expectFrom] → 執行 [act]（加逾時；逾時→unknown）。
+  /// - 其他（不存在／狀態不符）→ conflict（不動作，不覆寫）。
+  /// 任一筆的逾時/失敗都只記在該筆，不影響其他筆。
+  Future<DailyVerseStageBatchResult> _runStage(
     List<String> dates, {
-    required String editorEmail,
+    required String expectFrom,
+    required String idempotentAt,
+    required Future<void> Function(String ymd) act,
   }) async {
+    final items = <DailyVerseStageItemResult>[];
     for (final ymd in dates) {
-      await _workflow.submitForReview(type, ymd, editorEmail);
+      try {
+        final snap = await _workspaceDoc(ymd).get().timeout(operationTimeout);
+        final status = snap.data()?['status'] as String?;
+        if (!snap.exists || status == null) {
+          items.add(DailyVerseStageItemResult(
+            date: ymd,
+            outcome: DailyVerseStageOutcome.conflict,
+            message: 'workspace 不存在或無 status',
+          ));
+          continue;
+        }
+        if (status == idempotentAt) {
+          items.add(DailyVerseStageItemResult(
+            date: ymd,
+            outcome: DailyVerseStageOutcome.skipped,
+            message: '已是 $idempotentAt（略過，不重做）',
+          ));
+          continue;
+        }
+        if (status != expectFrom) {
+          items.add(DailyVerseStageItemResult(
+            date: ymd,
+            outcome: DailyVerseStageOutcome.conflict,
+            message: '狀態為 $status，需 $expectFrom；不動作',
+          ));
+          continue;
+        }
+        await act(ymd).timeout(operationTimeout);
+        items.add(DailyVerseStageItemResult(
+          date: ymd,
+          outcome: DailyVerseStageOutcome.transitioned,
+        ));
+      } on TimeoutException {
+        items.add(DailyVerseStageItemResult(
+          date: ymd,
+          outcome: DailyVerseStageOutcome.unknown,
+          message: '逾時；結果未知，重試前必須 reconciliation',
+        ));
+      } catch (e) {
+        items.add(DailyVerseStageItemResult(
+          date: ymd,
+          outcome: DailyVerseStageOutcome.failed,
+          message: e.toString(),
+        ));
+      }
     }
+    return DailyVerseStageBatchResult(items);
   }
 
-  /// 批次發佈（逐日 approveAndPublish）。one-active-per-date 由 doc-id=date 保證。
-  Future<void> publishBatch(
+  /// 批次送審：只把仍為 draft 的日期轉 review；已 review→skipped；其他→conflict。
+  /// 永不中斷、逐筆 receipt、可安全重試（部分失敗後再跑只補落單者）。
+  Future<DailyVerseStageBatchResult> submitBatchForReview(
+    List<String> dates, {
+    required String editorEmail,
+  }) =>
+      _runStage(
+        dates,
+        expectFrom: 'draft',
+        idempotentAt: 'review',
+        act: (ymd) => _workflow.submitForReview(type, ymd, editorEmail),
+      );
+
+  /// 批次發佈：只把仍為 review 的日期發佈；**已 published→skipped（絕不重新發佈、不 bump version）**；
+  /// 仍為 draft→conflict（不得未經 review 直接發佈）。永不中斷、逐筆 receipt、可安全重試。
+  /// one-active-per-date 由 doc-id=date 保證。
+  Future<DailyVerseStageBatchResult> publishBatch(
     List<String> dates, {
     required String publisherEmail,
-  }) async {
-    for (final ymd in dates) {
-      await _workflow.approveAndPublish(
-        type,
-        ymd,
-        publisherEmail: publisherEmail,
+  }) =>
+      _runStage(
+        dates,
+        expectFrom: 'review',
+        idempotentAt: 'published',
+        act: (ymd) =>
+            _workflow.approveAndPublish(type, ymd, publisherEmail: publisherEmail),
       );
-    }
-  }
 }
