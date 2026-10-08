@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../data/reading_plans.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/reading_plan_today.dart';
 import 'chapter_screen.dart';
 import 'church_screen.dart';
 import 'reading_plans_screen.dart';
@@ -22,12 +24,17 @@ class StudentHomeScreen extends ConsumerWidget {
     final booksAsync = ref.watch(booksProvider);
     final dailyAsync = ref.watch(dailyVerseProvider);
     final notesAsync = ref.watch(allNotesProvider);
+    final planTodayAsync = ref.watch(readingPlanTodayProvider);
 
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async {
           ref.invalidate(allNotesProvider);
           ref.invalidate(dailyVerseProvider);
+          for (final plan in readingPlans) {
+            ref.invalidate(planItemProgressProvider(plan.id));
+          }
+          ref.invalidate(readingPlanTodayProvider);
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -102,20 +109,32 @@ class StudentHomeScreen extends ConsumerWidget {
                 ),
               ],
             ),
-            Card(
-              child: ListTile(
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 8,
-                ),
-                leading: const Icon(Icons.event_note_outlined),
-                title: const Text('照著你的計畫繼續'),
-                subtitle: const Text('既有計畫與完成進度會保留'),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ReadingPlansScreen()),
-                ),
+            planTodayAsync.when(
+              loading: () => const _LoadingBlock(height: 112),
+              error: (_, _) => _InlineError(
+                label: '暫時無法載入讀經進度',
+                onRetry: () => ref.invalidate(readingPlanTodayProvider),
               ),
+              data: (today) => today == null
+                  ? _StartPlanCard(
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ReadingPlansScreen(),
+                        ),
+                      ),
+                    )
+                  : _TodayPlanCard(
+                      today: today,
+                      onTap: () async {
+                        await Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ReadingPlanDetailScreen(plan: today.plan),
+                          ),
+                        );
+                        ref.invalidate(readingPlanTodayProvider);
+                      },
+                    ),
             ),
             const SizedBox(height: 28),
             _sectionLabel(context, '每日經文'),
@@ -228,6 +247,80 @@ class StudentHomeScreen extends ConsumerWidget {
     final now = DateTime.now();
     const weekdays = ['一', '二', '三', '四', '五', '六', '日'];
     return '${now.month} 月 ${now.day} 日・星期${weekdays[now.weekday - 1]}';
+  }
+}
+
+class _StartPlanCard extends StatelessWidget {
+  const _StartPlanCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      leading: const Icon(Icons.event_note_outlined),
+      title: const Text('開始一個讀經計畫'),
+      subtitle: const Text('選擇適合你的節奏，每天接著讀'),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
+    ),
+  );
+}
+
+class _TodayPlanCard extends StatelessWidget {
+  const _TodayPlanCard({required this.today, required this.onTap});
+
+  final ReadingPlanToday today;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final total = today.chapters.length;
+    final progress = total == 0 ? 0.0 : today.completed / total;
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(today.plan.emoji, style: const TextStyle(fontSize: 26)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          today.plan.name,
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                          today.planCompleted
+                              ? '計畫已完成'
+                              : '第 ${today.day} 天・完成 ${today.completed}/$total 章',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(Icons.arrow_forward),
+                ],
+              ),
+              const SizedBox(height: 12),
+              LinearProgressIndicator(
+                value: today.planCompleted ? 1 : progress,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

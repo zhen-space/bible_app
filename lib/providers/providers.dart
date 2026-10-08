@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/reading_plans.dart';
 import '../models/models.dart';
 import '../services/bible_repository.dart';
 import '../utils/date_key.dart';
@@ -24,6 +25,7 @@ import '../models/church.dart';
 import '../models/knowledge.dart';
 import '../services/database_service.dart';
 import '../services/qa_service.dart';
+import '../services/reading_plan_today.dart';
 import '../services/sync_service.dart';
 
 /// 管理者帳號（後台入口只對這個 Google 帳號顯示；
@@ -1031,6 +1033,21 @@ final planItemDoneCountsProvider = FutureProvider<Map<String, int>>(
 final planItemProgressProvider =
     FutureProvider.family<Set<String>, String>((ref, planId) {
   return ref.watch(databaseServiceProvider).getPlanItemProgress(planId);
+});
+
+/// 首頁「今日閱讀」：從已開始的計畫中找出下一個未完成日程。
+final readingPlanTodayProvider = FutureProvider<ReadingPlanToday?>((ref) async {
+  final books = await ref.watch(booksProvider.future);
+  final completedByPlan = <String, Set<String>>{};
+  for (final plan in readingPlans) {
+    completedByPlan[plan.id] =
+        await ref.watch(planItemProgressProvider(plan.id).future);
+  }
+  return selectReadingPlanToday(
+    plans: readingPlans,
+    books: books,
+    progressByPlan: completedByPlan,
+  );
 });
 
 // ---- 帳號與雲端同步（Firebase；未初始化時功能自動隱藏）----
