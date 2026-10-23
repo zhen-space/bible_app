@@ -30,6 +30,12 @@ void main() {
     expect(result, isNull);
   });
 
+  test('找出當日第一個未完成章節，全部完成則回傳 null', () {
+    final chapters = [const ChapterRef(1, 1), const ChapterRef(1, 2)];
+    expect(firstIncompleteChapter(chapters, const {'b1_c1'}), chapters[1]);
+    expect(firstIncompleteChapter(chapters, const {'b1_c1', 'b1_c2'}), isNull);
+  });
+
   test('回到第一個未完成日並計算當日進度', () {
     final result = selectReadingPlanToday(
       plans: const [plan],

@@ -1,6 +1,18 @@
 import '../data/reading_plans.dart';
 import '../models/models.dart';
 
+ChapterRef? firstIncompleteChapter(
+  List<ChapterRef> chapters,
+  Set<String> progress,
+) {
+  for (final chapter in chapters) {
+    if (!progress.contains('b${chapter.bookId}_c${chapter.chapter}')) {
+      return chapter;
+    }
+  }
+  return null;
+}
+
 class ReadingPlanToday {
   final ReadingPlan plan;
   final int day;
