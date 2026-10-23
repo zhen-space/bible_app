@@ -32,6 +32,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   List<BibleEntity> _entities = [];
   ({int bookId, int chapter, int? verse})? _jump;
   bool _searched = false;
+  bool _searching = false;
+  String? _searchError;
+  int _searchRequest = 0;
   Timer? _debounce;
 
   @override
@@ -43,42 +46,78 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _onQueryChanged(String q) {
     _debounce?.cancel();
+    if (q.trim().isEmpty) {
+      _clearSearch();
+      return;
+    }
     _debounce = Timer(const Duration(milliseconds: 300), () => _search(q));
   }
 
   Future<void> _search(String q) async {
-    final books = await ref.read(booksProvider.future);
     final term = q.trim();
-    // 「內容」＝**已授權 universe FIRST**（public ∪ my-church）→ 再 client 端文字比對。
-    // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
-    final universe = await ref.read(authorizedStudyContentProvider.future);
-    final questions = await ref.read(publishedQuestionsProvider('').future);
-    if (!mounted) return;
-    bool hit(String s) => term.isNotEmpty && s.contains(term);
+    if (term.isEmpty) {
+      _clearSearch();
+      return;
+    }
+    final request = ++_searchRequest;
     setState(() {
-      _jump = VerseLocator.parse(q, books);
-      _entities = searchEntities(q);
-      _content = term.isEmpty
-          ? const []
-          : universe
-              .where((i) =>
+      _searching = true;
+      _searchError = null;
+    });
+    try {
+      final books = await ref.read(booksProvider.future);
+      // 「內容」＝**已授權 universe FIRST**（public ∪ my-church）→ 再 client 端文字比對。
+      // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
+      final universe = await ref.read(authorizedStudyContentProvider.future);
+      final questions = await ref.read(publishedQuestionsProvider('').future);
+      if (!mounted || request != _searchRequest) return;
+      bool hit(String s) => s.contains(term);
+      setState(() {
+        _jump = VerseLocator.parse(q, books);
+        _entities = searchEntities(q);
+        _content = universe
+            .where(
+              (i) =>
                   hit(i.title) ||
                   hit(i.body) ||
                   i.tags.any(hit) ||
-                  i.scriptureRefs.any(hit))
-              .toList();
-      _qa = term.isEmpty
-          ? const []
-          : questions
-              .where((question) =>
-                  hit(question.title) || hit(question.body))
-              .toList();
-      _results = ref
-          .read(bibleRepositoryProvider)
-          .search(q)
-          .where((r) => !queryOnlyInsideLongerName(r.text, term))
-          .toList();
-      _searched = term.isNotEmpty;
+                  i.scriptureRefs.any(hit),
+            )
+            .toList();
+        _qa = questions
+            .where(
+              (question) => hit(question.title) || hit(question.body),
+            )
+            .toList();
+        _results = ref
+            .read(bibleRepositoryProvider)
+            .search(q)
+            .where((r) => !queryOnlyInsideLongerName(r.text, term))
+            .toList();
+        _searched = true;
+      });
+    } catch (_) {
+      if (!mounted || request != _searchRequest) return;
+      setState(() => _searchError = '搜尋暫時無法完成');
+    } finally {
+      if (mounted && request == _searchRequest) {
+        setState(() => _searching = false);
+      }
+    }
+  }
+
+  void _clearSearch() {
+    _searchRequest++;
+    if (!mounted) return;
+    setState(() {
+      _results = [];
+      _content = [];
+      _qa = [];
+      _entities = [];
+      _jump = null;
+      _searched = false;
+      _searching = false;
+      _searchError = null;
     });
   }
 
@@ -114,27 +153,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           onChanged: _onQueryChanged,
         ),
         actions: [
-          if (_searched)
+          if (_controller.text.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.clear),
               onPressed: () {
                 _controller.clear();
-                setState(() {
-                  _results = [];
-                  _content = [];
-                  _qa = [];
-                  _entities = [];
-                  _jump = null;
-                  _searched = false;
-                });
+                _clearSearch();
               },
             ),
         ],
+        bottom: _searching
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(3),
+                child: LinearProgressIndicator(minHeight: 3),
+              )
+            : null,
       ),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (e, _) => _SearchError(
+          label: '聖經資料暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
         data: (books) {
+          if (_searchError != null) {
+            return _SearchError(
+              label: _searchError!,
+              onRetry: () => _search(_controller.text),
+            );
+          }
           if (!_searched) {
             return _HistoryView(onTap: (q) {
               _controller.text = q;
@@ -224,6 +271,34 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       ),
     );
   }
+}
+
+class _SearchError extends StatelessWidget {
+  const _SearchError({required this.label, required this.onRetry});
+
+  final String label;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.search_off, size: 40),
+              const SizedBox(height: 12),
+              Text(label),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('重試'),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 IconData _entityIcon(EntityType t) {
