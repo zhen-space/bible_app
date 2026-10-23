@@ -14,55 +14,73 @@ class ReadingPlansScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final counts = ref.watch(planItemDoneCountsProvider).value ?? const {};
+    final countsAsync = ref.watch(planItemDoneCountsProvider);
     final booksAsync = ref.watch(booksProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('讀經計畫')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (books) => ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            for (final p in readingPlans)
-              Card(
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  leading: Text(p.emoji, style: const TextStyle(fontSize: 28)),
-                  title: Text(
-                    p.name,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(p.subtitle),
-                        const SizedBox(height: 8),
-                        _ProgressBar(
-                          done: counts[p.id] ?? 0,
-                          total: p.flatChapters(books).length,
-                          unit: '章',
-                        ),
-                      ],
+        error: (e, _) => _PlanLoadError(
+          label: '讀經計畫暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
+        data: (books) {
+          if (countsAsync.isLoading && !countsAsync.hasValue) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (countsAsync.hasError && !countsAsync.hasValue) {
+            return _PlanLoadError(
+              label: '計畫進度暫時無法載入',
+              onRetry: () => ref.invalidate(planItemDoneCountsProvider),
+            );
+          }
+          final counts = countsAsync.value ?? const <String, int>{};
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              for (final p in readingPlans)
+                Card(
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
                     ),
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ReadingPlanDetailScreen(plan: p),
+                    leading: Text(
+                      p.emoji,
+                      style: const TextStyle(fontSize: 28),
+                    ),
+                    title: Text(
+                      p.name,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p.subtitle),
+                          const SizedBox(height: 8),
+                          _ProgressBar(
+                            done: counts[p.id] ?? 0,
+                            total: p.flatChapters(books).length,
+                            unit: '章',
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ReadingPlanDetailScreen(plan: p),
+                      ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -174,13 +192,17 @@ class _ReadingPlanDetailScreenState
       appBar: AppBar(title: Text('${plan.emoji} ${plan.name}')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (e, _) => _PlanLoadError(
+          label: '聖經資料暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
         data: (books) {
           if (progressAsync.isLoading && !progressAsync.hasValue) {
             return const Center(child: CircularProgressIndicator());
           }
           if (progressAsync.hasError && !progressAsync.hasValue) {
             return _PlanLoadError(
+              label: '讀經進度暫時無法載入',
               onRetry: () => ref.invalidate(planItemProgressProvider(plan.id)),
             );
           }
@@ -334,8 +356,9 @@ class _ReadingPlanDetailScreenState
 }
 
 class _PlanLoadError extends StatelessWidget {
-  const _PlanLoadError({required this.onRetry});
+  const _PlanLoadError({required this.label, required this.onRetry});
 
+  final String label;
   final VoidCallback onRetry;
 
   @override
@@ -347,7 +370,7 @@ class _PlanLoadError extends StatelessWidget {
         children: [
           const Icon(Icons.error_outline, size: 36),
           const SizedBox(height: 12),
-          const Text('讀經進度暫時無法載入'),
+          Text(label, textAlign: TextAlign.center),
           const SizedBox(height: 12),
           OutlinedButton.icon(
             onPressed: onRetry,
