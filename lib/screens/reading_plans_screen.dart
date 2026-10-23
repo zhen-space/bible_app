@@ -140,6 +140,22 @@ class _ReadingPlanDetailScreenState
     ref.invalidate(planItemDoneCountsProvider);
   }
 
+  Future<void> _completeNextChapter(int day, ChapterRef chapter) async {
+    await _setItem(day, chapter, true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已完成本章，下一章已準備好'),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () => _setItem(day, chapter, false),
+          ),
+        ),
+      );
+  }
+
   Future<void> _setDay(int day, List<ChapterRef> chapters, bool done) async {
     final db = ref.read(databaseServiceProvider);
     for (final c in chapters) {
@@ -152,7 +168,7 @@ class _ReadingPlanDetailScreenState
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
-    final progress = ref.watch(planItemProgressProvider(plan.id)).value;
+    final progressAsync = ref.watch(planItemProgressProvider(plan.id));
 
     return Scaffold(
       appBar: AppBar(title: Text('${plan.emoji} ${plan.name}')),
@@ -160,11 +176,19 @@ class _ReadingPlanDetailScreenState
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('載入失敗：$e')),
         data: (books) {
+          if (progressAsync.isLoading && !progressAsync.hasValue) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (progressAsync.hasError && !progressAsync.hasValue) {
+            return _PlanLoadError(
+              onRetry: () => ref.invalidate(planItemProgressProvider(plan.id)),
+            );
+          }
           final schedule = plan.schedule(books);
           WidgetsBinding.instance.addPostFrameCallback(
             (_) => _maybeSeedFromLegacy(schedule),
           );
-          final done = progress ?? const <String>{};
+          final done = progressAsync.value ?? const <String>{};
           String key(ChapterRef c) => 'b${c.bookId}_c${c.chapter}';
           bool itemDone(ChapterRef c) => done.contains(key(c));
           bool dayDone(List<ChapterRef> ch) => ch.every(itemDone);
@@ -200,7 +224,7 @@ class _ReadingPlanDetailScreenState
                   onOpen: (c) => _openReader(c),
                   onComplete: nextChapter == null
                       ? null
-                      : () => _setItem(todayIdx + 1, nextChapter, true),
+                      : () => _completeNextChapter(todayIdx + 1, nextChapter),
                 );
               }
               final i = idx - 1;
@@ -307,6 +331,33 @@ class _ReadingPlanDetailScreenState
     final b = '${books[last.bookId - 1].name} ${last.chapter}';
     return '$a – $b（共 ${chapters.length} 章）';
   }
+}
+
+class _PlanLoadError extends StatelessWidget {
+  const _PlanLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline, size: 36),
+          const SizedBox(height: 12),
+          const Text('讀經進度暫時無法載入'),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新載入'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _HeaderCard extends StatelessWidget {
