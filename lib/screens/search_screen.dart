@@ -50,16 +50,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       _clearSearch();
       return;
     }
-    _debounce = Timer(const Duration(milliseconds: 300), () => _search(q));
+    // 使用者一輸入新字就讓前一筆請求失效，不讓舊結果在 debounce 期間閃回畫面。
+    final request = ++_searchRequest;
+    _debounce = Timer(
+      const Duration(milliseconds: 300),
+      () => _search(q, request: request),
+    );
   }
 
-  Future<void> _search(String q) async {
+  Future<void> _search(String q, {int? request}) async {
     final term = q.trim();
     if (term.isEmpty) {
       _clearSearch();
       return;
     }
-    final request = ++_searchRequest;
+    final currentRequest = request ?? ++_searchRequest;
     setState(() {
       _searching = true;
       _searchError = null;
@@ -70,7 +75,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
       final universe = await ref.read(authorizedStudyContentProvider.future);
       final questions = await ref.read(publishedQuestionsProvider('').future);
-      if (!mounted || request != _searchRequest) return;
+      if (!mounted || currentRequest != _searchRequest) return;
       bool hit(String s) => s.contains(term);
       setState(() {
         _jump = VerseLocator.parse(q, books);
@@ -97,10 +102,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         _searched = true;
       });
     } catch (_) {
-      if (!mounted || request != _searchRequest) return;
+      if (!mounted || currentRequest != _searchRequest) return;
       setState(() => _searchError = '搜尋暫時無法完成');
     } finally {
-      if (mounted && request == _searchRequest) {
+      if (mounted && currentRequest == _searchRequest) {
         setState(() => _searching = false);
       }
     }
