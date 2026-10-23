@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/reading_plans.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/reading_plan_today.dart';
 import 'chapter_screen.dart';
 
 /// 讀經計畫列表（v2）：內建機械排程計畫，顯示「已完成項目 / 總項目」進度，
@@ -13,49 +14,73 @@ class ReadingPlansScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final counts = ref.watch(planItemDoneCountsProvider).value ?? const {};
+    final countsAsync = ref.watch(planItemDoneCountsProvider);
     final booksAsync = ref.watch(booksProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('讀經計畫')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (books) => ListView(
-          padding: const EdgeInsets.all(12),
-          children: [
-            for (final p in readingPlans)
-              Card(
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                child: ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  leading: Text(p.emoji, style: const TextStyle(fontSize: 28)),
-                  title: Text(p.name,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(p.subtitle),
-                        const SizedBox(height: 8),
-                        _ProgressBar(
+        error: (e, _) => _PlanLoadError(
+          label: '讀經計畫暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
+        data: (books) {
+          if (countsAsync.isLoading && !countsAsync.hasValue) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (countsAsync.hasError && !countsAsync.hasValue) {
+            return _PlanLoadError(
+              label: '計畫進度暫時無法載入',
+              onRetry: () => ref.invalidate(planItemDoneCountsProvider),
+            );
+          }
+          final counts = countsAsync.value ?? const <String, int>{};
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              for (final p in readingPlans)
+                Card(
+                  margin: const EdgeInsets.symmetric(vertical: 6),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    leading: Text(
+                      p.emoji,
+                      style: const TextStyle(fontSize: 28),
+                    ),
+                    title: Text(
+                      p.name,
+                      style: const TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    subtitle: Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(p.subtitle),
+                          const SizedBox(height: 8),
+                          _ProgressBar(
                             done: counts[p.id] ?? 0,
                             total: p.flatChapters(books).length,
-                            unit: '章'),
-                      ],
+                            unit: '章',
+                          ),
+                        ],
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ReadingPlanDetailScreen(plan: p),
+                      ),
                     ),
                   ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => ReadingPlanDetailScreen(plan: p)),
-                  ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -66,8 +91,7 @@ class _ProgressBar extends StatelessWidget {
   final int total;
   final String unit;
 
-  const _ProgressBar(
-      {required this.done, required this.total, this.unit = ''});
+  const _ProgressBar({required this.done, required this.total, this.unit = ''});
 
   @override
   Widget build(BuildContext context) {
@@ -81,8 +105,10 @@ class _ProgressBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        Text('$done / $total$unit',
-            style: Theme.of(context).textTheme.labelSmall),
+        Text(
+          '$done / $total$unit',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
       ],
     );
   }
@@ -111,7 +137,9 @@ class _ReadingPlanDetailScreenState
     _seeded = true;
     final dayItems = <int, List<List<int>>>{
       for (var i = 0; i < schedule.length; i++)
-        i + 1: [for (final c in schedule[i]) [c.bookId, c.chapter]],
+        i + 1: [
+          for (final c in schedule[i]) [c.bookId, c.chapter],
+        ],
     };
     final n = await ref
         .read(databaseServiceProvider)
@@ -130,8 +158,23 @@ class _ReadingPlanDetailScreenState
     ref.invalidate(planItemDoneCountsProvider);
   }
 
-  Future<void> _setDay(
-      int day, List<ChapterRef> chapters, bool done) async {
+  Future<void> _completeNextChapter(int day, ChapterRef chapter) async {
+    await _setItem(day, chapter, true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: const Text('已完成本章，下一章已準備好'),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () => _setItem(day, chapter, false),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _setDay(int day, List<ChapterRef> chapters, bool done) async {
     final db = ref.read(databaseServiceProvider);
     for (final c in chapters) {
       await db.setPlanItemDone(plan.id, day, c.bookId, c.chapter, done);
@@ -143,32 +186,49 @@ class _ReadingPlanDetailScreenState
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
-    final progress = ref.watch(planItemProgressProvider(plan.id)).value;
+    final progressAsync = ref.watch(planItemProgressProvider(plan.id));
 
     return Scaffold(
       appBar: AppBar(title: Text('${plan.emoji} ${plan.name}')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (e, _) => _PlanLoadError(
+          label: '聖經資料暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
         data: (books) {
+          if (progressAsync.isLoading && !progressAsync.hasValue) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (progressAsync.hasError && !progressAsync.hasValue) {
+            return _PlanLoadError(
+              label: '讀經進度暫時無法載入',
+              onRetry: () => ref.invalidate(planItemProgressProvider(plan.id)),
+            );
+          }
           final schedule = plan.schedule(books);
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => _maybeSeedFromLegacy(schedule));
-          final done = progress ?? const <String>{};
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _maybeSeedFromLegacy(schedule),
+          );
+          final done = progressAsync.value ?? const <String>{};
           String key(ChapterRef c) => 'b${c.bookId}_c${c.chapter}';
           bool itemDone(ChapterRef c) => done.contains(key(c));
           bool dayDone(List<ChapterRef> ch) => ch.every(itemDone);
 
           final total = schedule.fold<int>(0, (a, d) => a + d.length);
           final overallDone = schedule.fold<int>(
-              0, (a, d) => a + d.where(itemDone).length);
+            0,
+            (a, d) => a + d.where(itemDone).length,
+          );
 
           // 「今日」＝第一個尚未全部完成的天（進行中的那一天）；全完成則停在最後一天。
           var todayIdx = schedule.indexWhere((d) => !dayDone(d));
           if (todayIdx < 0) todayIdx = schedule.length - 1;
-          final todayChapters =
-              schedule.isEmpty ? <ChapterRef>[] : schedule[todayIdx];
+          final todayChapters = schedule.isEmpty
+              ? <ChapterRef>[]
+              : schedule[todayIdx];
           final todayDoneCount = todayChapters.where(itemDone).length;
+          final nextChapter = firstIncompleteChapter(todayChapters, done);
 
           return ListView.builder(
             itemCount: schedule.length + 1,
@@ -182,7 +242,11 @@ class _ReadingPlanDetailScreenState
                   overallTotal: total,
                   books: books,
                   todayChapters: todayChapters,
+                  nextChapter: nextChapter,
                   onOpen: (c) => _openReader(c),
+                  onComplete: nextChapter == null
+                      ? null
+                      : () => _completeNextChapter(todayIdx + 1, nextChapter),
                 );
               }
               final i = idx - 1;
@@ -196,36 +260,45 @@ class _ReadingPlanDetailScreenState
                 leading: Checkbox(
                   value: dayDone(chapters),
                   tristate: true,
-                  onChanged: (_) =>
-                      _setDay(day, chapters, !dayDone(chapters)),
+                  onChanged: (_) => _setDay(day, chapters, !dayDone(chapters)),
                 ),
                 title: Row(
                   children: [
-                    Text('第 $day 天',
-                        style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            decoration: dayDone(chapters)
-                                ? TextDecoration.lineThrough
-                                : null)),
+                    Text(
+                      '第 $day 天',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        decoration: dayDone(chapters)
+                            ? TextDecoration.lineThrough
+                            : null,
+                      ),
+                    ),
                     const SizedBox(width: 8),
-                    if (isToday) _tag(context, '今日', Theme.of(context).colorScheme.primary),
-                    if (isMissed) _tag(context, '漏讀', Theme.of(context).colorScheme.error),
+                    if (isToday)
+                      _tag(
+                        context,
+                        '今日',
+                        Theme.of(context).colorScheme.primary,
+                      ),
+                    if (isMissed)
+                      _tag(context, '漏讀', Theme.of(context).colorScheme.error),
                   ],
                 ),
                 subtitle: Text(
-                    '${_rangeLabel(books, chapters)}　'
-                    '(${chapters.where(itemDone).length}/${chapters.length})'),
+                  '${_rangeLabel(books, chapters)}　'
+                  '(${chapters.where(itemDone).length}/${chapters.length})',
+                ),
                 children: [
                   for (final c in chapters)
                     CheckboxListTile(
                       controlAffinity: ListTileControlAffinity.leading,
                       dense: true,
-                      contentPadding:
-                          const EdgeInsets.only(left: 52, right: 8),
+                      contentPadding: const EdgeInsets.only(left: 52, right: 8),
                       value: itemDone(c),
                       onChanged: (v) => _setItem(day, c, v ?? false),
                       title: Text(
-                          '${books[c.bookId - 1].name} 第 ${c.chapter} 章'),
+                        '${books[c.bookId - 1].name} 第 ${c.chapter} 章',
+                      ),
                       secondary: IconButton(
                         icon: const Icon(Icons.menu_book, size: 18),
                         tooltip: '閱讀',
@@ -242,28 +315,31 @@ class _ReadingPlanDetailScreenState
   }
 
   void _openReader(ChapterRef c) => Navigator.push(
-        context,
-        MaterialPageRoute(
-          // Plan Reader context 不覆蓋一般 Reading Position
-          builder: (_) => ChapterScreen(
-              bookId: c.bookId,
-              chapter: c.chapter,
-              updateReadingPosition: false),
-        ),
-      );
+    context,
+    MaterialPageRoute(
+      // Plan Reader context 不覆蓋一般 Reading Position
+      builder: (_) => ChapterScreen(
+        bookId: c.bookId,
+        chapter: c.chapter,
+        updateReadingPosition: false,
+      ),
+    ),
+  );
 
   Widget _tag(BuildContext context, String text, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.14),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Text(text,
-            style: Theme.of(context)
-                .textTheme
-                .labelSmall
-                ?.copyWith(color: color, fontWeight: FontWeight.w700)),
-      );
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.14),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Text(
+      text,
+      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+        color: color,
+        fontWeight: FontWeight.w700,
+      ),
+    ),
+  );
 
   /// 例：「創世記 1 – 創世記 4」或單章「約翰福音 3」。
   String _rangeLabel(List<Book> books, List<ChapterRef> chapters) {
@@ -279,6 +355,34 @@ class _ReadingPlanDetailScreenState
   }
 }
 
+class _PlanLoadError extends StatelessWidget {
+  const _PlanLoadError({required this.label, required this.onRetry});
+
+  final String label;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.error_outline, size: 36),
+          const SizedBox(height: 12),
+          Text(label, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重新載入'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 class _HeaderCard extends StatelessWidget {
   final int todayDay;
   final int todayDone;
@@ -287,7 +391,9 @@ class _HeaderCard extends StatelessWidget {
   final int overallTotal;
   final List<Book> books;
   final List<ChapterRef> todayChapters;
+  final ChapterRef? nextChapter;
   final void Function(ChapterRef) onOpen;
+  final VoidCallback? onComplete;
 
   const _HeaderCard({
     required this.todayDay,
@@ -297,7 +403,9 @@ class _HeaderCard extends StatelessWidget {
     required this.overallTotal,
     required this.books,
     required this.todayChapters,
+    required this.nextChapter,
     required this.onOpen,
+    required this.onComplete,
   });
 
   @override
@@ -309,13 +417,39 @@ class _HeaderCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('今日進度（第 $todayDay 天）',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700)),
+            Text(
+              '今日進度（第 $todayDay 天）',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 8),
             _ProgressBar(done: todayDone, total: todayTotal, unit: '章'),
+            const SizedBox(height: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                FilledButton.icon(
+                  onPressed: nextChapter == null
+                      ? null
+                      : () => onOpen(nextChapter!),
+                  icon: Icon(
+                    nextChapter == null
+                        ? Icons.check_circle_outline
+                        : Icons.menu_book,
+                  ),
+                  label: Text(nextChapter == null ? '今日已完成' : '繼續閱讀'),
+                ),
+                if (nextChapter != null) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: onComplete,
+                    icon: const Icon(Icons.check),
+                    label: const Text('完成本章'),
+                  ),
+                ],
+              ],
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -324,18 +458,18 @@ class _HeaderCard extends StatelessWidget {
                 for (final c in todayChapters)
                   ActionChip(
                     avatar: const Icon(Icons.menu_book, size: 16),
-                    label: Text(
-                        '${books[c.bookId - 1].name} ${c.chapter}'),
+                    label: Text('${books[c.bookId - 1].name} ${c.chapter}'),
                     onPressed: () => onOpen(c),
                   ),
               ],
             ),
             const Divider(height: 24),
-            Text('整體進度',
-                style: Theme.of(context)
-                    .textTheme
-                    .titleSmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.outline)),
+            Text(
+              '整體進度',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Theme.of(context).colorScheme.outline,
+              ),
+            ),
             const SizedBox(height: 8),
             _ProgressBar(done: overallDone, total: overallTotal, unit: '章'),
           ],
