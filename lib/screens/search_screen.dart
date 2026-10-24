@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../models/study_content.dart';
 import '../providers/providers.dart';
 import '../services/qa_service.dart';
+import '../services/related_verse_search.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
@@ -24,7 +25,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
-  List<VerseRef> _results = [];
+  List<VerseSearchHit> _results = [];
   // 「內容」＝授權後的 Study Content + Q&A。
   // Teacher Books/Chapters 已不再是 Student product surface；Study Content 本體仍照常可搜尋。
   List<StudyContentItem> _content = [];
@@ -32,6 +33,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   List<BibleEntity> _entities = [];
   ({int bookId, int chapter, int? verse})? _jump;
   bool _searched = false;
+  bool _searching = false;
+  String? _searchError;
+  int _searchRequest = 0;
   Timer? _debounce;
 
   @override
@@ -43,42 +47,81 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _onQueryChanged(String q) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () => _search(q));
+    if (q.trim().isEmpty) {
+      _clearSearch();
+      return;
+    }
+    // 使用者一輸入新字就讓前一筆請求失效，不讓舊結果在 debounce 期間閃回畫面。
+    final request = ++_searchRequest;
+    _debounce = Timer(
+      const Duration(milliseconds: 300),
+      () => _search(q, request: request),
+    );
   }
 
-  Future<void> _search(String q) async {
-    final books = await ref.read(booksProvider.future);
+  Future<void> _search(String q, {int? request}) async {
     final term = q.trim();
-    // 「內容」＝**已授權 universe FIRST**（public ∪ my-church）→ 再 client 端文字比對。
-    // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
-    final universe = await ref.read(authorizedStudyContentProvider.future);
-    final questions = await ref.read(publishedQuestionsProvider('').future);
-    if (!mounted) return;
-    bool hit(String s) => term.isNotEmpty && s.contains(term);
+    if (term.isEmpty) {
+      _clearSearch();
+      return;
+    }
+    final currentRequest = request ?? ++_searchRequest;
     setState(() {
-      _jump = VerseLocator.parse(q, books);
-      _entities = searchEntities(q);
-      _content = term.isEmpty
-          ? const []
-          : universe
-              .where((i) =>
+      _searching = true;
+      _searchError = null;
+    });
+    try {
+      final books = await ref.read(booksProvider.future);
+      // 「內容」＝**已授權 universe FIRST**（public ∪ my-church）→ 再 client 端文字比對。
+      // church B 從未進 universe，故 count/title/preview 皆不含（rules-not-filter 契約）。
+      final universe = await ref.read(authorizedStudyContentProvider.future);
+      final questions = await ref.read(publishedQuestionsProvider('').future);
+      if (!mounted || currentRequest != _searchRequest) return;
+      bool hit(String s) => s.contains(term);
+      setState(() {
+        _jump = VerseLocator.parse(q, books);
+        _entities = searchEntities(q);
+        _content = universe
+            .where(
+              (i) =>
                   hit(i.title) ||
                   hit(i.body) ||
                   i.tags.any(hit) ||
-                  i.scriptureRefs.any(hit))
-              .toList();
-      _qa = term.isEmpty
-          ? const []
-          : questions
-              .where((question) =>
-                  hit(question.title) || hit(question.body))
-              .toList();
-      _results = ref
-          .read(bibleRepositoryProvider)
-          .search(q)
-          .where((r) => !queryOnlyInsideLongerName(r.text, term))
-          .toList();
-      _searched = term.isNotEmpty;
+                  i.scriptureRefs.any(hit),
+            )
+            .toList();
+        _qa = questions
+            .where((question) => hit(question.title) || hit(question.body))
+            .toList();
+        _results = ref
+            .read(bibleRepositoryProvider)
+            .searchRelated(q)
+            .where((hit) => !queryOnlyInsideLongerName(hit.verse.text, term))
+            .toList();
+        _searched = true;
+      });
+    } catch (_) {
+      if (!mounted || currentRequest != _searchRequest) return;
+      setState(() => _searchError = '搜尋暫時無法完成');
+    } finally {
+      if (mounted && currentRequest == _searchRequest) {
+        setState(() => _searching = false);
+      }
+    }
+  }
+
+  void _clearSearch() {
+    _searchRequest++;
+    if (!mounted) return;
+    setState(() {
+      _results = [];
+      _content = [];
+      _qa = [];
+      _entities = [];
+      _jump = null;
+      _searched = false;
+      _searching = false;
+      _searchError = null;
     });
   }
 
@@ -90,10 +133,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       MaterialPageRoute(
         // 搜尋結果＝臨時瀏覽，不更新一般 Reading Position
         builder: (_) => ChapterScreen(
-            bookId: bookId,
-            chapter: chapter,
-            focusVerse: verse,
-            updateReadingPosition: false),
+          bookId: bookId,
+          chapter: chapter,
+          focusVerse: verse,
+          updateReadingPosition: false,
+        ),
       ),
     );
   }
@@ -114,32 +158,42 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           onChanged: _onQueryChanged,
         ),
         actions: [
-          if (_searched)
+          if (_controller.text.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.clear),
               onPressed: () {
                 _controller.clear();
-                setState(() {
-                  _results = [];
-                  _content = [];
-                  _qa = [];
-                  _entities = [];
-                  _jump = null;
-                  _searched = false;
-                });
+                _clearSearch();
               },
             ),
         ],
+        bottom: _searching
+            ? const PreferredSize(
+                preferredSize: Size.fromHeight(3),
+                child: LinearProgressIndicator(minHeight: 3),
+              )
+            : null,
       ),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (e, _) => _SearchError(
+          label: '聖經資料暫時無法載入',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
         data: (books) {
+          if (_searchError != null) {
+            return _SearchError(
+              label: _searchError!,
+              onRetry: () => _search(_controller.text),
+            );
+          }
           if (!_searched) {
-            return _HistoryView(onTap: (q) {
-              _controller.text = q;
-              _search(q);
-            });
+            return _HistoryView(
+              onTap: (q) {
+                _controller.text = q;
+                _search(q);
+              },
+            );
           }
           if (_jump == null &&
               _results.isEmpty &&
@@ -155,8 +209,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   jump: _jump!,
                   book: books[_jump!.bookId - 1],
                   onTap: () => _openChapter(
-                      _jump!.bookId, _jump!.chapter,
-                      verse: _jump!.verse),
+                    _jump!.bookId,
+                    _jump!.chapter,
+                    verse: _jump!.verse,
+                  ),
                 ),
               if (_content.isNotEmpty) ...[
                 const _SectionLabel('內容'),
@@ -164,15 +220,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ListTile(
                     leading: const Icon(Icons.auto_stories_outlined),
                     title: Text(i.title.isEmpty ? '(未命名)' : i.title),
-                    subtitle: Text([
-                      studyTypeLabel(i.contentType),
-                      if (i.audience == Audience.church) '教會專屬',
-                    ].join('・')),
+                    subtitle: Text(
+                      [
+                        studyTypeLabel(i.contentType),
+                        if (i.audience == Audience.church) '教會專屬',
+                      ].join('・'),
+                    ),
                     onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                StudentStudyContentDetail(item: i))),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => StudentStudyContentDetail(item: i),
+                      ),
+                    ),
                   ),
               ],
               if (_qa.isNotEmpty) ...[
@@ -183,10 +242,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     title: Text(question.title),
                     subtitle: const Text('聖經／信仰問答'),
                     onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                QuestionDetailScreen(id: question.id))),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => QuestionDetailScreen(id: question.id),
+                      ),
+                    ),
                   ),
               ],
               if (_entities.isNotEmpty) ...[
@@ -202,21 +262,30 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              if (_results.isNotEmpty) const _SectionLabel('經文'),
-              for (final r in _results)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    ListTile(
-                      title: Text(sentenceWithMatch(
-                          r.text, _controller.text.trim())),
-                      subtitle: Text(
-                          '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
-                      onTap: () =>
-                          _openChapter(r.bookId, r.chapter, verse: r.verse),
-                    ),
-                    const Divider(height: 1),
-                  ],
+              if (_results.any((hit) => hit.isExact)) const _SectionLabel('經文'),
+              for (final hit in _results.where((hit) => hit.isExact))
+                _VerseResultTile(
+                  hit: hit,
+                  books: books,
+                  query: _controller.text.trim(),
+                  onTap: () => _openChapter(
+                    hit.verse.bookId,
+                    hit.verse.chapter,
+                    verse: hit.verse.verse,
+                  ),
+                ),
+              if (_results.any((hit) => !hit.isExact))
+                const _SectionLabel('相關經文'),
+              for (final hit in _results.where((hit) => !hit.isExact))
+                _VerseResultTile(
+                  hit: hit,
+                  books: books,
+                  query: _controller.text.trim(),
+                  onTap: () => _openChapter(
+                    hit.verse.bookId,
+                    hit.verse.chapter,
+                    verse: hit.verse.verse,
+                  ),
                 ),
             ],
           );
@@ -224,6 +293,77 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       ),
     );
   }
+}
+
+class _VerseResultTile extends StatelessWidget {
+  const _VerseResultTile({
+    required this.hit,
+    required this.books,
+    required this.query,
+    required this.onTap,
+  });
+
+  final VerseSearchHit hit;
+  final List<Book> books;
+  final String query;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final verse = hit.verse;
+    final previewTerm = hit.isExact
+        ? query
+        : hit.matchedTerms.firstWhere(
+            (term) => verse.text.contains(term),
+            orElse: () => query,
+          );
+    final citation =
+        '${books[verse.bookId - 1].name} ${verse.chapter}:${verse.verse}';
+    final related = hit.matchedTerms.take(3).join('、');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          title: Text(sentenceWithMatch(verse.text, previewTerm)),
+          subtitle: Text(
+            hit.isExact || related.isEmpty
+                ? citation
+                : '$citation · 相關：$related',
+          ),
+          onTap: onTap,
+        ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+}
+
+class _SearchError extends StatelessWidget {
+  const _SearchError({required this.label, required this.onRetry});
+
+  final String label;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.search_off, size: 40),
+          const SizedBox(height: 12),
+          Text(label),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重試'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 IconData _entityIcon(EntityType t) {
@@ -246,11 +386,12 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(text,
-          style: Theme.of(context)
-              .textTheme
-              .labelLarge
-              ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ),
     );
   }
 }
@@ -260,8 +401,11 @@ class _JumpTile extends StatelessWidget {
   final Book book;
   final VoidCallback onTap;
 
-  const _JumpTile(
-      {required this.jump, required this.book, required this.onTap});
+  const _JumpTile({
+    required this.jump,
+    required this.book,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -273,8 +417,10 @@ class _JumpTile extends StatelessWidget {
       color: scheme.primaryContainer,
       child: ListTile(
         leading: Icon(Icons.arrow_forward, color: scheme.onPrimaryContainer),
-        title: Text('跳到 $label',
-            style: TextStyle(color: scheme.onPrimaryContainer)),
+        title: Text(
+          '跳到 $label',
+          style: TextStyle(color: scheme.onPrimaryContainer),
+        ),
         onTap: onTap,
       ),
     );
@@ -300,8 +446,7 @@ class _HistoryView extends ConsumerWidget {
           children: [
             Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
             TextButton(
-              onPressed: () =>
-                  ref.read(searchHistoryProvider.notifier).clear(),
+              onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
               child: const Text('清除'),
             ),
           ],
