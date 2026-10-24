@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../utils/note_list_presentation.dart';
 import '../widgets/scripture_reference_field.dart';
 import '../widgets/student_ux.dart';
 
@@ -17,6 +18,8 @@ class NotesScreen extends ConsumerStatefulWidget {
 
 class _NotesScreenState extends ConsumerState<NotesScreen> {
   final SelectionController<int> _selection = SelectionController<int>();
+  NoteSortOrder _sortOrder = NoteSortOrder.updated;
+  bool _groupByDate = true;
 
   @override
   void initState() {
@@ -113,10 +116,39 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
                       if (value == 'deleted') {
                         Navigator.push(context,
                             MaterialPageRoute(builder: (_) => const _DeletedNotesScreen()));
+                      } else if (value == 'group') {
+                        setState(() => _groupByDate = !_groupByDate);
+                      } else if (value.startsWith('sort_')) {
+                        final name = value.substring(5);
+                        setState(() {
+                          _sortOrder = NoteSortOrder.values.firstWhere(
+                            (order) => order.name == name,
+                          );
+                        });
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'deleted', child: Text('最近刪除')),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        enabled: false,
+                        child: Text('排序方式'),
+                      ),
+                      for (final order in NoteSortOrder.values)
+                        CheckedPopupMenuItem(
+                          value: 'sort_${order.name}',
+                          checked: _sortOrder == order,
+                          child: Text(order.label),
+                        ),
+                      const PopupMenuDivider(),
+                      CheckedPopupMenuItem(
+                        value: 'group',
+                        checked: _groupByDate,
+                        child: const Text('依日期分組'),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'deleted',
+                        child: Text('最近刪除'),
+                      ),
                     ],
                   ),
                 ],
@@ -161,7 +193,14 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
         body: TabBarView(
           physics: _selection.active ? const NeverScrollableScrollPhysics() : null,
           children: [
-            _RecentView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
+            _RecentView(
+              selection: _selection,
+              onOpen: _openEditor,
+              onDelete: _deleteOne,
+              onCopy: _copyOne,
+              sortOrder: _sortOrder,
+              groupByDate: _groupByDate,
+            ),
             _ByBookView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
             _ByTagView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
             _SearchView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
@@ -225,6 +264,8 @@ class _NoteRow extends StatelessWidget {
           ? '${note.bookId}:${note.chapter}:${note.verse}'
           : '${books[note.bookId - 1].name} ${note.chapter}:${note.verse}';
       final id = note.id;
+      final updated = compactNoteDate(noteListTimestamp(note), DateTime.now());
+      final preview = note.content.isEmpty ? anchor : note.content;
       final row = ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
         leading: selection.active && id != null
@@ -232,7 +273,7 @@ class _NoteRow extends StatelessWidget {
             : null,
         title: Text(note.title.isNotEmpty ? note.title : anchor,
             maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(note.content.isEmpty ? anchor : note.content,
+        subtitle: Text('$updated · $preview',
             maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: selection.active ? null : const Icon(Icons.chevron_right),
         onLongPress: id == null ? null : () => selection.start(id),
@@ -274,19 +315,76 @@ Widget _noteList({
     );
 
 class _RecentView extends ConsumerWidget {
-  const _RecentView({required this.selection, required this.onOpen, required this.onDelete, required this.onCopy});
+  const _RecentView({
+    required this.selection,
+    required this.onOpen,
+    required this.onDelete,
+    required this.onCopy,
+    required this.sortOrder,
+    required this.groupByDate,
+  });
   final SelectionController<int> selection;
   final NoteOpen onOpen;
   final NoteAction onDelete;
   final NoteAction onCopy;
+  final NoteSortOrder sortOrder;
+  final bool groupByDate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => ref.watch(allNotesProvider).when(
         loading: () => const StudentCompactLoading(),
         error: (_, _) => StudentErrorState(onRetry: () => ref.invalidate(allNotesProvider)),
-        data: (notes) => notes.isEmpty
-            ? const StudentEmptyState(title: '還沒有經文筆記', subtitle: '閱讀時選取經文，或從這裡新增筆記。', icon: Icons.edit_note_outlined)
-            : _noteList(notes: notes, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+        data: (notes) {
+          if (notes.isEmpty) {
+            return const StudentEmptyState(
+              title: '還沒有經文筆記',
+              subtitle: '閱讀時選取經文，或從這裡新增筆記。',
+              icon: Icons.edit_note_outlined,
+            );
+          }
+          final sorted = sortNotesForList(notes, sortOrder);
+          if (!groupByDate) {
+            return _noteList(
+              notes: sorted,
+              selection: selection,
+              onOpen: onOpen,
+              onDelete: onDelete,
+              onCopy: onCopy,
+            );
+          }
+          final groups = <String, List<Note>>{};
+          final now = DateTime.now();
+          final newest = sortNotesForList(notes, NoteSortOrder.updated);
+          for (final note in newest) {
+            final timestamp = noteListTimestamp(note);
+            (groups[noteDateSection(timestamp, now)] ??= []).add(note);
+          }
+          return ListView(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            children: [
+              for (final group in groups.entries) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 5),
+                  child: Text(
+                    group.key,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.outline,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+                for (final note in sortNotesForList(group.value, sortOrder))
+                  _NoteRow(
+                    note: note,
+                    selection: selection,
+                    onOpen: onOpen,
+                    onDelete: onDelete,
+                    onCopy: onCopy,
+                  ),
+              ],
+            ],
+          );
+        },
       );
 }
 
