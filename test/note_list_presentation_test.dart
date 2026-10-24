@@ -81,6 +81,37 @@ void main() {
     expect(decodeNoteSortOrder(null), NoteSortOrder.updated);
   });
 
+  test('筆記搜尋不分英文大小寫且支援多詞交集', () {
+    final searchable = [
+      Note(
+        id: 10,
+        bookId: 50,
+        chapter: 4,
+        verse: 6,
+        title: 'Prayer Notes',
+        content: '不要掛慮，只要禱告',
+        tags: '平安,靈修',
+        createdAt: 10,
+        updatedAt: 10,
+      ),
+      Note(
+        id: 11,
+        bookId: 43,
+        chapter: 14,
+        verse: 27,
+        title: '平安',
+        content: '我留下平安給你們',
+        tags: '應許',
+        createdAt: 20,
+        updatedAt: 20,
+      ),
+    ];
+
+    expect(searchNotesForList(searchable, 'PRAYER').single.id, 10);
+    expect(searchNotesForList(searchable, '平安 靈修').single.id, 10);
+    expect(searchNotesForList(searchable, '不存在'), isEmpty);
+  });
+
   test('日期分組與清單日期顯示符合今天、昨天、近期與月份', () {
     final now = DateTime(2026, 10, 25, 15, 30);
 

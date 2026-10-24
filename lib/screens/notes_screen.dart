@@ -494,9 +494,7 @@ class _SearchViewState extends ConsumerState<_SearchView> {
   Widget build(BuildContext context) {
     final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
     final q = query.trim();
-    final matches = q.isEmpty
-        ? const <Note>[]
-        : notes.where((n) => n.title.contains(q) || n.content.contains(q) || n.tags.contains(q)).toList();
+    final matches = searchNotesForList(notes, q);
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),

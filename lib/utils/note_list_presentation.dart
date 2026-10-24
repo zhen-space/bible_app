@@ -43,6 +43,42 @@ List<Note> sortNotesForList(Iterable<Note> values, NoteSortOrder order) {
   return notes;
 }
 
+List<Note> searchNotesForList(Iterable<Note> values, String query) {
+  final terms = query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((term) => term.isNotEmpty)
+      .toList();
+  if (terms.isEmpty) return const [];
+
+  final matches = values.where((note) {
+    final searchable = [note.title, note.content, ...note.tagList]
+        .join(' ')
+        .toLowerCase();
+    return terms.every(searchable.contains);
+  }).toList();
+  matches.sort((a, b) {
+    final byRank = _noteSearchRank(a, terms).compareTo(_noteSearchRank(b, terms));
+    if (byRank != 0) return byRank;
+    return _newestFirst(
+      noteListTimestamp(a),
+      noteListTimestamp(b),
+      a.id,
+      b.id,
+    );
+  });
+  return matches;
+}
+
+int _noteSearchRank(Note note, List<String> terms) {
+  final title = note.title.toLowerCase();
+  if (terms.every(title.contains)) return 0;
+  final tags = note.tagList.join(' ').toLowerCase();
+  if (terms.every(tags.contains)) return 1;
+  return 2;
+}
+
 int noteListTimestamp(Note note) =>
     note.updatedAt > 0 ? note.updatedAt : note.createdAt;
 
