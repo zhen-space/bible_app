@@ -11,6 +11,7 @@ import '../services/qa_service.dart';
 import '../services/related_verse_search.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
+import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'qa_screen.dart' show QuestionDetailScreen;
 import 'study_content_screen.dart';
@@ -142,6 +143,65 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  Future<void> _copyVerse(Book book, VerseRef verse) => copyHumanReadable(
+    context,
+    '${verse.text}\n${book.name} ${verse.chapter}:${verse.verse}',
+    success: '已複製 ${book.name} ${verse.chapter}:${verse.verse}',
+  );
+
+  Future<void> _toggleBookmark(VerseRef verse, bool bookmarked) async {
+    await ref
+        .read(databaseServiceProvider)
+        .toggleBookmark(verse.bookId, verse.chapter, verse.verse);
+    ref.invalidate(allBookmarksProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(bookmarked ? '已移除書籤' : '已加入書籤')));
+  }
+
+  void _showVerseActions(Book book, VerseRef verse, bool bookmarked) {
+    showModalBottomSheet<void>(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      builder: (sheetContext) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.menu_book_outlined),
+            title: const Text('開啟經文'),
+            subtitle: Text('${book.name} ${verse.chapter}:${verse.verse}'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _openChapter(verse.bookId, verse.chapter, verse: verse.verse);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.copy_outlined),
+            title: const Text('複製經文'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _copyVerse(book, verse);
+            },
+          ),
+          ListTile(
+            leading: Icon(
+              bookmarked ? Icons.bookmark_remove : Icons.bookmark_add_outlined,
+            ),
+            title: Text(bookmarked ? '移除書籤' : '加入書籤'),
+            onTap: () {
+              Navigator.pop(sheetContext);
+              _toggleBookmark(verse, bookmarked);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
@@ -181,6 +241,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           onRetry: () => ref.invalidate(booksProvider),
         ),
         data: (books) {
+          final bookmarkKeys = {
+            for (final bookmark
+                in ref.watch(allBookmarksProvider).value ?? const <Bookmark>[])
+              '${bookmark.bookId}:${bookmark.chapter}:${bookmark.verse}',
+          };
           if (_searchError != null) {
             return _SearchError(
               label: _searchError!,
@@ -268,10 +333,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   hit: hit,
                   books: books,
                   query: _controller.text.trim(),
+                  bookmarked: bookmarkKeys.contains(
+                    '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
+                  ),
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
                     verse: hit.verse.verse,
+                  ),
+                  onCopy: () =>
+                      _copyVerse(books[hit.verse.bookId - 1], hit.verse),
+                  onBookmark: (bookmarked) =>
+                      _toggleBookmark(hit.verse, bookmarked),
+                  onMore: (bookmarked) => _showVerseActions(
+                    books[hit.verse.bookId - 1],
+                    hit.verse,
+                    bookmarked,
                   ),
                 ),
               if (_results.any((hit) => !hit.isExact))
@@ -281,10 +358,22 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   hit: hit,
                   books: books,
                   query: _controller.text.trim(),
+                  bookmarked: bookmarkKeys.contains(
+                    '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
+                  ),
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
                     verse: hit.verse.verse,
+                  ),
+                  onCopy: () =>
+                      _copyVerse(books[hit.verse.bookId - 1], hit.verse),
+                  onBookmark: (bookmarked) =>
+                      _toggleBookmark(hit.verse, bookmarked),
+                  onMore: (bookmarked) => _showVerseActions(
+                    books[hit.verse.bookId - 1],
+                    hit.verse,
+                    bookmarked,
                   ),
                 ),
             ],
@@ -300,13 +389,21 @@ class _VerseResultTile extends StatelessWidget {
     required this.hit,
     required this.books,
     required this.query,
+    required this.bookmarked,
     required this.onTap,
+    required this.onCopy,
+    required this.onBookmark,
+    required this.onMore,
   });
 
   final VerseSearchHit hit;
   final List<Book> books;
   final String query;
+  final bool bookmarked;
   final VoidCallback onTap;
+  final Future<void> Function() onCopy;
+  final Future<void> Function(bool bookmarked) onBookmark;
+  final void Function(bool bookmarked) onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -320,20 +417,37 @@ class _VerseResultTile extends StatelessWidget {
     final citation =
         '${books[verse.bookId - 1].name} ${verse.chapter}:${verse.verse}';
     final related = hit.matchedTerms.take(3).join('、');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ListTile(
-          title: Text(sentenceWithMatch(verse.text, previewTerm)),
-          subtitle: Text(
-            hit.isExact || related.isEmpty
-                ? citation
-                : '$citation · 相關：$related',
+    return StudentSwipeRow(
+      dismissKey: ValueKey(
+        'search_${verse.bookId}_${verse.chapter}_${verse.verse}',
+      ),
+      startLabel: '複製',
+      startIcon: Icons.copy_outlined,
+      endLabel: bookmarked ? '移除書籤' : '加入書籤',
+      endIcon: bookmarked ? Icons.bookmark_remove : Icons.bookmark_add_outlined,
+      endDestructive: false,
+      onSwipeStartToEnd: onCopy,
+      onSwipeEndToStart: () => onBookmark(bookmarked),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            title: Text(sentenceWithMatch(verse.text, previewTerm)),
+            subtitle: Text(
+              hit.isExact || related.isEmpty
+                  ? citation
+                  : '$citation · 相關：$related',
+            ),
+            trailing: Icon(
+              bookmarked ? Icons.bookmark : Icons.chevron_right,
+              size: bookmarked ? 20 : 24,
+            ),
+            onTap: onTap,
+            onLongPress: () => onMore(bookmarked),
           ),
-          onTap: onTap,
-        ),
-        const Divider(height: 1),
-      ],
+          const Divider(height: 1),
+        ],
+      ),
     );
   }
 }
