@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../models/models.dart';
+import 'related_verse_search.dart';
 
 /// 聖經經文倉庫：從 asset 載入和合本 JSON，常駐記憶體（約 3MB 文字）。
 /// 經文唯讀，不進 SQLite；搜尋直接掃記憶體（3.1 萬節，毫秒級）。
@@ -26,13 +27,14 @@ class BibleRepository {
     if (_english != null) return;
     final raw = await rootBundle.loadString('assets/bible/kjv.json');
     final data = json.decode(raw) as Map<String, dynamic>;
-    final books = (data['books'] as List)
-        .cast<Map<String, dynamic>>()
+    final books = (data['books'] as List).cast<Map<String, dynamic>>()
       ..sort((a, b) => (a['id'] as int).compareTo(b['id'] as int));
     _english = books
-        .map((b) => (b['chapters'] as List)
-            .map((ch) => (ch as List).cast<String>())
-            .toList())
+        .map(
+          (b) => (b['chapters'] as List)
+              .map((ch) => (ch as List).cast<String>())
+              .toList(),
+        )
         .toList();
   }
 
@@ -69,13 +71,25 @@ class BibleRepository {
           final raw = verses[v];
           final norm = _normalize(raw);
           if (norm.contains(q)) {
-            exact.add(VerseRef(
-                bookId: book.id, chapter: c + 1, verse: v + 1, text: raw));
+            exact.add(
+              VerseRef(
+                bookId: book.id,
+                chapter: c + 1,
+                verse: v + 1,
+                text: raw,
+              ),
+            );
             if (exact.length >= limit) return exact;
           } else if (fuzzy && q.length >= 2 && _isSubsequence(q, norm)) {
             if (loose.length < limit) {
-              loose.add(VerseRef(
-                  bookId: book.id, chapter: c + 1, verse: v + 1, text: raw));
+              loose.add(
+                VerseRef(
+                  bookId: book.id,
+                  chapter: c + 1,
+                  verse: v + 1,
+                  text: raw,
+                ),
+              );
             }
           }
         }
@@ -87,6 +101,14 @@ class BibleRepository {
       out.add(r);
     }
     return out;
+  }
+
+  /// 以自然語句搜尋相關經文。精確文字優先，再依本機的中文關鍵詞與
+  /// 常見聖經用語概念排序；查詢內容不會傳到外部服務。
+  List<VerseSearchHit> searchRelated(String query, {int limit = 100}) {
+    final books = _books;
+    if (books == null) return const [];
+    return RelatedVerseSearch.search(books, query, limit: limit);
   }
 
   static String _normalize(String s) =>

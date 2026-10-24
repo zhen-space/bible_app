@@ -8,6 +8,7 @@ import '../models/models.dart';
 import '../models/study_content.dart';
 import '../providers/providers.dart';
 import '../services/qa_service.dart';
+import '../services/related_verse_search.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import 'chapter_screen.dart';
@@ -24,7 +25,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
-  List<VerseRef> _results = [];
+  List<VerseSearchHit> _results = [];
   // 「內容」＝授權後的 Study Content + Q&A。
   // Teacher Books/Chapters 已不再是 Student product surface；Study Content 本體仍照常可搜尋。
   List<StudyContentItem> _content = [];
@@ -90,14 +91,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             )
             .toList();
         _qa = questions
-            .where(
-              (question) => hit(question.title) || hit(question.body),
-            )
+            .where((question) => hit(question.title) || hit(question.body))
             .toList();
         _results = ref
             .read(bibleRepositoryProvider)
-            .search(q)
-            .where((r) => !queryOnlyInsideLongerName(r.text, term))
+            .searchRelated(q)
+            .where((hit) => !queryOnlyInsideLongerName(hit.verse.text, term))
             .toList();
         _searched = true;
       });
@@ -134,10 +133,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       MaterialPageRoute(
         // 搜尋結果＝臨時瀏覽，不更新一般 Reading Position
         builder: (_) => ChapterScreen(
-            bookId: bookId,
-            chapter: chapter,
-            focusVerse: verse,
-            updateReadingPosition: false),
+          bookId: bookId,
+          chapter: chapter,
+          focusVerse: verse,
+          updateReadingPosition: false,
+        ),
       ),
     );
   }
@@ -188,10 +188,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             );
           }
           if (!_searched) {
-            return _HistoryView(onTap: (q) {
-              _controller.text = q;
-              _search(q);
-            });
+            return _HistoryView(
+              onTap: (q) {
+                _controller.text = q;
+                _search(q);
+              },
+            );
           }
           if (_jump == null &&
               _results.isEmpty &&
@@ -207,8 +209,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   jump: _jump!,
                   book: books[_jump!.bookId - 1],
                   onTap: () => _openChapter(
-                      _jump!.bookId, _jump!.chapter,
-                      verse: _jump!.verse),
+                    _jump!.bookId,
+                    _jump!.chapter,
+                    verse: _jump!.verse,
+                  ),
                 ),
               if (_content.isNotEmpty) ...[
                 const _SectionLabel('內容'),
@@ -216,15 +220,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ListTile(
                     leading: const Icon(Icons.auto_stories_outlined),
                     title: Text(i.title.isEmpty ? '(未命名)' : i.title),
-                    subtitle: Text([
-                      studyTypeLabel(i.contentType),
-                      if (i.audience == Audience.church) '教會專屬',
-                    ].join('・')),
+                    subtitle: Text(
+                      [
+                        studyTypeLabel(i.contentType),
+                        if (i.audience == Audience.church) '教會專屬',
+                      ].join('・'),
+                    ),
                     onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                StudentStudyContentDetail(item: i))),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => StudentStudyContentDetail(item: i),
+                      ),
+                    ),
                   ),
               ],
               if (_qa.isNotEmpty) ...[
@@ -235,10 +242,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     title: Text(question.title),
                     subtitle: const Text('聖經／信仰問答'),
                     onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) =>
-                                QuestionDetailScreen(id: question.id))),
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => QuestionDetailScreen(id: question.id),
+                      ),
+                    ),
                   ),
               ],
               if (_entities.isNotEmpty) ...[
@@ -254,26 +262,78 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              if (_results.isNotEmpty) const _SectionLabel('經文'),
-              for (final r in _results)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    ListTile(
-                      title: Text(sentenceWithMatch(
-                          r.text, _controller.text.trim())),
-                      subtitle: Text(
-                          '${books[r.bookId - 1].name} ${r.chapter}:${r.verse}'),
-                      onTap: () =>
-                          _openChapter(r.bookId, r.chapter, verse: r.verse),
-                    ),
-                    const Divider(height: 1),
-                  ],
+              if (_results.any((hit) => hit.isExact)) const _SectionLabel('經文'),
+              for (final hit in _results.where((hit) => hit.isExact))
+                _VerseResultTile(
+                  hit: hit,
+                  books: books,
+                  query: _controller.text.trim(),
+                  onTap: () => _openChapter(
+                    hit.verse.bookId,
+                    hit.verse.chapter,
+                    verse: hit.verse.verse,
+                  ),
+                ),
+              if (_results.any((hit) => !hit.isExact))
+                const _SectionLabel('相關經文'),
+              for (final hit in _results.where((hit) => !hit.isExact))
+                _VerseResultTile(
+                  hit: hit,
+                  books: books,
+                  query: _controller.text.trim(),
+                  onTap: () => _openChapter(
+                    hit.verse.bookId,
+                    hit.verse.chapter,
+                    verse: hit.verse.verse,
+                  ),
                 ),
             ],
           );
         },
       ),
+    );
+  }
+}
+
+class _VerseResultTile extends StatelessWidget {
+  const _VerseResultTile({
+    required this.hit,
+    required this.books,
+    required this.query,
+    required this.onTap,
+  });
+
+  final VerseSearchHit hit;
+  final List<Book> books;
+  final String query;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final verse = hit.verse;
+    final previewTerm = hit.isExact
+        ? query
+        : hit.matchedTerms.firstWhere(
+            (term) => verse.text.contains(term),
+            orElse: () => query,
+          );
+    final citation =
+        '${books[verse.bookId - 1].name} ${verse.chapter}:${verse.verse}';
+    final related = hit.matchedTerms.take(3).join('、');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          title: Text(sentenceWithMatch(verse.text, previewTerm)),
+          subtitle: Text(
+            hit.isExact || related.isEmpty
+                ? citation
+                : '$citation · 相關：$related',
+          ),
+          onTap: onTap,
+        ),
+        const Divider(height: 1),
+      ],
     );
   }
 }
@@ -286,24 +346,24 @@ class _SearchError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.search_off, size: 40),
-              const SizedBox(height: 12),
-              Text(label),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('重試'),
-              ),
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.search_off, size: 40),
+          const SizedBox(height: 12),
+          Text(label),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            label: const Text('重試'),
           ),
-        ),
-      );
+        ],
+      ),
+    ),
+  );
 }
 
 IconData _entityIcon(EntityType t) {
@@ -326,11 +386,12 @@ class _SectionLabel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-      child: Text(text,
-          style: Theme.of(context)
-              .textTheme
-              .labelLarge
-              ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+      child: Text(
+        text,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+        ),
+      ),
     );
   }
 }
@@ -340,8 +401,11 @@ class _JumpTile extends StatelessWidget {
   final Book book;
   final VoidCallback onTap;
 
-  const _JumpTile(
-      {required this.jump, required this.book, required this.onTap});
+  const _JumpTile({
+    required this.jump,
+    required this.book,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -353,8 +417,10 @@ class _JumpTile extends StatelessWidget {
       color: scheme.primaryContainer,
       child: ListTile(
         leading: Icon(Icons.arrow_forward, color: scheme.onPrimaryContainer),
-        title: Text('跳到 $label',
-            style: TextStyle(color: scheme.onPrimaryContainer)),
+        title: Text(
+          '跳到 $label',
+          style: TextStyle(color: scheme.onPrimaryContainer),
+        ),
         onTap: onTap,
       ),
     );
@@ -380,8 +446,7 @@ class _HistoryView extends ConsumerWidget {
           children: [
             Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
             TextButton(
-              onPressed: () =>
-                  ref.read(searchHistoryProvider.notifier).clear(),
+              onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
               child: const Text('清除'),
             ),
           ],
