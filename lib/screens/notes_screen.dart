@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -17,6 +18,8 @@ class NotesScreen extends ConsumerStatefulWidget {
 }
 
 class _NotesScreenState extends ConsumerState<NotesScreen> {
+  static const _sortPreferenceKey = 'notes_sort_order';
+  static const _groupPreferenceKey = 'notes_group_by_date';
   final SelectionController<int> _selection = SelectionController<int>();
   NoteSortOrder _sortOrder = NoteSortOrder.updated;
   bool _groupByDate = true;
@@ -25,6 +28,24 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
   void initState() {
     super.initState();
     _selection.addListener(_changed);
+    _restoreListPreferences();
+  }
+
+  Future<void> _restoreListPreferences() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _sortOrder = decodeNoteSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+      _groupByDate = preferences.getBool(_groupPreferenceKey) ?? true;
+    });
+  }
+
+  Future<void> _saveListPreferences() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, _sortOrder.name);
+    await preferences.setBool(_groupPreferenceKey, _groupByDate);
   }
 
   void _changed() {
@@ -118,6 +139,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
                             MaterialPageRoute(builder: (_) => const _DeletedNotesScreen()));
                       } else if (value == 'group') {
                         setState(() => _groupByDate = !_groupByDate);
+                        _saveListPreferences();
                       } else if (value.startsWith('sort_')) {
                         final name = value.substring(5);
                         setState(() {
@@ -125,6 +147,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
                             (order) => order.name == name,
                           );
                         });
+                        _saveListPreferences();
                       }
                     },
                     itemBuilder: (_) => [

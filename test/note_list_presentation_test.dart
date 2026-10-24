@@ -75,6 +75,12 @@ void main() {
     ]);
   });
 
+  test('排序偏好可從儲存值安全還原', () {
+    expect(decodeNoteSortOrder('scripture'), NoteSortOrder.scripture);
+    expect(decodeNoteSortOrder('unknown'), NoteSortOrder.updated);
+    expect(decodeNoteSortOrder(null), NoteSortOrder.updated);
+  });
+
   test('日期分組與清單日期顯示符合今天、昨天、近期與月份', () {
     final now = DateTime(2026, 10, 25, 15, 30);
 

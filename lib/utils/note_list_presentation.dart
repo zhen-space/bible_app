@@ -10,6 +10,13 @@ enum NoteSortOrder {
   final String label;
 }
 
+NoteSortOrder decodeNoteSortOrder(String? value) {
+  for (final order in NoteSortOrder.values) {
+    if (order.name == value) return order;
+  }
+  return NoteSortOrder.updated;
+}
+
 List<Note> sortNotesForList(Iterable<Note> values, NoteSortOrder order) {
   final notes = values.toList();
   notes.sort((a, b) {
