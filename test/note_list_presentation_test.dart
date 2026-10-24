@@ -109,6 +109,14 @@ void main() {
 
     expect(searchNotesForList(searchable, 'PRAYER').single.id, 10);
     expect(searchNotesForList(searchable, '平安 靈修').single.id, 10);
+    expect(
+      searchNotesForList(
+        searchable,
+        '腓立比 4:6',
+        extraText: (note) => note.id == 10 ? '腓立比書 腓立比 4:6' : '約翰福音 14:27',
+      ).single.id,
+      10,
+    );
     expect(searchNotesForList(searchable, '不存在'), isEmpty);
   });
 

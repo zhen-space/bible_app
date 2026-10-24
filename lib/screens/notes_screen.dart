@@ -493,8 +493,20 @@ class _SearchViewState extends ConsumerState<_SearchView> {
   @override
   Widget build(BuildContext context) {
     final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
+    final books = ref.watch(booksProvider).value;
     final q = query.trim();
-    final matches = searchNotesForList(notes, q);
+    final matches = searchNotesForList(
+      notes,
+      q,
+      extraText: (note) {
+        final fallback = '${note.bookId} ${note.chapter}:${note.verse}';
+        if (books == null || note.bookId < 1 || note.bookId > books.length) {
+          return fallback;
+        }
+        final book = books[note.bookId - 1];
+        return '${book.name} ${book.abbr} $fallback';
+      },
+    );
     return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),

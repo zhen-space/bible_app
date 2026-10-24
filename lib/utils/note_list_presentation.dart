@@ -43,7 +43,11 @@ List<Note> sortNotesForList(Iterable<Note> values, NoteSortOrder order) {
   return notes;
 }
 
-List<Note> searchNotesForList(Iterable<Note> values, String query) {
+List<Note> searchNotesForList(
+  Iterable<Note> values,
+  String query, {
+  String Function(Note note)? extraText,
+}) {
   final terms = query
       .trim()
       .toLowerCase()
@@ -53,7 +57,12 @@ List<Note> searchNotesForList(Iterable<Note> values, String query) {
   if (terms.isEmpty) return const [];
 
   final matches = values.where((note) {
-    final searchable = [note.title, note.content, ...note.tagList]
+    final searchable = [
+      note.title,
+      note.content,
+      ...note.tagList,
+      if (extraText != null) extraText(note),
+    ]
         .join(' ')
         .toLowerCase();
     return terms.every(searchable.contains);
