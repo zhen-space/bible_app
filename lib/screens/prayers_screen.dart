@@ -57,9 +57,11 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
   }
 
   Future<void> _setStatus(Iterable<Prayer> prayers, PrayerStatus status) async {
+    final changed = prayers.where((prayer) => prayer.status != status).toList();
+    if (changed.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
     final now = DateTime.now().millisecondsSinceEpoch;
-    for (final prayer in prayers) {
+    for (final prayer in changed) {
       await db.savePrayer(
         prayer.copyWith(
           status: status,
@@ -71,6 +73,27 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
     }
     _selection.cancel();
     ref.invalidate(allPrayersProvider);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            changed.length == 1
+                ? '已更新為「${status.label}」'
+                : '已更新 ${changed.length} 則禱告事項',
+          ),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () async {
+              for (final prayer in changed) {
+                await db.savePrayer(prayer);
+              }
+              ref.invalidate(allPrayersProvider);
+            },
+          ),
+        ),
+      );
   }
 
   Future<void> _delete(Iterable<Prayer> prayers) async {
