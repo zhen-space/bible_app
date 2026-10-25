@@ -9,6 +9,14 @@ void main() {
     Prayer(id: 3, title: 'C', status: PrayerStatus.ended),
   ];
 
+  test('篩選偏好可安全還原，未知值回到禱告中', () {
+    expect(decodePrayerListFilter('all'), PrayerListFilter.all);
+    expect(decodePrayerListFilter('answered'), PrayerListFilter.answered);
+    expect(decodePrayerListFilter('ended'), PrayerListFilter.ended);
+    expect(decodePrayerListFilter('unknown'), PrayerListFilter.praying);
+    expect(decodePrayerListFilter(null), PrayerListFilter.praying);
+  });
+
   test('禱告狀態篩選回傳對應項目', () {
     expect(
       filterPrayersForList(

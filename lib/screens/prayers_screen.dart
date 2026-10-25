@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -15,6 +16,7 @@ class PrayersScreen extends ConsumerStatefulWidget {
 }
 
 class _PrayersScreenState extends ConsumerState<PrayersScreen> {
+  static const _filterPreferenceKey = 'prayers_list_filter';
   final SelectionController<int> _selection = SelectionController<int>();
   PrayerListFilter _filter = PrayerListFilter.praying;
 
@@ -22,6 +24,24 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
   void initState() {
     super.initState();
     _selection.addListener(_changed);
+    _loadFilter();
+  }
+
+  Future<void> _loadFilter() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(
+      () => _filter = decodePrayerListFilter(
+        prefs.getString(_filterPreferenceKey),
+      ),
+    );
+  }
+
+  Future<void> _changeFilter(PrayerListFilter filter) async {
+    _selection.cancel();
+    setState(() => _filter = filter);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_filterPreferenceKey, filter.name);
   }
 
   void _changed() {
@@ -224,10 +244,7 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
                         child: FilterChip(
                           label: Text(_prayerFilterLabel(filter, list)),
                           selected: _filter == filter,
-                          onSelected: (_) {
-                            _selection.cancel();
-                            setState(() => _filter = filter);
-                          },
+                          onSelected: (_) => _changeFilter(filter),
                         ),
                       ),
                   ],

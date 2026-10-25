@@ -2,6 +2,13 @@ import '../models/models.dart';
 
 enum PrayerListFilter { praying, all, answered, ended }
 
+PrayerListFilter decodePrayerListFilter(String? value) {
+  for (final filter in PrayerListFilter.values) {
+    if (filter.name == value) return filter;
+  }
+  return PrayerListFilter.praying;
+}
+
 List<Prayer> filterPrayersForList(
   Iterable<Prayer> values,
   PrayerListFilter filter,
