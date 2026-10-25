@@ -127,6 +127,13 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
           : AppBar(
               title: const Text('信仰生活代辦'),
               actions: [
+                if (todos.any((todo) => todo.done))
+                  IconButton(
+                    tooltip: '清除已完成',
+                    icon: const Icon(Icons.delete_sweep_outlined),
+                    onPressed: () =>
+                        _delete(todos.where((todo) => todo.done)),
+                  ),
                 if (todos.isNotEmpty)
                   TextButton(
                     onPressed: _selection.start,
