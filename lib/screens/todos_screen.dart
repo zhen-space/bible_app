@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../utils/todo_list_presentation.dart';
 import '../widgets/student_ux.dart';
 
 class TodosScreen extends ConsumerStatefulWidget {
@@ -14,6 +15,7 @@ class TodosScreen extends ConsumerStatefulWidget {
 
 class _TodosScreenState extends ConsumerState<TodosScreen> {
   final SelectionController<int> _selection = SelectionController<int>();
+  TodoListFilter _filter = TodoListFilter.pending;
 
   @override
   void initState() {
@@ -53,8 +55,14 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
         title: Text(list.length == 1 ? '刪除這項代辦？' : '刪除 ${list.length} 項代辦？'),
         content: const Text('會沿用既有刪除與同步紀錄，不會由滑動手勢直接做永久刪除。'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('刪除')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('刪除'),
+          ),
         ],
       ),
     );
@@ -71,10 +79,14 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
   Widget build(BuildContext context) {
     final async = ref.watch(allTodosProvider);
     final todos = async.value ?? const <Todo>[];
-    final selectedTodos = todos
+    final visibleTodos = filterTodosForList(todos, _filter);
+    final selectedTodos = visibleTodos
         .where((t) => t.id != null && _selection.contains(t.id!))
         .toList();
-    final selectableIds = todos.where((t) => t.id != null).map((t) => t.id!).toList();
+    final selectableIds = visibleTodos
+        .where((t) => t.id != null)
+        .map((t) => t.id!)
+        .toList();
 
     return Scaffold(
       appBar: _selection.active
@@ -84,7 +96,8 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
               totalCount: selectableIds.length,
               onCancel: _selection.cancel,
               onSelectAll: () {
-                if (_selection.count == selectableIds.length && selectableIds.isNotEmpty) {
+                if (_selection.count == selectableIds.length &&
+                    selectableIds.isNotEmpty) {
                   _selection.cancel();
                   _selection.start();
                 } else {
@@ -96,7 +109,10 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
               title: const Text('信仰生活代辦'),
               actions: [
                 if (todos.isNotEmpty)
-                  TextButton(onPressed: _selection.start, child: const Text('選取')),
+                  TextButton(
+                    onPressed: _selection.start,
+                    child: const Text('選取'),
+                  ),
               ],
             ),
       floatingActionButton: _selection.active
@@ -107,29 +123,32 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
               child: const Icon(Icons.add),
             ),
       bottomNavigationBar: _selection.active
-          ? StudentBatchActionBar(actions: [
-              StudentBatchAction(
-                label: '完成',
-                icon: Icons.check_circle_outline,
-                onPressed: selectedTodos.isEmpty
-                    ? null
-                    : () => _setDone(selectedTodos, true),
-              ),
-              StudentBatchAction(
-                label: '未完成',
-                icon: Icons.radio_button_unchecked,
-                onPressed: selectedTodos.isEmpty
-                    ? null
-                    : () => _setDone(selectedTodos, false),
-              ),
-              StudentBatchAction(
-                label: '刪除',
-                icon: Icons.delete_outline,
-                destructive: true,
-                onPressed:
-                    selectedTodos.isEmpty ? null : () => _delete(selectedTodos),
-              ),
-            ])
+          ? StudentBatchActionBar(
+              actions: [
+                StudentBatchAction(
+                  label: '完成',
+                  icon: Icons.check_circle_outline,
+                  onPressed: selectedTodos.isEmpty
+                      ? null
+                      : () => _setDone(selectedTodos, true),
+                ),
+                StudentBatchAction(
+                  label: '未完成',
+                  icon: Icons.radio_button_unchecked,
+                  onPressed: selectedTodos.isEmpty
+                      ? null
+                      : () => _setDone(selectedTodos, false),
+                ),
+                StudentBatchAction(
+                  label: '刪除',
+                  icon: Icons.delete_outline,
+                  destructive: true,
+                  onPressed: selectedTodos.isEmpty
+                      ? null
+                      : () => _delete(selectedTodos),
+                ),
+              ],
+            )
           : null,
       body: async.when(
         loading: () => const StudentCompactLoading(),
@@ -146,9 +165,10 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
             );
           }
           final doneCount = list.where((t) => t.done).length;
+          final visible = filterTodosForList(list, _filter);
           return ListView.separated(
             padding: const EdgeInsets.only(bottom: 96),
-            itemCount: list.length + 1,
+            itemCount: visible.isEmpty ? 3 : visible.length + 2,
             separatorBuilder: (_, i) => i == 0
                 ? const SizedBox.shrink()
                 : const Divider(height: 1, indent: 56),
@@ -159,16 +179,62 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
                   child: Text(
                     '已完成 $doneCount / ${list.length} 項',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.outline),
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
                   ),
                 );
               }
-              final todo = list[index - 1];
+              if (index == 1) {
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: SegmentedButton<TodoListFilter>(
+                    segments: const [
+                      ButtonSegment(
+                        value: TodoListFilter.pending,
+                        label: Text('待完成'),
+                      ),
+                      ButtonSegment(
+                        value: TodoListFilter.all,
+                        label: Text('全部'),
+                      ),
+                      ButtonSegment(
+                        value: TodoListFilter.completed,
+                        label: Text('已完成'),
+                      ),
+                    ],
+                    selected: {_filter},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) {
+                      _selection.cancel();
+                      setState(() => _filter = selection.first);
+                    },
+                  ),
+                );
+              }
+              if (visible.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 56),
+                  child: StudentEmptyState(
+                    title: _filter == TodoListFilter.completed
+                        ? '還沒有已完成的代辦'
+                        : '目前沒有待完成的代辦',
+                    subtitle: _filter == TodoListFilter.completed
+                        ? '完成代辦後會整理在這裡。'
+                        : '做得很好，可以新增下一個行動。',
+                    icon: _filter == TodoListFilter.completed
+                        ? Icons.check_circle_outline
+                        : Icons.task_alt,
+                  ),
+                );
+              }
+              final todo = visible[index - 2];
               final id = todo.id!;
               final selected = _selection.contains(id);
               final row = ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 4,
+                ),
                 leading: _selection.active
                     ? Checkbox(
                         value: selected,
@@ -219,7 +285,7 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
   final todos = ref.read(allTodosProvider).value ?? const <Todo>[];
   final cats = {
     for (final t in todos)
-      if (t.category.isNotEmpty) t.category
+      if (t.category.isNotEmpty) t.category,
   }.toList();
 
   showModalBottomSheet<void>(
@@ -229,17 +295,20 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
     showDragHandle: true,
     builder: (ctx) => Padding(
       padding: EdgeInsets.fromLTRB(
-          20, 0, 20, MediaQuery.viewInsetsOf(ctx).bottom + 20),
+        20,
+        0,
+        20,
+        MediaQuery.viewInsetsOf(ctx).bottom + 20,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             existing == null ? '新增代辦' : '編輯代辦',
-            style: Theme.of(ctx)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700),
+            style: Theme.of(
+              ctx,
+            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 18),
           TextField(
@@ -273,7 +342,9 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
               final text = content.text.trim();
               if (text.isEmpty) return;
               Navigator.pop(ctx);
-              await ref.read(databaseServiceProvider).saveTodo(
+              await ref
+                  .read(databaseServiceProvider)
+                  .saveTodo(
                     Todo(
                       id: existing?.id,
                       category: category.text.trim(),
