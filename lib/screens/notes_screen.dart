@@ -632,6 +632,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   int? _anchorVerse;
   Timer? _debounce;
   Future<void> _saveQueue = Future.value();
+  int _saveRevision = 0;
   String saved = '';
   bool _discardOnDispose = false;
 
@@ -720,6 +721,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     final refs = List<String>.of(_extraRefs);
     final createdAt = widget.existing?.createdAt ?? 0;
     final database = ref.read(databaseServiceProvider);
+    final revision = ++_saveRevision;
     if (!silent && mounted) setState(() => saved = '儲存中…');
 
     _saveQueue = _saveQueue.then((_) async {
@@ -740,10 +742,12 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
         _id = await database.saveNoteFull(note);
         if (mounted) {
           ref.invalidate(allNotesProvider);
-          if (!silent) setState(() => saved = '已儲存');
+          if (!silent && revision == _saveRevision) {
+            setState(() => saved = '已儲存');
+          }
         }
       } catch (_) {
-        if (!silent && mounted) {
+        if (!silent && mounted && revision == _saveRevision) {
           setState(() => saved = '儲存失敗');
         }
       }
