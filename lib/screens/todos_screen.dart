@@ -207,18 +207,18 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                   child: SegmentedButton<TodoListFilter>(
-                    segments: const [
+                    segments: [
                       ButtonSegment(
                         value: TodoListFilter.pending,
-                        label: Text('待完成'),
+                        label: Text('待辦 ${list.length - doneCount}'),
                       ),
                       ButtonSegment(
                         value: TodoListFilter.all,
-                        label: Text('全部'),
+                        label: Text('全部 ${list.length}'),
                       ),
                       ButtonSegment(
                         value: TodoListFilter.completed,
-                        label: Text('已完成'),
+                        label: Text('完成 $doneCount'),
                       ),
                     ],
                     selected: {_filter},
