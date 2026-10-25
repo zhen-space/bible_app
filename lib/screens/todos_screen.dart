@@ -154,8 +154,7 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
                   IconButton(
                     tooltip: '清除已完成',
                     icon: const Icon(Icons.delete_sweep_outlined),
-                    onPressed: () =>
-                        _delete(todos.where((todo) => todo.done)),
+                    onPressed: () => _delete(todos.where((todo) => todo.done)),
                   ),
                 if (todos.isNotEmpty)
                   TextButton(
@@ -327,6 +326,7 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
 }
 
 void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
+  final formKey = GlobalKey<FormState>();
   final category = TextEditingController(text: existing?.category ?? '');
   final content = TextEditingController(text: existing?.content ?? '');
   final todos = ref.read(allTodosProvider).value ?? const <Todo>[];
@@ -347,65 +347,70 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
         20,
         MediaQuery.viewInsetsOf(ctx).bottom + 20,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            existing == null ? '新增代辦' : '編輯代辦',
-            style: Theme.of(
-              ctx,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 18),
-          TextField(
-            controller: content,
-            maxLines: 3,
-            autofocus: existing == null,
-            decoration: const InputDecoration(labelText: '要做的事'),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: category,
-            decoration: const InputDecoration(labelText: '分類'),
-          ),
-          if (cats.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final c in cats)
-                  ActionChip(
-                    label: Text(c),
-                    onPressed: () => category.text = c,
-                  ),
-              ],
+      child: Form(
+        key: formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              existing == null ? '新增代辦' : '編輯代辦',
+              style: Theme.of(
+                ctx,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 18),
+            TextFormField(
+              controller: content,
+              maxLines: 3,
+              autofocus: existing == null,
+              decoration: const InputDecoration(labelText: '要做的事'),
+              validator: (value) =>
+                  value?.trim().isEmpty ?? true ? '請輸入要完成的事項' : null,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: category,
+              decoration: const InputDecoration(labelText: '分類'),
+            ),
+            if (cats.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final c in cats)
+                    ActionChip(
+                      label: Text(c),
+                      onPressed: () => category.text = c,
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: () async {
+                if (!(formKey.currentState?.validate() ?? false)) return;
+                final text = content.text.trim();
+                Navigator.pop(ctx);
+                await ref
+                    .read(databaseServiceProvider)
+                    .saveTodo(
+                      Todo(
+                        id: existing?.id,
+                        category: category.text.trim(),
+                        content: text,
+                        done: existing?.done ?? false,
+                        createdAt: existing?.createdAt ?? 0,
+                        updatedAt: existing?.updatedAt ?? 0,
+                      ),
+                    );
+                ref.invalidate(allTodosProvider);
+              },
+              child: const Text('儲存'),
             ),
           ],
-          const SizedBox(height: 20),
-          FilledButton(
-            onPressed: () async {
-              final text = content.text.trim();
-              if (text.isEmpty) return;
-              Navigator.pop(ctx);
-              await ref
-                  .read(databaseServiceProvider)
-                  .saveTodo(
-                    Todo(
-                      id: existing?.id,
-                      category: category.text.trim(),
-                      content: text,
-                      done: existing?.done ?? false,
-                      createdAt: existing?.createdAt ?? 0,
-                      updatedAt: existing?.updatedAt ?? 0,
-                    ),
-                  );
-              ref.invalidate(allTodosProvider);
-            },
-            child: const Text('儲存'),
-          ),
-        ],
+        ),
       ),
     ),
   );
