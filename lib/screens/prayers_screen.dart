@@ -442,6 +442,7 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
   late int _prayerDate;
   late int _reminderAt;
   late int _answeredAt;
+  String? _validationError;
 
   WidgetRef get ref => widget.parentRef;
   Prayer? get existing => widget.existing;
@@ -484,6 +485,10 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
     return d?.millisecondsSinceEpoch ?? current;
   }
 
+  void _clearValidation() {
+    if (_validationError != null) setState(() => _validationError = null);
+  }
+
   @override
   Widget build(BuildContext context) {
     final answered = _status != PrayerStatus.praying;
@@ -521,18 +526,23 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
           const SizedBox(height: 16),
           TextField(
             controller: _title,
+            onChanged: (_) => _clearValidation(),
             decoration: const InputDecoration(labelText: '標題'),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _content,
+            onChanged: (_) => _clearValidation(),
             maxLines: 4,
             decoration: const InputDecoration(labelText: '禱告內容'),
           ),
           const SizedBox(height: 16),
           ScriptureReferenceField(
             values: _refs,
-            onChanged: (values) => setState(() => _refs = values),
+            onChanged: (values) => setState(() {
+              _refs = values;
+              _validationError = null;
+            }),
           ),
           const SizedBox(height: 16),
           Row(
@@ -581,12 +591,22 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
               decoration: const InputDecoration(labelText: '應允後回顧'),
             ),
           ],
+          if (_validationError != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              _validationError!,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
+          ],
           const SizedBox(height: 20),
           FilledButton(
             onPressed: () async {
               final text = _content.text.trim();
               final title = _title.text.trim();
-              if (text.isEmpty && title.isEmpty && _refs.isEmpty) return;
+              if (text.isEmpty && title.isEmpty && _refs.isEmpty) {
+                setState(() => _validationError = '請填寫標題、禱告內容或至少一處對應經文');
+                return;
+              }
               Navigator.pop(context);
               await ref
                   .read(databaseServiceProvider)
