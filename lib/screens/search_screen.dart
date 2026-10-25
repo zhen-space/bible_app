@@ -216,15 +216,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         title: TextField(
           controller: _controller,
           autofocus: true,
+          textInputAction: TextInputAction.search,
           decoration: const InputDecoration(
             hintText: '搜尋經文，或輸入「約3:16」直接跳轉',
             border: InputBorder.none,
           ),
           onChanged: _onQueryChanged,
+          onSubmitted: (value) {
+            _debounce?.cancel();
+            _search(value);
+          },
         ),
         actions: [
           if (_controller.text.isNotEmpty)
             IconButton(
+              tooltip: '清除搜尋',
               icon: const Icon(Icons.clear),
               onPressed: () {
                 _controller.clear();
@@ -285,7 +291,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                 ),
               if (_content.isNotEmpty) ...[
-                const _SectionLabel('內容'),
+                _SectionLabel('內容（${_content.length}）'),
                 for (final i in _content)
                   ListTile(
                     leading: const Icon(Icons.auto_stories_outlined),
@@ -305,7 +311,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
               ],
               if (_qa.isNotEmpty) ...[
-                const _SectionLabel('問答'),
+                _SectionLabel('問答（${_qa.length}）'),
                 for (final question in _qa)
                   ListTile(
                     leading: const Icon(Icons.forum_outlined),
@@ -320,7 +326,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
               ],
               if (_entities.isNotEmpty) ...[
-                const _SectionLabel('人物・地點・事件'),
+                _SectionLabel('人物・地點・事件（${_entities.length}）'),
                 for (final e in _entities)
                   ListTile(
                     leading: Icon(_entityIcon(e.type)),
@@ -332,7 +338,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              if (_results.any((hit) => hit.isExact)) const _SectionLabel('經文'),
+              if (_results.any((hit) => hit.isExact))
+                _SectionLabel(
+                  '經文（${_results.where((hit) => hit.isExact).length}）',
+                ),
               for (final hit in _results.where((hit) => hit.isExact))
                 _VerseResultTile(
                   hit: hit,
@@ -357,7 +366,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                 ),
               if (_results.any((hit) => !hit.isExact))
-                const _SectionLabel('相關經文'),
+                _SectionLabel(
+                  '相關經文（${_results.where((hit) => !hit.isExact).length}）',
+                ),
               for (final hit in _results.where((hit) => !hit.isExact))
                 _VerseResultTile(
                   hit: hit,
