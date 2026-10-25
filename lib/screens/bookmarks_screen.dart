@@ -133,13 +133,33 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
   }
 
   Future<void> remove(Iterable<Bookmark> items) async {
+    final removed = items.toList();
+    if (removed.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in items) {
+    for (final item in removed) {
       await db.toggleBookmark(item.bookId, item.chapter, item.verse);
     }
     selection.cancel();
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已移除 ${removed.length} 個書籤'),
+        action: SnackBarAction(
+          label: '復原',
+          onPressed: () async {
+            if (!mounted) return;
+            for (final item in removed) {
+              await db.toggleBookmark(item.bookId, item.chapter, item.verse);
+            }
+            if (!mounted) return;
+            ref.invalidate(allBookmarksProvider);
+            ref.invalidate(chapterMarksProvider);
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -277,13 +297,38 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
   }
 
   Future<void> remove(Iterable<Highlight> items) async {
+    final removed = items.toList();
+    if (removed.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in items) {
+    for (final item in removed) {
       await db.setHighlight(item.bookId, item.chapter, item.verse, null);
     }
     selection.cancel();
     ref.invalidate(allHighlightsProvider);
     ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('已移除 ${removed.length} 個螢光筆標記'),
+        action: SnackBarAction(
+          label: '復原',
+          onPressed: () async {
+            if (!mounted) return;
+            for (final item in removed) {
+              await db.setHighlight(
+                item.bookId,
+                item.chapter,
+                item.verse,
+                item.color,
+              );
+            }
+            if (!mounted) return;
+            ref.invalidate(allHighlightsProvider);
+            ref.invalidate(chapterMarksProvider);
+          },
+        ),
+      ),
+    );
   }
 
   @override
