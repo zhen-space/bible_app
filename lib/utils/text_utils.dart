@@ -3,6 +3,19 @@ import 'package:flutter/material.dart';
 
 import '../data/entities.dart';
 
+/// 搜尋多個詞時採 AND，比對不分英文字母大小寫。
+bool matchesAllQueryTerms(String query, Iterable<String> fields) {
+  final terms = query
+      .trim()
+      .toLowerCase()
+      .split(RegExp(r'\s+'))
+      .where((term) => term.isNotEmpty)
+      .toList();
+  if (terms.isEmpty) return false;
+  final searchable = fields.join(' ').toLowerCase();
+  return terms.every(searchable.contains);
+}
+
 /// 取出內容中「包含關鍵詞的那一句」。
 /// 以句末標點（。！？；換行）為界；找不到關鍵詞時回傳開頭一段。
 String sentenceWithMatch(String content, String query) {

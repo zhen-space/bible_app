@@ -78,21 +78,26 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       final universe = await ref.read(authorizedStudyContentProvider.future);
       final questions = await ref.read(publishedQuestionsProvider('').future);
       if (!mounted || currentRequest != _searchRequest) return;
-      bool hit(String s) => s.contains(term);
       setState(() {
         _jump = VerseLocator.parse(q, books);
         _entities = searchEntities(q);
         _content = universe
             .where(
-              (i) =>
-                  hit(i.title) ||
-                  hit(i.body) ||
-                  i.tags.any(hit) ||
-                  i.scriptureRefs.any(hit),
+              (i) => matchesAllQueryTerms(term, [
+                i.title,
+                i.body,
+                ...i.tags,
+                ...i.scriptureRefs,
+              ]),
             )
             .toList();
         _qa = questions
-            .where((question) => hit(question.title) || hit(question.body))
+            .where(
+              (question) => matchesAllQueryTerms(
+                term,
+                [question.title, question.body],
+              ),
+            )
             .toList();
         _results = ref
             .read(bibleRepositoryProvider)
