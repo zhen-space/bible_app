@@ -435,7 +435,10 @@ class _ByBookView extends ConsumerWidget {
           title: Text(books[id - 1].name),
           subtitle: Text('${byBook[id]!.length} 則'),
           children: [
-            for (final n in byBook[id]!)
+            for (final n in sortNotesForList(
+              byBook[id]!,
+              NoteSortOrder.scripture,
+            ))
               _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
           ],
         ),
@@ -468,7 +471,10 @@ class _ByTagView extends ConsumerWidget {
           title: Text('#$tag'),
           subtitle: Text('${byTag[tag]!.length} 則'),
           children: [
-            for (final n in byTag[tag]!)
+            for (final n in sortNotesForList(
+              byTag[tag]!,
+              NoteSortOrder.updated,
+            ))
               _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
           ],
         ),
