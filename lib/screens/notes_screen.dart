@@ -785,12 +785,23 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 );
                 if (confirmed != true || !mounted) return;
                 _debounce?.cancel();
+                await _save(silent: true);
+                if (!mounted) return;
                 _discardOnDispose = true;
-                await _saveQueue;
-                await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
-                ref.invalidate(allNotesProvider);
-                ref.invalidate(deletedNotesProvider);
-                if (context.mounted) Navigator.pop(context);
+                try {
+                  await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
+                  ref.invalidate(allNotesProvider);
+                  ref.invalidate(deletedNotesProvider);
+                  if (mounted) Navigator.pop(this.context);
+                } catch (_) {
+                  _discardOnDispose = false;
+                  if (mounted) {
+                    setState(() => saved = '刪除失敗');
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text('無法刪除筆記，請再試一次')),
+                    );
+                  }
+                }
               },
               itemBuilder: (_) => const [PopupMenuItem(value: 'delete', child: Text('移到最近刪除'))],
             ),
