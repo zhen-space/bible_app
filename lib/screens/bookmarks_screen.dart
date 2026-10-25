@@ -7,6 +7,7 @@ import '../providers/providers.dart';
 import '../services/download_stub.dart'
     if (dart.library.js_interop) '../services/download_web.dart';
 import '../theme/app_theme.dart';
+import '../utils/marker_list_presentation.dart';
 import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'faith_map_screen.dart';
@@ -90,6 +91,7 @@ class _BookmarkTab extends ConsumerStatefulWidget {
 
 class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
   final SelectionController<String> selection = SelectionController<String>();
+  MarkerSortOrder sortOrder = MarkerSortOrder.recent;
 
   String keyOf(Bookmark b) => '${b.bookId}:${b.chapter}:${b.verse}';
 
@@ -138,8 +140,9 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
       return const StudentEmptyState(
           title: '還沒有書籤', subtitle: '在 Reader 選取經文即可加入書籤。', icon: Icons.bookmark_outline);
     }
-    final chosen = items.where((b) => selection.contains(keyOf(b))).toList();
-    final keys = items.map(keyOf).toList();
+    final sorted = sortBookmarksForList(items, sortOrder);
+    final chosen = sorted.where((b) => selection.contains(keyOf(b))).toList();
+    final keys = sorted.map(keyOf).toList();
     return Column(children: [
       _SelectionHeader(
         active: selection.active,
@@ -148,13 +151,15 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
         onSelect: selection.start,
         onCancel: selection.cancel,
         onAll: () => selection.selectAll(keys),
+        sortOrder: sortOrder,
+        onSortChanged: (value) => setState(() => sortOrder = value),
       ),
       Expanded(
         child: ListView.separated(
-          itemCount: items.length,
+          itemCount: sorted.length,
           separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
           itemBuilder: (context, i) {
-            final b = items[i];
+            final b = sorted[i];
             final book = books[b.bookId - 1];
             final key = keyOf(b);
             final row = ListTile(
@@ -213,6 +218,7 @@ class _HighlightTab extends ConsumerStatefulWidget {
 
 class _HighlightTabState extends ConsumerState<_HighlightTab> {
   final SelectionController<String> selection = SelectionController<String>();
+  MarkerSortOrder sortOrder = MarkerSortOrder.recent;
   String keyOf(Highlight h) => '${h.bookId}:${h.chapter}:${h.verse}';
 
   @override
@@ -261,7 +267,8 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
       return const StudentEmptyState(
           title: '還沒有螢光筆', subtitle: '在 Reader 選取經文即可標記。', icon: Icons.brush_outlined);
     }
-    final chosen = items.where((h) => selection.contains(keyOf(h))).toList();
+    final sorted = sortHighlightsForList(items, sortOrder);
+    final chosen = sorted.where((h) => selection.contains(keyOf(h))).toList();
     return Column(children: [
       _SelectionHeader(
         active: selection.active,
@@ -269,14 +276,16 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
         total: items.length,
         onSelect: selection.start,
         onCancel: selection.cancel,
-        onAll: () => selection.selectAll(items.map(keyOf)),
+        onAll: () => selection.selectAll(sorted.map(keyOf)),
+        sortOrder: sortOrder,
+        onSortChanged: (value) => setState(() => sortOrder = value),
       ),
       Expanded(
         child: ListView.separated(
-          itemCount: items.length,
+          itemCount: sorted.length,
           separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
           itemBuilder: (context, i) {
-            final h = items[i];
+            final h = sorted[i];
             final book = books[h.bookId - 1];
             final key = keyOf(h);
             final label = labels[h.color];
@@ -349,6 +358,8 @@ class _SelectionHeader extends StatelessWidget {
     required this.onSelect,
     required this.onCancel,
     required this.onAll,
+    this.sortOrder,
+    this.onSortChanged,
   });
   final bool active;
   final int count;
@@ -356,6 +367,8 @@ class _SelectionHeader extends StatelessWidget {
   final VoidCallback onSelect;
   final VoidCallback onCancel;
   final VoidCallback onAll;
+  final MarkerSortOrder? sortOrder;
+  final ValueChanged<MarkerSortOrder>? onSortChanged;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -369,7 +382,27 @@ class _SelectionHeader extends StatelessWidget {
             TextButton(onPressed: onAll, child: const Text('全選')),
             TextButton(onPressed: onCancel, child: const Text('取消')),
           ] else
-            TextButton(onPressed: onSelect, child: const Text('選取')),
+            ...[
+              if (sortOrder != null && onSortChanged != null)
+                PopupMenuButton<MarkerSortOrder>(
+                  tooltip: '排序',
+                  icon: const Icon(Icons.sort),
+                  onSelected: onSortChanged,
+                  itemBuilder: (_) => [
+                    CheckedPopupMenuItem(
+                      value: MarkerSortOrder.recent,
+                      checked: sortOrder == MarkerSortOrder.recent,
+                      child: const Text('最近加入'),
+                    ),
+                    CheckedPopupMenuItem(
+                      value: MarkerSortOrder.scripture,
+                      checked: sortOrder == MarkerSortOrder.scripture,
+                      child: const Text('經文位置'),
+                    ),
+                  ],
+                ),
+              TextButton(onPressed: onSelect, child: const Text('選取')),
+            ],
         ]),
       );
 }
