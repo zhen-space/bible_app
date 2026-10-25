@@ -720,25 +720,32 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     final refs = List<String>.of(_extraRefs);
     final createdAt = widget.existing?.createdAt ?? 0;
     final database = ref.read(databaseServiceProvider);
+    if (!silent && mounted) setState(() => saved = '儲存中…');
 
     _saveQueue = _saveQueue.then((_) async {
       if (_discardOnDispose) return;
-      final note = Note(
-        id: _id,
-        bookId: bookId,
-        chapter: chapter,
-        verse: verse,
-        title: title,
-        content: content,
-        tags: tags,
-        refs: refs,
-        createdAt: createdAt,
-        updatedAt: 0,
-      );
-      _id = await database.saveNoteFull(note);
-      if (mounted) {
-        ref.invalidate(allNotesProvider);
-        if (!silent) setState(() => saved = '已儲存');
+      try {
+        final note = Note(
+          id: _id,
+          bookId: bookId,
+          chapter: chapter,
+          verse: verse,
+          title: title,
+          content: content,
+          tags: tags,
+          refs: refs,
+          createdAt: createdAt,
+          updatedAt: 0,
+        );
+        _id = await database.saveNoteFull(note);
+        if (mounted) {
+          ref.invalidate(allNotesProvider);
+          if (!silent) setState(() => saved = '已儲存');
+        }
+      } catch (_) {
+        if (!silent && mounted) {
+          setState(() => saved = '儲存失敗');
+        }
       }
     });
     return _saveQueue;
@@ -801,7 +808,26 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           const SizedBox(height: 18),
           TextField(controller: _tags, decoration: const InputDecoration(labelText: '標籤', prefixIcon: Icon(Icons.tag))),
           const SizedBox(height: 12),
-          Text(saved, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.outline)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  saved,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: saved == '儲存失敗'
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.outline,
+                      ),
+                ),
+              ),
+              if (saved == '儲存失敗')
+                TextButton.icon(
+                  onPressed: _save,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('重新儲存'),
+                ),
+            ],
+          ),
         ],
       ),
     );
