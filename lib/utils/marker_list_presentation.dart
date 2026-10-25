@@ -2,6 +2,13 @@ import '../models/models.dart';
 
 enum MarkerSortOrder { recent, scripture }
 
+MarkerSortOrder decodeMarkerSortOrder(String? value) {
+  for (final order in MarkerSortOrder.values) {
+    if (order.name == value) return order;
+  }
+  return MarkerSortOrder.recent;
+}
+
 List<Bookmark> sortBookmarksForList(
   Iterable<Bookmark> values,
   MarkerSortOrder order,

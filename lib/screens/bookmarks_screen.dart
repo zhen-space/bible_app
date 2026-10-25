@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -90,6 +91,7 @@ class _BookmarkTab extends ConsumerStatefulWidget {
 }
 
 class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
+  static const _sortPreferenceKey = 'bookmarks_sort_order';
   final SelectionController<String> selection = SelectionController<String>();
   MarkerSortOrder sortOrder = MarkerSortOrder.recent;
 
@@ -99,6 +101,23 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
   void initState() {
     super.initState();
     selection.addListener(_refreshState);
+    _restoreSortOrder();
+  }
+
+  Future<void> _restoreSortOrder() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      sortOrder = decodeMarkerSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+    });
+  }
+
+  Future<void> _changeSortOrder(MarkerSortOrder value) async {
+    setState(() => sortOrder = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, value.name);
   }
 
   void _refreshState() {
@@ -152,7 +171,7 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
         onCancel: selection.cancel,
         onAll: () => selection.selectAll(keys),
         sortOrder: sortOrder,
-        onSortChanged: (value) => setState(() => sortOrder = value),
+        onSortChanged: _changeSortOrder,
       ),
       Expanded(
         child: ListView.separated(
@@ -217,6 +236,7 @@ class _HighlightTab extends ConsumerStatefulWidget {
 }
 
 class _HighlightTabState extends ConsumerState<_HighlightTab> {
+  static const _sortPreferenceKey = 'highlights_sort_order';
   final SelectionController<String> selection = SelectionController<String>();
   MarkerSortOrder sortOrder = MarkerSortOrder.recent;
   String keyOf(Highlight h) => '${h.bookId}:${h.chapter}:${h.verse}';
@@ -225,6 +245,23 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
   void initState() {
     super.initState();
     selection.addListener(_refreshState);
+    _restoreSortOrder();
+  }
+
+  Future<void> _restoreSortOrder() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      sortOrder = decodeMarkerSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+    });
+  }
+
+  Future<void> _changeSortOrder(MarkerSortOrder value) async {
+    setState(() => sortOrder = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, value.name);
   }
 
   void _refreshState() {
@@ -278,7 +315,7 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
         onCancel: selection.cancel,
         onAll: () => selection.selectAll(sorted.map(keyOf)),
         sortOrder: sortOrder,
-        onSortChanged: (value) => setState(() => sortOrder = value),
+        onSortChanged: _changeSortOrder,
       ),
       Expanded(
         child: ListView.separated(

@@ -3,6 +3,12 @@ import 'package:bible_app/utils/marker_list_presentation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('排序偏好可安全還原', () {
+    expect(decodeMarkerSortOrder('scripture'), MarkerSortOrder.scripture);
+    expect(decodeMarkerSortOrder('unknown'), MarkerSortOrder.recent);
+    expect(decodeMarkerSortOrder(null), MarkerSortOrder.recent);
+  });
+
   test('書籤可依最近加入或經文位置排序', () {
     final items = [
       const Bookmark(bookId: 43, chapter: 3, verse: 16, createdAt: 30),
