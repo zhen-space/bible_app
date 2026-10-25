@@ -631,6 +631,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   int? _anchorChapter;
   int? _anchorVerse;
   Timer? _debounce;
+  Future<void> _saveQueue = Future.value();
   String saved = '';
   bool _discardOnDispose = false;
 
@@ -703,27 +704,44 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _scheduleSave();
   }
 
-  Future<void> _save({bool silent = false}) async {
+  Future<void> _save({bool silent = false}) {
+    if (_discardOnDispose) return Future.value();
     final has = _title.text.trim().isNotEmpty || _body.text.trim().isNotEmpty || _anchorBook != null || _extraRefs.isNotEmpty;
-    if (!has) return;
+    if (!has) return Future.value();
     _anchorBook ??= 1;
     _anchorChapter ??= 1;
     _anchorVerse ??= 1;
-    final note = Note(
-      id: _id,
-      bookId: _anchorBook!,
-      chapter: _anchorChapter!,
-      verse: _anchorVerse!,
-      title: _title.text.trim(),
-      content: _body.text.trim(),
-      tags: _tags.text.trim(),
-      refs: _extraRefs,
-      createdAt: widget.existing?.createdAt ?? 0,
-      updatedAt: 0,
-    );
-    _id = await ref.read(databaseServiceProvider).saveNoteFull(note);
-    ref.invalidate(allNotesProvider);
-    if (!silent && mounted) setState(() => saved = '已儲存');
+    final bookId = _anchorBook!;
+    final chapter = _anchorChapter!;
+    final verse = _anchorVerse!;
+    final title = _title.text.trim();
+    final content = _body.text.trim();
+    final tags = _tags.text.trim();
+    final refs = List<String>.of(_extraRefs);
+    final createdAt = widget.existing?.createdAt ?? 0;
+    final database = ref.read(databaseServiceProvider);
+
+    _saveQueue = _saveQueue.then((_) async {
+      if (_discardOnDispose) return;
+      final note = Note(
+        id: _id,
+        bookId: bookId,
+        chapter: chapter,
+        verse: verse,
+        title: title,
+        content: content,
+        tags: tags,
+        refs: refs,
+        createdAt: createdAt,
+        updatedAt: 0,
+      );
+      _id = await database.saveNoteFull(note);
+      if (mounted) {
+        ref.invalidate(allNotesProvider);
+        if (!silent) setState(() => saved = '已儲存');
+      }
+    });
+    return _saveQueue;
   }
 
   @override
@@ -757,6 +775,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
                 if (confirmed != true || !mounted) return;
                 _debounce?.cancel();
                 _discardOnDispose = true;
+                await _saveQueue;
                 await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
                 ref.invalidate(allNotesProvider);
                 ref.invalidate(deletedNotesProvider);
