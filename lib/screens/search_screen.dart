@@ -132,8 +132,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _openChapter(int bookId, int chapter, {int? verse}) {
-    // 有實際打開結果才記進搜尋歷史
-    ref.read(searchHistoryProvider.notifier).add(_controller.text);
+    _rememberSearch();
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -146,6 +145,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
       ),
     );
+  }
+
+  void _rememberSearch() {
+    // 有實際打開結果才記進搜尋歷史，避免只輸入一半的字詞污染紀錄。
+    ref.read(searchHistoryProvider.notifier).add(_controller.text);
   }
 
   Future<void> _copyVerse(Book book, VerseRef verse) => copyHumanReadable(
@@ -302,12 +306,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         if (i.audience == Audience.church) '教會專屬',
                       ].join('・'),
                     ),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => StudentStudyContentDetail(item: i),
-                      ),
-                    ),
+                    onTap: () {
+                      _rememberSearch();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StudentStudyContentDetail(item: i),
+                        ),
+                      );
+                    },
                   ),
               ],
               if (_qa.isNotEmpty) ...[
@@ -317,12 +324,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     leading: const Icon(Icons.forum_outlined),
                     title: Text(question.title),
                     subtitle: const Text('聖經／信仰問答'),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => QuestionDetailScreen(id: question.id),
-                      ),
-                    ),
+                    onTap: () {
+                      _rememberSearch();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => QuestionDetailScreen(id: question.id),
+                        ),
+                      );
+                    },
                   ),
               ],
               if (_entities.isNotEmpty) ...[
@@ -586,7 +596,14 @@ class _HistoryView extends ConsumerWidget {
           runSpacing: 8,
           children: [
             for (final q in history)
-              ActionChip(label: Text(q), onPressed: () => onTap(q)),
+              InputChip(
+                label: Text(q),
+                tooltip: '再次搜尋「$q」',
+                onPressed: () => onTap(q),
+                onDeleted: () =>
+                    ref.read(searchHistoryProvider.notifier).remove(q),
+                deleteButtonTooltipMessage: '移除「$q」',
+              ),
           ],
         ),
       ],
