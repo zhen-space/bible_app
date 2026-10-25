@@ -632,6 +632,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   int? _anchorVerse;
   Timer? _debounce;
   String saved = '';
+  bool _discardOnDispose = false;
 
   @override
   void initState() {
@@ -653,7 +654,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _save(silent: true);
+    if (!_discardOnDispose) _save(silent: true);
     _title.dispose();
     _body.dispose();
     _tags.dispose();
@@ -736,6 +737,26 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             PopupMenuButton<String>(
               onSelected: (value) async {
                 if (value != 'delete') return;
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('移到最近刪除？'),
+                    content: const Text('之後仍可從「最近刪除」還原這則筆記。'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('刪除'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !mounted) return;
+                _debounce?.cancel();
+                _discardOnDispose = true;
                 await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
                 ref.invalidate(allNotesProvider);
                 ref.invalidate(deletedNotesProvider);
