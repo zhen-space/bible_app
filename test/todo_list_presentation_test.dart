@@ -9,6 +9,13 @@ void main() {
     Todo(id: 3, category: '', content: '背經', done: false),
   ];
 
+  test('篩選偏好可安全還原，未知值回到待完成', () {
+    expect(decodeTodoListFilter('all'), TodoListFilter.all);
+    expect(decodeTodoListFilter('completed'), TodoListFilter.completed);
+    expect(decodeTodoListFilter('unknown'), TodoListFilter.pending);
+    expect(decodeTodoListFilter(null), TodoListFilter.pending);
+  });
+
   test('待完成篩選只保留未完成項目', () {
     expect(
       filterTodosForList(todos, TodoListFilter.pending).map((todo) => todo.id),

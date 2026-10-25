@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
@@ -14,6 +15,7 @@ class TodosScreen extends ConsumerStatefulWidget {
 }
 
 class _TodosScreenState extends ConsumerState<TodosScreen> {
+  static const _filterPreferenceKey = 'todos_list_filter';
   final SelectionController<int> _selection = SelectionController<int>();
   TodoListFilter _filter = TodoListFilter.pending;
 
@@ -21,6 +23,23 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
   void initState() {
     super.initState();
     _selection.addListener(_changed);
+    _loadFilter();
+  }
+
+  Future<void> _loadFilter() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(
+      () =>
+          _filter = decodeTodoListFilter(prefs.getString(_filterPreferenceKey)),
+    );
+  }
+
+  Future<void> _changeFilter(TodoListFilter filter) async {
+    _selection.cancel();
+    setState(() => _filter = filter);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_filterPreferenceKey, filter.name);
   }
 
   void _changed() {
@@ -204,10 +223,8 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
                     ],
                     selected: {_filter},
                     showSelectedIcon: false,
-                    onSelectionChanged: (selection) {
-                      _selection.cancel();
-                      setState(() => _filter = selection.first);
-                    },
+                    onSelectionChanged: (selection) =>
+                        _changeFilter(selection.first),
                   ),
                 );
               }
