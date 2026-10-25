@@ -488,7 +488,19 @@ class _SearchView extends ConsumerStatefulWidget {
 }
 
 class _SearchViewState extends ConsumerState<_SearchView> {
+  final _controller = TextEditingController();
   String query = '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _clearQuery() {
+    _controller.clear();
+    setState(() => query = '');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -511,10 +523,35 @@ class _SearchViewState extends ConsumerState<_SearchView> {
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: TextField(
-          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: '搜尋標題、內文或標籤'),
+          controller: _controller,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: '搜尋標題、內文、標籤或經文位置',
+            suffixIcon: q.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: '清除搜尋',
+                    onPressed: _clearQuery,
+                    icon: const Icon(Icons.clear),
+                  ),
+          ),
           onChanged: (value) => setState(() => query = value),
         ),
       ),
+      if (q.isNotEmpty && matches.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${matches.length} 則結果',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+            ),
+          ),
+        ),
       Expanded(
         child: q.isEmpty
             ? const StudentEmptyState(title: '搜尋你的筆記')
