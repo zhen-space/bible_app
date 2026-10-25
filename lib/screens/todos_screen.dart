@@ -57,12 +57,35 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
   Future<void> _refresh() async => ref.invalidate(allTodosProvider);
 
   Future<void> _setDone(Iterable<Todo> todos, bool done) async {
+    final changed = todos.where((todo) => todo.done != done).toList();
+    if (changed.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final todo in todos) {
+    for (final todo in changed) {
       await db.saveTodo(todo.copyWith(done: done));
     }
     _selection.cancel();
     await _refresh();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            changed.length == 1
+                ? (done ? '已標記為完成' : '已改回待完成')
+                : '已更新 ${changed.length} 項代辦',
+          ),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () async {
+              for (final todo in changed) {
+                await db.saveTodo(todo);
+              }
+              await _refresh();
+            },
+          ),
+        ),
+      );
   }
 
   Future<void> _delete(Iterable<Todo> todos) async {
