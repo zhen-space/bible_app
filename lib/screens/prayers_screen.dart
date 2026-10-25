@@ -568,6 +568,13 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
             leading: const Icon(Icons.event_outlined),
             title: const Text('禱告日期'),
             subtitle: Text(_prayerDate > 0 ? _ymd(_prayerDate) : '未設定'),
+            trailing: _prayerDate > 0
+                ? IconButton(
+                    tooltip: '清除禱告日期',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => setState(() => _prayerDate = 0),
+                  )
+                : const Icon(Icons.chevron_right),
             onTap: () async {
               final value = await _pickDate(_prayerDate);
               if (mounted) setState(() => _prayerDate = value);
@@ -578,6 +585,13 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
             leading: const Icon(Icons.alarm_outlined),
             title: const Text('提醒'),
             subtitle: Text(_reminderAt > 0 ? _ymd(_reminderAt) : '未設定'),
+            trailing: _reminderAt > 0
+                ? IconButton(
+                    tooltip: '清除提醒',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => setState(() => _reminderAt = 0),
+                  )
+                : const Icon(Icons.chevron_right),
             onTap: () async {
               final value = await _pickDate(_reminderAt);
               if (mounted) setState(() => _reminderAt = value);
