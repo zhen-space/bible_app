@@ -16,6 +16,8 @@ import 'chapter_screen.dart';
 import 'qa_screen.dart' show QuestionDetailScreen;
 import 'study_content_screen.dart';
 
+const _searchSuggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
+
 /// 全文搜尋 + 節位快速跳轉（約3:16）+ 搜尋歷史。
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -436,8 +438,6 @@ class _SearchEmptyState extends StatelessWidget {
   final VoidCallback onReset;
   final ValueChanged<String> onSuggestedSearch;
 
-  static const suggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
-
   @override
   Widget build(BuildContext context) => ListView(
     padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
@@ -462,7 +462,7 @@ class _SearchEmptyState extends StatelessWidget {
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final suggestion in suggestions)
+            for (final suggestion in _searchSuggestions)
               ActionChip(
                 avatar: const Icon(Icons.search, size: 16),
                 label: Text(suggestion),
@@ -640,34 +640,60 @@ class _HistoryView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final history = ref.watch(searchHistoryProvider);
-    if (history.isEmpty) {
-      return const Center(child: Text('輸入關鍵字搜尋，或輸入節位（例：約3:16）'));
-    }
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
-            TextButton(
-              onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
-              child: const Text('清除'),
+        if (history.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Icon(Icons.manage_search, size: 42),
+                SizedBox(height: 12),
+                Text('輸入關鍵字搜尋，或輸入節位（例：約3:16）'),
+              ],
             ),
-          ],
-        ),
+          )
+        else ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
+              TextButton(
+                onPressed: () =>
+                    ref.read(searchHistoryProvider.notifier).clear(),
+                child: const Text('清除'),
+              ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final q in history)
+                InputChip(
+                  label: Text(q),
+                  tooltip: '再次搜尋「$q」',
+                  onPressed: () => onTap(q),
+                  onDeleted: () =>
+                      ref.read(searchHistoryProvider.notifier).remove(q),
+                  deleteButtonTooltipMessage: '移除「$q」',
+                ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 24),
+        Text('試著問一句話', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final q in history)
-              InputChip(
-                label: Text(q),
-                tooltip: '再次搜尋「$q」',
-                onPressed: () => onTap(q),
-                onDeleted: () =>
-                    ref.read(searchHistoryProvider.notifier).remove(q),
-                deleteButtonTooltipMessage: '移除「$q」',
+            for (final suggestion in _searchSuggestions)
+              ActionChip(
+                avatar: const Icon(Icons.search, size: 16),
+                label: Text(suggestion),
+                onPressed: () => onTap(suggestion),
               ),
           ],
         ),
