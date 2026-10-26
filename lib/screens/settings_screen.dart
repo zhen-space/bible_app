@@ -51,15 +51,44 @@ class SettingsScreen extends ConsumerWidget {
           const _SectionHeader('閱讀'),
           ListTile(
             title: const Text('內文字級'),
-            subtitle: Slider(
-              value: fontSize,
-              min: FontSizeNotifier.min,
-              max: FontSizeNotifier.max,
-              divisions: 14,
-              label: fontSize.toStringAsFixed(0),
-              onChanged: (v) => ref.read(fontSizeProvider.notifier).set(v),
+            subtitle: Row(
+              children: [
+                IconButton(
+                  tooltip: '縮小字級',
+                  onPressed: fontSize <= FontSizeNotifier.min
+                      ? null
+                      : () => ref
+                            .read(fontSizeProvider.notifier)
+                            .set(fontSize - 1),
+                  icon: const Icon(Icons.text_decrease),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: fontSize,
+                    min: FontSizeNotifier.min,
+                    max: FontSizeNotifier.max,
+                    divisions: 18,
+                    label: fontSize.toStringAsFixed(0),
+                    onChanged: (v) =>
+                        ref.read(fontSizeProvider.notifier).set(v),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '放大字級',
+                  onPressed: fontSize >= FontSizeNotifier.max
+                      ? null
+                      : () => ref
+                            .read(fontSizeProvider.notifier)
+                            .set(fontSize + 1),
+                  icon: const Icon(Icons.text_increase),
+                ),
+              ],
             ),
-            trailing: Text('${fontSize.toStringAsFixed(0)}pt'),
+            trailing: Semantics(
+              label: '目前字級',
+              value: '${fontSize.toStringAsFixed(0)}pt',
+              child: Text('${fontSize.toStringAsFixed(0)}pt'),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
