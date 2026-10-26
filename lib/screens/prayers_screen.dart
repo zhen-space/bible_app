@@ -492,6 +492,13 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final answered = _status != PrayerStatus.praying;
+    final existingPrayers =
+        ref.read(allPrayersProvider).value ?? const <Prayer>[];
+    final categories = prayerCategorySuggestions(existingPrayers);
+    final subcategories = prayerSubcategorySuggestions(
+      existingPrayers,
+      _category.text,
+    );
     return Padding(
       padding: EdgeInsets.fromLTRB(
         20,
@@ -550,6 +557,7 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
               Expanded(
                 child: TextField(
                   controller: _category,
+                  onChanged: (_) => setState(() {}),
                   decoration: const InputDecoration(labelText: '分類'),
                 ),
               ),
@@ -562,6 +570,41 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
               ),
             ],
           ),
+          if (categories.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final category in categories)
+                  ActionChip(
+                    label: Text(category),
+                    onPressed: () => setState(() {
+                      _category.text = category;
+                      _subcategory.clear();
+                    }),
+                  ),
+              ],
+            ),
+          ],
+          if (subcategories.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final subcategory in subcategories)
+                  ActionChip(
+                    avatar: const Icon(
+                      Icons.subdirectory_arrow_right,
+                      size: 16,
+                    ),
+                    label: Text(subcategory),
+                    onPressed: () => _subcategory.text = subcategory,
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 12),
           ListTile(
             contentPadding: EdgeInsets.zero,

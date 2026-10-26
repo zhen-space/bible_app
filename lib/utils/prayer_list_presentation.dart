@@ -21,3 +21,25 @@ List<Prayer> filterPrayersForList(
   PrayerListFilter.ended =>
     values.where((prayer) => prayer.status == PrayerStatus.ended).toList(),
 };
+
+List<String> prayerCategorySuggestions(Iterable<Prayer> values) {
+  final categories = {
+    for (final prayer in values)
+      if (prayer.category.trim().isNotEmpty) prayer.category.trim(),
+  }.toList()..sort();
+  return categories;
+}
+
+List<String> prayerSubcategorySuggestions(
+  Iterable<Prayer> values,
+  String category,
+) {
+  final selected = category.trim();
+  final subcategories = {
+    for (final prayer in values)
+      if (prayer.category.trim() == selected &&
+          prayer.subcategory.trim().isNotEmpty)
+        prayer.subcategory.trim(),
+  }.toList()..sort();
+  return subcategories;
+}

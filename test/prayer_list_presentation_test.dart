@@ -41,4 +41,16 @@ void main() {
     );
     expect(filterPrayersForList(prayers, PrayerListFilter.all), hasLength(3));
   });
+
+  test('分類建議會去重排序，子分類只顯示目前分類', () {
+    const values = [
+      Prayer(category: '家庭', subcategory: '父母'),
+      Prayer(category: '教會', subcategory: '小組'),
+      Prayer(category: '家庭', subcategory: '孩子'),
+      Prayer(category: '家庭', subcategory: '孩子'),
+      Prayer(category: '  ', subcategory: '忽略'),
+    ];
+    expect(prayerCategorySuggestions(values), ['家庭', '教會']);
+    expect(prayerSubcategorySuggestions(values, '家庭'), ['孩子', '父母']);
+  });
 }
