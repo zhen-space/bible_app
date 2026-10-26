@@ -17,6 +17,24 @@ void main() {
     expect(decodePrayerListFilter(null), PrayerListFilter.praying);
   });
 
+  test('排序偏好可安全還原並支援分類與最近更新', () {
+    expect(decodePrayerSortOrder('recent'), PrayerSortOrder.recent);
+    expect(decodePrayerSortOrder('unknown'), PrayerSortOrder.category);
+    const values = [
+      Prayer(id: 1, category: '教會', createdAt: 10, updatedAt: 10),
+      Prayer(id: 2, category: '家庭', createdAt: 20, updatedAt: 30),
+      Prayer(id: 3, category: '家庭', createdAt: 30, updatedAt: 20),
+    ];
+    expect(
+      sortPrayersForList(values, PrayerSortOrder.category).map((p) => p.id),
+      [3, 2, 1],
+    );
+    expect(
+      sortPrayersForList(values, PrayerSortOrder.recent).map((p) => p.id),
+      [2, 3, 1],
+    );
+  });
+
   test('禱告狀態篩選回傳對應項目', () {
     expect(
       filterPrayersForList(

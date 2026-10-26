@@ -17,8 +17,10 @@ class PrayersScreen extends ConsumerStatefulWidget {
 
 class _PrayersScreenState extends ConsumerState<PrayersScreen> {
   static const _filterPreferenceKey = 'prayers_list_filter';
+  static const _sortPreferenceKey = 'prayers_sort_order';
   final SelectionController<int> _selection = SelectionController<int>();
   PrayerListFilter _filter = PrayerListFilter.praying;
+  PrayerSortOrder _sortOrder = PrayerSortOrder.category;
 
   @override
   void initState() {
@@ -30,11 +32,10 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
   Future<void> _loadFilter() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    setState(
-      () => _filter = decodePrayerListFilter(
-        prefs.getString(_filterPreferenceKey),
-      ),
-    );
+    setState(() {
+      _filter = decodePrayerListFilter(prefs.getString(_filterPreferenceKey));
+      _sortOrder = decodePrayerSortOrder(prefs.getString(_sortPreferenceKey));
+    });
   }
 
   Future<void> _changeFilter(PrayerListFilter filter) async {
@@ -42,6 +43,12 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
     setState(() => _filter = filter);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_filterPreferenceKey, filter.name);
+  }
+
+  Future<void> _changeSortOrder(PrayerSortOrder order) async {
+    setState(() => _sortOrder = order);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_sortPreferenceKey, order.name);
   }
 
   void _changed() {
@@ -183,6 +190,23 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
           : AppBar(
               title: const Text('禱告事項'),
               actions: [
+                PopupMenuButton<PrayerSortOrder>(
+                  tooltip: '排序',
+                  icon: const Icon(Icons.sort),
+                  onSelected: _changeSortOrder,
+                  itemBuilder: (_) => [
+                    CheckedPopupMenuItem(
+                      value: PrayerSortOrder.category,
+                      checked: _sortOrder == PrayerSortOrder.category,
+                      child: const Text('依分類'),
+                    ),
+                    CheckedPopupMenuItem(
+                      value: PrayerSortOrder.recent,
+                      checked: _sortOrder == PrayerSortOrder.recent,
+                      child: const Text('最近更新'),
+                    ),
+                  ],
+                ),
                 if (prayers.isNotEmpty)
                   TextButton(
                     onPressed: _selection.start,
@@ -251,7 +275,10 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
               onAction: () => showPrayerEditor(context, ref, null),
             );
           }
-          final visible = filterPrayersForList(list, _filter);
+          final visible = sortPrayersForList(
+            filterPrayersForList(list, _filter),
+            _sortOrder,
+          );
           String? lastCategory;
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -290,7 +317,9 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
                       final p = visible[index];
                       final id = p.id!;
                       final category = p.category.isEmpty ? '未分類' : p.category;
-                      final showHeader = category != lastCategory;
+                      final showHeader =
+                          _sortOrder == PrayerSortOrder.category &&
+                          category != lastCategory;
                       lastCategory = category;
                       final row = ListTile(
                         contentPadding: const EdgeInsets.symmetric(

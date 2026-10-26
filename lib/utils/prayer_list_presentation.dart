@@ -2,11 +2,40 @@ import '../models/models.dart';
 
 enum PrayerListFilter { praying, all, answered, ended }
 
+enum PrayerSortOrder { category, recent }
+
 PrayerListFilter decodePrayerListFilter(String? value) {
   for (final filter in PrayerListFilter.values) {
     if (filter.name == value) return filter;
   }
   return PrayerListFilter.praying;
+}
+
+PrayerSortOrder decodePrayerSortOrder(String? value) {
+  for (final order in PrayerSortOrder.values) {
+    if (order.name == value) return order;
+  }
+  return PrayerSortOrder.category;
+}
+
+List<Prayer> sortPrayersForList(
+  Iterable<Prayer> values,
+  PrayerSortOrder order,
+) {
+  final prayers = values.toList();
+  prayers.sort((a, b) {
+    if (order == PrayerSortOrder.recent) {
+      final byUpdated = b.updatedAt.compareTo(a.updatedAt);
+      if (byUpdated != 0) return byUpdated;
+      return b.createdAt.compareTo(a.createdAt);
+    }
+    final byCategory = a.category.compareTo(b.category);
+    if (byCategory != 0) return byCategory;
+    final bySubcategory = a.subcategory.compareTo(b.subcategory);
+    if (bySubcategory != 0) return bySubcategory;
+    return b.createdAt.compareTo(a.createdAt);
+  });
+  return prayers;
 }
 
 List<Prayer> filterPrayersForList(
