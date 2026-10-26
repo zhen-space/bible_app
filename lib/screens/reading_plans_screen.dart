@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/reading_plans.dart';
 import '../models/models.dart';
@@ -127,9 +128,32 @@ class ReadingPlanDetailScreen extends ConsumerStatefulWidget {
 
 class _ReadingPlanDetailScreenState
     extends ConsumerState<ReadingPlanDetailScreen> {
+  static const _showCompletedPreferenceKey = 'reading_plan_show_completed_days';
   bool _seeded = false;
+  bool _showCompletedDays = false;
 
   ReadingPlan get plan => widget.plan;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreCompletedDaysPreference();
+  }
+
+  Future<void> _restoreCompletedDaysPreference() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _showCompletedDays =
+          preferences.getBool(_showCompletedPreferenceKey) ?? false;
+    });
+  }
+
+  Future<void> _setShowCompletedDays(bool value) async {
+    setState(() => _showCompletedDays = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_showCompletedPreferenceKey, value);
+  }
 
   /// 一次性把舊版「整天完成」攤平成逐項目（只在還沒有 v2 進度時）。
   Future<void> _maybeSeedFromLegacy(List<List<ChapterRef>> schedule) async {
@@ -189,7 +213,22 @@ class _ReadingPlanDetailScreenState
     final progressAsync = ref.watch(planItemProgressProvider(plan.id));
 
     return Scaffold(
-      appBar: AppBar(title: Text('${plan.emoji} ${plan.name}')),
+      appBar: AppBar(
+        title: Text('${plan.emoji} ${plan.name}'),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: '顯示選項',
+            onSelected: (_) => _setShowCompletedDays(!_showCompletedDays),
+            itemBuilder: (_) => [
+              CheckedPopupMenuItem(
+                value: 'completed',
+                checked: _showCompletedDays,
+                child: const Text('顯示已完成天數'),
+              ),
+            ],
+          ),
+        ],
+      ),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => _PlanLoadError(
@@ -229,9 +268,13 @@ class _ReadingPlanDetailScreenState
               : schedule[todayIdx];
           final todayDoneCount = todayChapters.where(itemDone).length;
           final nextChapter = firstIncompleteChapter(todayChapters, done);
+          final visibleDayIndexes = [
+            for (var i = 0; i < schedule.length; i++)
+              if (_showCompletedDays || !dayDone(schedule[i])) i,
+          ];
 
           return ListView.builder(
-            itemCount: schedule.length + 1,
+            itemCount: visibleDayIndexes.length + 1,
             itemBuilder: (context, idx) {
               if (idx == 0) {
                 return _HeaderCard(
@@ -249,7 +292,7 @@ class _ReadingPlanDetailScreenState
                       : () => _completeNextChapter(todayIdx + 1, nextChapter),
                 );
               }
-              final i = idx - 1;
+              final i = visibleDayIndexes[idx - 1];
               final day = i + 1;
               final chapters = schedule[i];
               final isToday = i == todayIdx;
