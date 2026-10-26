@@ -54,6 +54,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     _focusNode.requestFocus();
   }
 
+  void _applySuggestedSearch(String query) {
+    _controller
+      ..text = query
+      ..selection = TextSelection.collapsed(offset: query.length);
+    _search(query);
+  }
+
   void _onQueryChanged(String q) {
     _debounce?.cancel();
     if (q.trim().isEmpty) {
@@ -101,10 +108,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             .toList();
         _qa = questions
             .where(
-              (question) => matchesAllQueryTerms(
-                term,
-                [question.title, question.body],
-              ),
+              (question) =>
+                  matchesAllQueryTerms(term, [question.title, question.body]),
             )
             .toList();
         _results = ref
@@ -286,12 +291,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               _content.isEmpty &&
               _qa.isEmpty &&
               _entities.isEmpty) {
-            return StudentEmptyState(
-              title: '找不到「${_controller.text.trim()}」',
-              subtitle: '試試較短的關鍵詞、經文人物，或用一句自然語句描述你的需要。',
-              icon: Icons.search_off,
-              actionLabel: '重新輸入',
-              onAction: _resetAndFocusSearch,
+            return _SearchEmptyState(
+              query: _controller.text.trim(),
+              onReset: _resetAndFocusSearch,
+              onSuggestedSearch: _applySuggestedSearch,
             );
           }
           return ListView(
@@ -420,6 +423,56 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       ),
     );
   }
+}
+
+class _SearchEmptyState extends StatelessWidget {
+  const _SearchEmptyState({
+    required this.query,
+    required this.onReset,
+    required this.onSuggestedSearch,
+  });
+
+  final String query;
+  final VoidCallback onReset;
+  final ValueChanged<String> onSuggestedSearch;
+
+  static const suggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+    children: [
+      StudentEmptyState(
+        title: '找不到「$query」',
+        subtitle: '試試較短的關鍵詞、經文人物，或用一句自然語句描述你的需要。',
+        icon: Icons.search_off,
+        actionLabel: '重新輸入',
+        onAction: onReset,
+      ),
+      const SizedBox(height: 20),
+      Text(
+        '也可以試試',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
+      const SizedBox(height: 10),
+      Center(
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final suggestion in suggestions)
+              ActionChip(
+                avatar: const Icon(Icons.search, size: 16),
+                label: Text(suggestion),
+                onPressed: () => onSuggestedSearch(suggestion),
+              ),
+          ],
+        ),
+      ),
+    ],
+  );
 }
 
 class _VerseResultTile extends StatelessWidget {
