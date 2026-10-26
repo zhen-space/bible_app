@@ -22,6 +22,7 @@ void main() {
           '神愛世人，甚至將他的獨生子賜給他們。',
           '智慧必入你心；你的靈要以知識為美。',
           '無關的測試文字。',
+          '你當剛強壯膽！不要懼怕，也不要驚惶。',
         ],
       ],
     ),
@@ -61,6 +62,12 @@ void main() {
     final hits = RelatedVerseSearch.search(books, '我很迷惘，做決定沒有方向');
 
     expect(hits.any((hit) => hit.verse.verse == 5), isTrue);
+  });
+
+  test('需要勇氣的自然語句能找到剛強壯膽經文', () {
+    final hits = RelatedVerseSearch.search(books, '我現在需要勇氣');
+
+    expect(hits.any((hit) => hit.verse.verse == 7), isTrue);
   });
 
   test('實際和合本中，焦慮口語句能找到腓立比書 4:6-7', () async {
