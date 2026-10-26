@@ -13,6 +13,7 @@ import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import '../utils/share_utils.dart';
 import '../theme/app_theme.dart';
+import '../widgets/student_ux.dart';
 import 'search_screen.dart';
 
 /// 節註解「區塊標題」（annotation 呈現用，純函式，可測）：
@@ -401,7 +402,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     return booksAsync.when(
       loading: () =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),
-      error: (e, _) => Scaffold(body: Center(child: Text('載入失敗：$e'))),
+      error: (_, _) => Scaffold(
+        appBar: AppBar(title: const Text('讀經')),
+        body: StudentErrorState(
+          message: '經文暫時無法載入。',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
+      ),
       data: (books) {
         final book = books[_bookId - 1];
         final verses = book.chapters[_chapter - 1];
@@ -662,7 +669,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           ),
                         ),
                       ),
-                if (widget.onPlanComplete != null && _isOriginalPlanChapter)
+                      if (widget.onPlanComplete != null &&
+                          _isOriginalPlanChapter)
                         IconButton(
                           icon: Icon(
                             _planItemCompleted
