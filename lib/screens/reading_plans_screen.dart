@@ -198,6 +198,26 @@ class _ReadingPlanDetailScreenState
       );
   }
 
+  Future<void> _completeToday(
+    int day,
+    List<ChapterRef> incompleteChapters,
+  ) async {
+    if (incompleteChapters.isEmpty) return;
+    await _setDay(day, incompleteChapters, true);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('已完成今日 ${incompleteChapters.length} 章'),
+          action: SnackBarAction(
+            label: '復原',
+            onPressed: () => _setDay(day, incompleteChapters, false),
+          ),
+        ),
+      );
+  }
+
   Future<void> _setDay(int day, List<ChapterRef> chapters, bool done) async {
     final db = ref.read(databaseServiceProvider);
     for (final c in chapters) {
@@ -268,6 +288,9 @@ class _ReadingPlanDetailScreenState
               : schedule[todayIdx];
           final todayDoneCount = todayChapters.where(itemDone).length;
           final nextChapter = firstIncompleteChapter(todayChapters, done);
+          final todayIncompleteChapters = todayChapters
+              .where((chapter) => !itemDone(chapter))
+              .toList();
           final visibleDayIndexes = [
             for (var i = 0; i < schedule.length; i++)
               if (_showCompletedDays || !dayDone(schedule[i])) i,
@@ -290,6 +313,13 @@ class _ReadingPlanDetailScreenState
                   onComplete: nextChapter == null
                       ? null
                       : () => _completeNextChapter(todayIdx + 1, nextChapter),
+                  remainingToday: todayIncompleteChapters.length,
+                  onCompleteToday: todayIncompleteChapters.length <= 1
+                      ? null
+                      : () => _completeToday(
+                          todayIdx + 1,
+                          todayIncompleteChapters,
+                        ),
                 );
               }
               final i = visibleDayIndexes[idx - 1];
@@ -437,6 +467,8 @@ class _HeaderCard extends StatelessWidget {
   final ChapterRef? nextChapter;
   final void Function(ChapterRef) onOpen;
   final VoidCallback? onComplete;
+  final int remainingToday;
+  final VoidCallback? onCompleteToday;
 
   const _HeaderCard({
     required this.todayDay,
@@ -449,6 +481,8 @@ class _HeaderCard extends StatelessWidget {
     required this.nextChapter,
     required this.onOpen,
     required this.onComplete,
+    required this.remainingToday,
+    required this.onCompleteToday,
   });
 
   @override
@@ -490,6 +524,14 @@ class _HeaderCard extends StatelessWidget {
                     icon: const Icon(Icons.check),
                     label: const Text('完成本章'),
                   ),
+                  if (onCompleteToday != null) ...[
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: onCompleteToday,
+                      icon: const Icon(Icons.done_all),
+                      label: Text('完成今日剩餘 $remainingToday 章'),
+                    ),
+                  ],
                 ],
               ],
             ),
