@@ -26,6 +26,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   List<VerseSearchHit> _results = [];
   // 「內容」＝授權後的 Study Content + Q&A。
   // Teacher Books/Chapters 已不再是 Student product surface；Study Content 本體仍照常可搜尋。
@@ -43,7 +44,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _debounce?.cancel();
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  void _resetAndFocusSearch() {
+    _controller.clear();
+    _clearSearch();
+    _focusNode.requestFocus();
   }
 
   void _onQueryChanged(String q) {
@@ -219,6 +227,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       appBar: AppBar(
         title: TextField(
           controller: _controller,
+          focusNode: _focusNode,
           autofocus: true,
           textInputAction: TextInputAction.search,
           decoration: const InputDecoration(
@@ -236,10 +245,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             IconButton(
               tooltip: '清除搜尋',
               icon: const Icon(Icons.clear),
-              onPressed: () {
-                _controller.clear();
-                _clearSearch();
-              },
+              onPressed: _resetAndFocusSearch,
             ),
         ],
         bottom: _searching
@@ -280,7 +286,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               _content.isEmpty &&
               _qa.isEmpty &&
               _entities.isEmpty) {
-            return const Center(child: Text('沒有找到符合的結果'));
+            return StudentEmptyState(
+              title: '找不到「${_controller.text.trim()}」',
+              subtitle: '試試較短的關鍵詞、經文人物，或用一句自然語句描述你的需要。',
+              icon: Icons.search_off,
+              actionLabel: '重新輸入',
+              onAction: _resetAndFocusSearch,
+            );
           }
           return ListView(
             children: [
