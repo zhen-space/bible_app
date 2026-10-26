@@ -40,6 +40,9 @@ class ChapterScreen extends ConsumerStatefulWidget {
   /// 進入、捲動、換章、換卷都**不**更新一般 Reading Position，也不記閱讀紀錄。
   final bool updateReadingPosition;
 
+  /// 從讀經計畫進入時，允許使用者不離開 Reader 就完成本章計畫進度。
+  final Future<void> Function()? onPlanComplete;
+
   const ChapterScreen({
     super.key,
     required this.bookId,
@@ -47,6 +50,7 @@ class ChapterScreen extends ConsumerStatefulWidget {
     this.initialOffset = 0,
     this.focusVerse,
     this.updateReadingPosition = true,
+    this.onPlanComplete,
   });
 
   @override
@@ -72,6 +76,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   int? _flashVerse; // 目前要閃的節（幾秒後清空）
   bool _focusPending = false; // 還沒捲到定位
   Timer? _flashTimer;
+  bool _planItemCompleted = false;
+
+  bool get _isOriginalPlanChapter =>
+      _bookId == widget.bookId && _chapter == widget.chapter;
 
   @override
   void initState() {
@@ -139,18 +147,24 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final ctx = _focusKey.currentContext;
     if (ctx != null) {
       _focusPending = false;
-      Scrollable.ensureVisible(ctx,
-          alignment: 0.3,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut);
+      Scrollable.ensureVisible(
+        ctx,
+        alignment: 0.3,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
       _startFlash();
       return;
     }
     if (_scroll.hasClients) {
       final pos = _scroll.position;
       if (pos.pixels < pos.maxScrollExtent) {
-        _scroll.jumpTo((pos.pixels + pos.viewportDimension * 0.85)
-            .clamp(0.0, pos.maxScrollExtent));
+        _scroll.jumpTo(
+          (pos.pixels + pos.viewportDimension * 0.85).clamp(
+            0.0,
+            pos.maxScrollExtent,
+          ),
+        );
         WidgetsBinding.instance.addPostFrameCallback((_) => _tryFocus());
       } else {
         _focusPending = false; // 到底仍沒建出來（罕見）→ 至少閃一下
@@ -170,13 +184,15 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   /// 記錄「造訪」到 Reading History（reading_log）。**不等於完成**——
   /// 完成是使用者主動按「完成本章」（見 _toggleComplete）。
   Future<void> _logRead() async {
-    await ref
-        .read(databaseServiceProvider)
-        .markChapterRead(_bookId, _chapter);
+    await ref.read(databaseServiceProvider).markChapterRead(_bookId, _chapter);
   }
 
   /// 使用者主動確認「完成／取消完成」本章。只在正常閱讀（非臨時瀏覽）出現。
-  Future<void> _toggleComplete(int bookId, int chapter, bool currentlyDone) async {
+  Future<void> _toggleComplete(
+    int bookId,
+    int chapter,
+    bool currentlyDone,
+  ) async {
     final db = ref.read(databaseServiceProvider);
     try {
       if (currentlyDone) {
@@ -185,16 +201,37 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
         await db.markChapterComplete(bookId, chapter);
       }
     } finally {
-      ref.invalidate(chapterCompleteProvider((bookId: bookId, chapter: chapter)));
+      ref.invalidate(
+        chapterCompleteProvider((bookId: bookId, chapter: chapter)),
+      );
       ref.invalidate(readChapterCountProvider);
       ref.invalidate(faithMapProvider);
       ref.invalidate(statsProvider);
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text(currentlyDone ? '已取消本章完成標記' : '已標記本章完成'),
-          duration: const Duration(seconds: 1)));
+          duration: const Duration(seconds: 1),
+        ),
+      );
     }
+  }
+
+  Future<void> _completePlanItem() async {
+    final callback = widget.onPlanComplete;
+    if (callback == null || _planItemCompleted || !_isOriginalPlanChapter) {
+      return;
+    }
+    await callback();
+    if (!mounted) return;
+    setState(() => _planItemCompleted = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('已完成讀經計畫中的本章'),
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   void _toggleSelect(int verseNo) {
@@ -251,7 +288,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   }
 
   /// 多選批次：複製／分享（純經文 / 經文＋出處）。
-  void _bulkCopyShare(Book book, List<String> allVerses, {required bool share}) {
+  void _bulkCopyShare(
+    Book book,
+    List<String> allVerses, {
+    required bool share,
+  }) {
     final verses = _selectedSorted;
     final texts = [for (final v in verses) allVerses[v - 1]];
     final citation = versesCitation(book, _chapter, verses);
@@ -287,9 +328,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   Future<void> _copyText(String value, bool share) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text(share ? '已複製，可貼到任何 App 分享' : '已複製'),
-          duration: const Duration(seconds: 2)));
+          duration: const Duration(seconds: 2),
+        ),
+      );
     }
     _clearSelection();
   }
@@ -333,8 +377,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
+        builder: (_) => ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
       ),
     );
   }
@@ -356,27 +399,35 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
         englishReady ? repo.english(_bookId, _chapter, verseNo) : null;
 
     return booksAsync.when(
-      loading: () => const Scaffold(
-          body: Center(child: CircularProgressIndicator())),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (e, _) => Scaffold(body: Center(child: Text('載入失敗：$e'))),
       data: (books) {
         final book = books[_bookId - 1];
         final verses = book.chapters[_chapter - 1];
         // 「完成本章」只在正常閱讀時提供（臨時瀏覽不記完成）。
-        final isComplete = widget.updateReadingPosition &&
+        final isComplete =
+            widget.updateReadingPosition &&
             (ref
-                    .watch(chapterCompleteProvider(
-                        (bookId: _bookId, chapter: _chapter)))
+                    .watch(
+                      chapterCompleteProvider((
+                        bookId: _bookId,
+                        chapter: _chapter,
+                      )),
+                    )
                     .value ??
                 false);
-        final marks = ref
-                .watch(chapterMarksProvider(
-                    (bookId: _bookId, chapter: _chapter)))
+        final marks =
+            ref
+                .watch(
+                  chapterMarksProvider((bookId: _bookId, chapter: _chapter)),
+                )
                 .value ??
             const ChapterMarks(bookmarks: {}, highlights: {}, notes: {});
         final ann = ref
-            .watch(chapterAnnotationProvider(
-                (bookId: _bookId, chapter: _chapter)))
+            .watch(
+              chapterAnnotationProvider((bookId: _bookId, chapter: _chapter)),
+            )
             .value;
         final verseAnns =
             ann?.verses ?? const <int, List<VerseAnnotationView>>{};
@@ -385,8 +436,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
         // 段落標題：來自章導讀的「分段」欄（後台可編輯），如「1-8 各支派在營地的位置」
         final headings = headingsFromOutline(ann?.chapter?.outline ?? const []);
         // 預抓本章社群註解（審核通過的公開投稿）
-        ref.watch(
-            publicNotesProvider((bookId: _bookId, chapter: _chapter)));
+        ref.watch(publicNotesProvider((bookId: _bookId, chapter: _chapter)));
         // 本卷統整：只在整卷最後一章的末尾顯示（章層級導讀/重點已移除）
         final bookSummary = _chapter == book.chapterCount
             ? ref.watch(bookAnnotationProvider(_bookId)).value?.summary
@@ -396,75 +446,83 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           appBar: _selectionMode
               ? _selectionAppBar(verses.length)
               : AppBar(
-            // 點標題（頂部入口）先開「66 卷書卷目錄」
-            title: InkWell(
-              onTap: () =>
-                  _showBookChapterPicker(books, startInBookList: true),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(child: Text('${book.name} $_chapter')),
-                  const Icon(Icons.arrow_drop_down, size: 22),
-                ],
-              ),
-            ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.search),
-                tooltip: '搜尋經文',
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const SearchScreen()),
+                  // 點標題（頂部入口）先開「66 卷書卷目錄」
+                  title: InkWell(
+                    onTap: () =>
+                        _showBookChapterPicker(books, startInBookList: true),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: Text('${book.name} $_chapter')),
+                        const Icon(Icons.arrow_drop_down, size: 22),
+                      ],
+                    ),
+                  ),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: '搜尋經文',
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SearchScreen()),
+                      ),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        tts.playing
+                            ? Icons.stop_circle
+                            : Icons.play_circle_outline,
+                      ),
+                      color: tts.playing
+                          ? Theme.of(context).colorScheme.secondary
+                          : null,
+                      tooltip: tts.playing ? '停止朗讀' : '聽這一章',
+                      onPressed: () =>
+                          ref.read(ttsProvider.notifier).toggle(verses),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        bilingual ? Icons.translate : Icons.translate_outlined,
+                      ),
+                      color: bilingual
+                          ? Theme.of(context).colorScheme.secondary
+                          : null,
+                      tooltip: bilingual ? '關閉中英對照' : '中英對照',
+                      onPressed: () =>
+                          ref.read(bilingualProvider.notifier).toggle(),
+                    ),
+                    IconButton(
+                      icon: Icon(
+                        mode == ReadingMode.verse
+                            ? Icons.notes
+                            : Icons.format_list_numbered,
+                      ),
+                      tooltip: mode == ReadingMode.verse ? '段落分段' : '逐節分行',
+                      onPressed: () =>
+                          ref.read(readingModeProvider.notifier).toggle(),
+                    ),
+                    if (widget.updateReadingPosition)
+                      IconButton(
+                        icon: Icon(
+                          isComplete
+                              ? Icons.check_circle
+                              : Icons.check_circle_outline,
+                        ),
+                        color: isComplete
+                            ? Theme.of(context).colorScheme.secondary
+                            : null,
+                        tooltip: isComplete ? '已完成本章（點擊取消）' : '標記本章完成',
+                        onPressed: () =>
+                            _toggleComplete(_bookId, _chapter, isComplete),
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.list),
+                      tooltip: '選卷選章',
+                      onPressed: () =>
+                          _showBookChapterPicker(books, startInBookList: true),
+                    ),
+                  ],
                 ),
-              ),
-              IconButton(
-                icon: Icon(tts.playing
-                    ? Icons.stop_circle
-                    : Icons.play_circle_outline),
-                color: tts.playing
-                    ? Theme.of(context).colorScheme.secondary
-                    : null,
-                tooltip: tts.playing ? '停止朗讀' : '聽這一章',
-                onPressed: () =>
-                    ref.read(ttsProvider.notifier).toggle(verses),
-              ),
-              IconButton(
-                icon: Icon(bilingual ? Icons.translate : Icons.translate_outlined),
-                color: bilingual
-                    ? Theme.of(context).colorScheme.secondary
-                    : null,
-                tooltip: bilingual ? '關閉中英對照' : '中英對照',
-                onPressed: () =>
-                    ref.read(bilingualProvider.notifier).toggle(),
-              ),
-              IconButton(
-                icon: Icon(mode == ReadingMode.verse
-                    ? Icons.notes
-                    : Icons.format_list_numbered),
-                tooltip: mode == ReadingMode.verse ? '段落分段' : '逐節分行',
-                onPressed: () =>
-                    ref.read(readingModeProvider.notifier).toggle(),
-              ),
-              if (widget.updateReadingPosition)
-                IconButton(
-                  icon: Icon(isComplete
-                      ? Icons.check_circle
-                      : Icons.check_circle_outline),
-                  color: isComplete
-                      ? Theme.of(context).colorScheme.secondary
-                      : null,
-                  tooltip: isComplete ? '已完成本章（點擊取消）' : '標記本章完成',
-                  onPressed: () =>
-                      _toggleComplete(_bookId, _chapter, isComplete),
-                ),
-              IconButton(
-                icon: const Icon(Icons.list),
-                tooltip: '選卷選章',
-                onPressed: () =>
-                    _showBookChapterPicker(books, startInBookList: true),
-              ),
-            ],
-          ),
           body: GestureDetector(
             onHorizontalDragEnd: (details) {
               final v = details.primaryVelocity ?? 0;
@@ -481,17 +539,19 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     key: PageStorageKey('$_bookId-$_chapter'),
                     controller: _scroll,
                     padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
-                    itemCount:
-                        verses.length + (bookSummary != null ? 1 : 0),
+                    itemCount: verses.length + (bookSummary != null ? 1 : 0),
                     itemBuilder: (context, i) {
                       // 首個 item 建好後（有 clients）嘗試還原捲動位置
                       if (i == 0) {
-                        WidgetsBinding.instance
-                            .addPostFrameCallback((_) => _maybeRestore());
+                        WidgetsBinding.instance.addPostFrameCallback(
+                          (_) => _maybeRestore(),
+                        );
                       }
                       if (i == verses.length) {
                         return _BookSummaryCard(
-                            bookName: book.name, text: bookSummary!);
+                          bookName: book.name,
+                          text: bookSummary!,
+                        );
                       }
                       final isFocus = widget.focusVerse == i + 1;
                       final verseNo = i + 1;
@@ -512,8 +572,14 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           if (_selectionMode) {
                             _toggleSelect(verseNo);
                           } else {
-                            _showVerseActions(books, book, verseNo, verses[i],
-                                marks, verseAnns[verseNo] ?? const []);
+                            _showVerseActions(
+                              books,
+                              book,
+                              verseNo,
+                              verses[i],
+                              marks,
+                              verseAnns[verseNo] ?? const [],
+                            );
                           }
                         },
                         onLongPress: () => _toggleSelect(verseNo),
@@ -523,7 +589,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _SectionHeading(
-                              text: headings[i + 1]!, fontSize: fontSize),
+                            text: headings[i + 1]!,
+                            fontSize: fontSize,
+                          ),
                           tile,
                         ],
                       );
@@ -535,18 +603,18 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     // 左右留白、上下寬鬆，讀起來不擁擠
                     padding: const EdgeInsets.fromLTRB(24, 12, 24, 96),
                     children: [
-                      Builder(builder: (_) {
-                        WidgetsBinding.instance
-                            .addPostFrameCallback((_) => _maybeRestore());
-                        return const SizedBox.shrink();
-                      }),
+                      Builder(
+                        builder: (_) {
+                          WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => _maybeRestore(),
+                          );
+                          return const SizedBox.shrink();
+                        },
+                      ),
                       _ParagraphChapter(
                         verses: verses,
                         english: englishReady
-                            ? [
-                                for (var v = 1; v <= verses.length; v++)
-                                  en(v)
-                              ]
+                            ? [for (var v = 1; v <= verses.length; v++) en(v)]
                             : null,
                         fontSize: fontSize,
                         highlights: marks.highlights,
@@ -557,45 +625,66 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         focusVerse: widget.focusVerse,
                         focusKey: _focusKey,
                         onTapVerse: (verseNo) => _showVerseActions(
-                            books,
-                            book,
-                            verseNo,
-                            verses[verseNo - 1],
-                            marks,
-                            verseAnns[verseNo] ?? const []),
+                          books,
+                          book,
+                          verseNo,
+                          verses[verseNo - 1],
+                          marks,
+                          verseAnns[verseNo] ?? const [],
+                        ),
                       ),
                       if (bookSummary != null)
                         _BookSummaryCard(
-                            bookName: book.name, text: bookSummary),
+                          bookName: book.name,
+                          text: bookSummary,
+                        ),
                     ],
                   ),
           ),
           bottomNavigationBar: _selectionMode
               ? _selectionBar(book, verses, marks)
               : BottomAppBar(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  tooltip: '上一章',
-                  onPressed: () => _turn(books, -1),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.chevron_left),
+                        tooltip: '上一章',
+                        onPressed: () => _turn(books, -1),
+                      ),
+                      // 點中間開「選卷選章」（可切書卷、點章跳轉）
+                      TextButton(
+                        onPressed: () => _showBookChapterPicker(books),
+                        child: Text(
+                          '${book.name} 第 $_chapter 章',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                if (widget.onPlanComplete != null && _isOriginalPlanChapter)
+                        IconButton(
+                          icon: Icon(
+                            _planItemCompleted
+                                ? Icons.check_circle
+                                : Icons.check_circle_outline,
+                          ),
+                          color: _planItemCompleted
+                              ? Theme.of(context).colorScheme.secondary
+                              : null,
+                          tooltip: _planItemCompleted ? '計畫本章已完成' : '完成計畫本章',
+                          onPressed: _planItemCompleted
+                              ? null
+                              : _completePlanItem,
+                        ),
+                      IconButton(
+                        icon: const Icon(Icons.chevron_right),
+                        tooltip: '下一章',
+                        onPressed: () => _turn(books, 1),
+                      ),
+                    ],
+                  ),
                 ),
-                // 點中間開「選卷選章」（可切書卷、點章跳轉）
-                TextButton(
-                  onPressed: () => _showBookChapterPicker(books),
-                  child: Text('${book.name} 第 $_chapter 章',
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface)),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  tooltip: '下一章',
-                  onPressed: () => _turn(books, 1),
-                ),
-              ],
-            ),
-          ),
         );
       },
     );
@@ -603,24 +692,24 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   /// 多選模式的 AppBar：顯示已選數、清除、全選。
   AppBar _selectionAppBar(int verseCount) => AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          tooltip: '取消選取',
-          onPressed: _clearSelection,
-        ),
-        title: Text('已選 ${_selected.length} 節'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.select_all),
-            tooltip: '全選本章',
-            onPressed: () => setState(() {
-              _selected
-                ..clear()
-                ..addAll(List.generate(verseCount, (i) => i + 1));
-            }),
-          ),
-        ],
-      );
+    leading: IconButton(
+      icon: const Icon(Icons.close),
+      tooltip: '取消選取',
+      onPressed: _clearSelection,
+    ),
+    title: Text('已選 ${_selected.length} 節'),
+    actions: [
+      IconButton(
+        icon: const Icon(Icons.select_all),
+        tooltip: '全選本章',
+        onPressed: () => setState(() {
+          _selected
+            ..clear()
+            ..addAll(List.generate(verseCount, (i) => i + 1));
+        }),
+      ),
+    ],
+  );
 
   /// 多選模式的底部批次動作列：螢光筆／書籤／稍後讀／複製／分享。
   Widget _selectionBar(Book book, List<String> verses, ChapterMarks marks) {
@@ -676,7 +765,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     _bulkHighlight(c);
                   },
                   child: CircleAvatar(
-                      radius: 18, backgroundColor: AppTheme.highlightSwatch(c)),
+                    radius: 18,
+                    backgroundColor: AppTheme.highlightSwatch(c),
+                  ),
                 ),
               IconButton(
                 icon: const Icon(Icons.format_color_reset),
@@ -696,7 +787,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   /// 選卷選章。[startInBookList] true＝先顯示 66 卷書卷目錄（**頂部入口**用）；
   /// false＝直接顯示目前書卷的章格（**底部 selector** 用）。兩種模式可互相切換
   /// （書卷目錄點書→該卷章格；章格點卷名→回書卷目錄）。點章走 _goTo 跳轉。
-  void _showBookChapterPicker(List<Book> books, {bool startInBookList = false}) {
+  void _showBookChapterPicker(
+    List<Book> books, {
+    bool startInBookList = false,
+  }) {
     var pickBookId = _bookId; // 目前展示哪一卷的章格（可與正在讀的不同）
     var showingBooks = startInBookList; // true＝書卷目錄；false＝章格
     showModalBottomSheet(
@@ -709,16 +803,18 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           // ── 模式一：66 卷書卷目錄（頂部入口的第一個畫面）──
           if (showingBooks) {
             Widget bookTile(Book bk) => ListTile(
-                  dense: true,
-                  title: Text(bk.name),
-                  trailing: Text('${bk.chapterCount} 章',
-                      style: Theme.of(ctx).textTheme.bodySmall),
-                  selected: bk.id == _bookId,
-                  onTap: () => setSheet(() {
-                    pickBookId = bk.id;
-                    showingBooks = false; // 選書 → 進該卷章格
-                  }),
-                );
+              dense: true,
+              title: Text(bk.name),
+              trailing: Text(
+                '${bk.chapterCount} 章',
+                style: Theme.of(ctx).textTheme.bodySmall,
+              ),
+              selected: bk.id == _bookId,
+              onTap: () => setSheet(() {
+                pickBookId = bk.id;
+                showingBooks = false; // 選書 → 進該卷章格
+              }),
+            );
             return SafeArea(
               child: ConstrainedBox(
                 constraints: BoxConstraints(maxHeight: maxH),
@@ -727,8 +823,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
-                      child: Text('選擇書卷（共 66 卷）',
-                          style: Theme.of(ctx).textTheme.titleMedium),
+                      child: Text(
+                        '選擇書卷（共 66 卷）',
+                        style: Theme.of(ctx).textTheme.titleMedium,
+                      ),
                     ),
                     const Divider(height: 1),
                     Flexible(
@@ -776,10 +874,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
                                 Flexible(
-                                  child: Text('${b.name}（${b.chapterCount} 章）',
-                                      textAlign: TextAlign.center,
-                                      style:
-                                          Theme.of(ctx).textTheme.titleMedium),
+                                  child: Text(
+                                    '${b.name}（${b.chapterCount} 章）',
+                                    textAlign: TextAlign.center,
+                                    style: Theme.of(ctx).textTheme.titleMedium,
+                                  ),
                                 ),
                                 const Icon(Icons.arrow_drop_down, size: 22),
                               ],
@@ -810,10 +909,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                               label: Text('$c'),
                               backgroundColor:
                                   (b.id == _bookId && c == _chapter)
-                                      ? Theme.of(ctx)
-                                          .colorScheme
-                                          .primaryContainer
-                                      : null,
+                                  ? Theme.of(ctx).colorScheme.primaryContainer
+                                  : null,
                               onPressed: () {
                                 Navigator.pop(ctx);
                                 _goTo(b.id, c);
@@ -833,26 +930,34 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   }
 
   Widget _pickerSectionLabel(BuildContext ctx, String text) => Align(
-        alignment: Alignment.centerLeft,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
-          child: Text(text,
-              style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
-                  color: Theme.of(ctx).colorScheme.primary,
-                  fontWeight: FontWeight.bold)),
+    alignment: Alignment.centerLeft,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Text(
+        text,
+        style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
+          color: Theme.of(ctx).colorScheme.primary,
+          fontWeight: FontWeight.bold,
         ),
-      );
+      ),
+    ),
+  );
 
   void _refreshMarks() {
-    ref.invalidate(
-        chapterMarksProvider((bookId: _bookId, chapter: _chapter)));
+    ref.invalidate(chapterMarksProvider((bookId: _bookId, chapter: _chapter)));
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(allHighlightsProvider);
     ref.invalidate(allNotesProvider);
   }
 
-  void _showVerseActions(List<Book> books, Book book, int verseNo, String text,
-      ChapterMarks marks, List<VerseAnnotationView> anns) {
+  void _showVerseActions(
+    List<Book> books,
+    Book book,
+    int verseNo,
+    String text,
+    ChapterMarks marks,
+    List<VerseAnnotationView> anns,
+  ) {
     // 目前 Active Church 名（教會專屬標題用；純 presentation，非授權依據）。
     final churchName = ref.read(activeChurchNameProvider).value;
     final db = ref.read(databaseServiceProvider);
@@ -861,12 +966,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final note = marks.notes[verseNo];
     // 點開一律附英文（不受對照開關影響，需要英文已載入）——先確保載入
     ref.read(bibleRepositoryProvider).loadEnglish();
-    final english =
-        ref.read(bibleRepositoryProvider).english(_bookId, _chapter, verseNo);
+    final english = ref
+        .read(bibleRepositoryProvider)
+        .english(_bookId, _chapter, verseNo);
     // 已審核通過的社群註解（此章一次抓，取本節）
-    final publicNotes = ref
-            .read(publicNotesProvider(
-                (bookId: _bookId, chapter: _chapter)))
+    final publicNotes =
+        ref
+            .read(publicNotesProvider((bookId: _bookId, chapter: _chapter)))
             .value?[verseNo] ??
         const <PublicNote>[];
 
@@ -883,22 +989,28 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
               borderRadius: BorderRadius.circular(10),
               onTap: onTap,
               child: Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(icon, size: 22, color: scheme.secondary),
-                  const SizedBox(height: 2),
-                  Text(label, style: Theme.of(ctx).textTheme.labelSmall),
-                ]),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon, size: 22, color: scheme.secondary),
+                    const SizedBox(height: 2),
+                    Text(label, style: Theme.of(ctx).textTheme.labelSmall),
+                  ],
+                ),
               ),
             );
         Widget empty(String hint) => Center(
-              child: Text(hint,
-                  style: Theme.of(ctx)
-                      .textTheme
-                      .bodySmall
-                      ?.copyWith(color: scheme.outline)),
-            );
+          child: Text(
+            hint,
+            style: Theme.of(
+              ctx,
+            ).textTheme.bodySmall?.copyWith(color: scheme.outline),
+          ),
+        );
         // 每筆註解的區塊標題：public → 公開註釋；church → [教會名] · 教會專屬。
         // （church 只會是已授權的；未授權教會的 doc 根本不在 anns 裡。）
         Widget sectionHeader(VerseAnnotationView v) {
@@ -906,20 +1018,28 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           final color = v.isChurch ? scheme.primary : scheme.secondary;
           return Padding(
             padding: const EdgeInsets.only(top: 4, bottom: 6),
-            child: Row(children: [
-              Icon(v.isChurch ? Icons.church_outlined : Icons.public,
-                  size: 16, color: color),
-              const SizedBox(width: 6),
-              Text(label,
+            child: Row(
+              children: [
+                Icon(
+                  v.isChurch ? Icons.church_outlined : Icons.public,
+                  size: 16,
+                  color: color,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
                   style: Theme.of(ctx).textTheme.labelLarge?.copyWith(
-                      color: color, fontWeight: FontWeight.w600)),
-            ]),
+                    color: color,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           );
         }
 
         return FractionallySizedBox(
-          heightFactor:
-              anns.isNotEmpty || publicNotes.isNotEmpty ? 0.82 : 0.6,
+          heightFactor: anns.isNotEmpty || publicNotes.isNotEmpty ? 0.82 : 0.6,
           child: DefaultTabController(
             length: 4,
             child: Column(
@@ -953,14 +1073,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurface.withValues(alpha: 0.6),
-                          height: 1.4),
+                        color: scheme.onSurface.withValues(alpha: 0.6),
+                        height: 1.4,
+                      ),
                     ),
                   ),
                 // 螢光筆選色（可命名）
                 Padding(
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 4),
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -974,7 +1097,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                                 Navigator.pop(ctx);
                                 try {
                                   await db.setHighlight(
-                                      _bookId, _chapter, verseNo, c);
+                                    _bookId,
+                                    _chapter,
+                                    verseNo,
+                                    c,
+                                  );
                                 } finally {
                                   _refreshMarks();
                                 }
@@ -990,9 +1117,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             if (highlightLabels[c] != null)
                               Padding(
                                 padding: const EdgeInsets.only(top: 2),
-                                child: Text(highlightLabels[c]!,
-                                    style:
-                                        Theme.of(ctx).textTheme.labelSmall),
+                                child: Text(
+                                  highlightLabels[c]!,
+                                  style: Theme.of(ctx).textTheme.labelSmall,
+                                ),
                               ),
                           ],
                         ),
@@ -1004,7 +1132,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             Navigator.pop(ctx);
                             try {
                               await db.setHighlight(
-                                  _bookId, _chapter, verseNo, null);
+                                _bookId,
+                                _chapter,
+                                verseNo,
+                                null,
+                              );
                             } finally {
                               _refreshMarks();
                             }
@@ -1018,30 +1150,38 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     quickAction(
-                        isBookmarked
-                            ? Icons.bookmark_remove
-                            : Icons.bookmark_add_outlined,
-                        isBookmarked ? '移除書籤' : '書籤', () async {
-                      Navigator.pop(ctx);
-                      try {
-                        await db.toggleBookmark(_bookId, _chapter, verseNo);
-                      } finally {
-                        _refreshMarks();
-                      }
-                    }),
+                      isBookmarked
+                          ? Icons.bookmark_remove
+                          : Icons.bookmark_add_outlined,
+                      isBookmarked ? '移除書籤' : '書籤',
+                      () async {
+                        Navigator.pop(ctx);
+                        try {
+                          await db.toggleBookmark(_bookId, _chapter, verseNo);
+                        } finally {
+                          _refreshMarks();
+                        }
+                      },
+                    ),
                     quickAction(
-                        Icons.edit_note, note == null ? '筆記' : '編輯筆記', () {
-                      Navigator.pop(ctx);
-                      _showNoteEditor(book, verseNo, note);
-                    }),
+                      Icons.edit_note,
+                      note == null ? '筆記' : '編輯筆記',
+                      () {
+                        Navigator.pop(ctx);
+                        _showNoteEditor(book, verseNo, note);
+                      },
+                    ),
                     quickAction(Icons.copy, '複製', () async {
-                      await Clipboard.setData(ClipboardData(
-                          text:
-                              '「$text」（${book.name} $_chapter:$verseNo）'));
+                      await Clipboard.setData(
+                        ClipboardData(
+                          text: '「$text」（${book.name} $_chapter:$verseNo）',
+                        ),
+                      );
                       if (ctx.mounted) Navigator.pop(ctx);
                       if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已複製')));
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text('已複製')));
                       }
                     }),
                     quickAction(Icons.rate_review_outlined, '投稿註解', () {
@@ -1064,112 +1204,131 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   child: TabBarView(
                     children: [
                       // 字義：注釋 + 關鍵字（同節多筆，public 先 church 後，各自區塊）
-                      Builder(builder: (_) {
-                        final items = anns
-                            .where((v) =>
-                                v.ann.commentary != null ||
-                                v.ann.keywords.isNotEmpty)
-                            .toList();
-                        if (items.isEmpty) {
-                          return empty('此節尚無字義註釋（內容待補）');
-                        }
-                        return ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: [
-                            for (final v in items) ...[
-                              sectionHeader(v),
-                              if (v.ann.commentary != null)
-                                Text(v.ann.commentary!,
-                                    style: const TextStyle(height: 1.8)),
-                              if (v.ann.keywords.isNotEmpty) ...[
-                                const SizedBox(height: 12),
-                                for (final k in v.ann.keywords)
-                                  Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: 6),
-                                    child: Text.rich(TextSpan(children: [
-                                      TextSpan(
-                                          text: '${k.word}　',
-                                          style: const TextStyle(
-                                              fontWeight: FontWeight.bold)),
-                                      TextSpan(
-                                          text: k.note,
-                                          style:
-                                              const TextStyle(height: 1.6)),
-                                    ])),
+                      Builder(
+                        builder: (_) {
+                          final items = anns
+                              .where(
+                                (v) =>
+                                    v.ann.commentary != null ||
+                                    v.ann.keywords.isNotEmpty,
+                              )
+                              .toList();
+                          if (items.isEmpty) {
+                            return empty('此節尚無字義註釋（內容待補）');
+                          }
+                          return ListView(
+                            padding: const EdgeInsets.all(16),
+                            children: [
+                              for (final v in items) ...[
+                                sectionHeader(v),
+                                if (v.ann.commentary != null)
+                                  Text(
+                                    v.ann.commentary!,
+                                    style: const TextStyle(height: 1.8),
                                   ),
-                              ],
-                              if (v.ann.updatedAt != null)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 12),
-                                  child: Text(
+                                if (v.ann.keywords.isNotEmpty) ...[
+                                  const SizedBox(height: 12),
+                                  for (final k in v.ann.keywords)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            TextSpan(
+                                              text: '${k.word}　',
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text: k.note,
+                                              style: const TextStyle(
+                                                height: 1.6,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                                if (v.ann.updatedAt != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 12),
+                                    child: Text(
                                       '註解更新於 ${_ymdOf(v.ann.updatedAt!)}',
-                                      style: Theme.of(ctx)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(color: scheme.outline)),
-                                ),
-                              const SizedBox(height: 18),
+                                      style: Theme.of(ctx).textTheme.labelSmall
+                                          ?.copyWith(color: scheme.outline),
+                                    ),
+                                  ),
+                                const SizedBox(height: 18),
+                              ],
                             ],
-                          ],
-                        );
-                      }),
+                          );
+                        },
+                      ),
                       // 背景
-                      Builder(builder: (_) {
-                        final items = anns
-                            .where((v) => v.ann.background != null)
-                            .toList();
-                        if (items.isEmpty) {
-                          return empty('此節尚無背景說明（內容待補）');
-                        }
-                        return ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: [
-                            for (final v in items) ...[
-                              sectionHeader(v),
-                              Text(v.ann.background!,
-                                  style: const TextStyle(height: 1.8)),
-                              const SizedBox(height: 18),
-                            ],
-                          ],
-                        );
-                      }),
-                      // 應用
-                      Builder(builder: (_) {
-                        final items = anns
-                            .where((v) => v.ann.application != null)
-                            .toList();
-                        if (items.isEmpty) {
-                          return empty('此節尚無生活應用（內容待補）');
-                        }
-                        return ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: [
-                            for (final v in items) ...[
-                              sectionHeader(v),
-                              if (v.ann.applicationCategory != null)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(bottom: 6),
-                                  child: Text(
-                                      '分類：${v.ann.applicationCategory}',
-                                      style: Theme.of(ctx)
-                                          .textTheme
-                                          .labelLarge),
+                      Builder(
+                        builder: (_) {
+                          final items = anns
+                              .where((v) => v.ann.background != null)
+                              .toList();
+                          if (items.isEmpty) {
+                            return empty('此節尚無背景說明（內容待補）');
+                          }
+                          return ListView(
+                            padding: const EdgeInsets.all(16),
+                            children: [
+                              for (final v in items) ...[
+                                sectionHeader(v),
+                                Text(
+                                  v.ann.background!,
+                                  style: const TextStyle(height: 1.8),
                                 ),
-                              Text(v.ann.application!,
-                                  style: const TextStyle(height: 1.8)),
-                              const SizedBox(height: 18),
+                                const SizedBox(height: 18),
+                              ],
                             ],
-                          ],
-                        );
-                      }),
+                          );
+                        },
+                      ),
+                      // 應用
+                      Builder(
+                        builder: (_) {
+                          final items = anns
+                              .where((v) => v.ann.application != null)
+                              .toList();
+                          if (items.isEmpty) {
+                            return empty('此節尚無生活應用（內容待補）');
+                          }
+                          return ListView(
+                            padding: const EdgeInsets.all(16),
+                            children: [
+                              for (final v in items) ...[
+                                sectionHeader(v),
+                                if (v.ann.applicationCategory != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: Text(
+                                      '分類：${v.ann.applicationCategory}',
+                                      style: Theme.of(ctx).textTheme.labelLarge,
+                                    ),
+                                  ),
+                                Text(
+                                  v.ann.application!,
+                                  style: const TextStyle(height: 1.8),
+                                ),
+                                const SizedBox(height: 18),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
                       // 相關：交叉引用（同節多筆各自區塊）+ 社群註解
                       ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
-                          for (final v
-                              in anns.where((v) => v.ann.crossRefs.isNotEmpty)) ...[
+                          for (final v in anns.where(
+                            (v) => v.ann.crossRefs.isNotEmpty,
+                          )) ...[
                             sectionHeader(v),
                             const SizedBox(height: 8),
                             Wrap(
@@ -1190,32 +1349,39 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             const SizedBox(height: 16),
                           ],
                           if (publicNotes.isNotEmpty) ...[
-                            Row(children: [
-                              Icon(Icons.groups_outlined,
-                                  size: 18, color: scheme.primary),
-                              const SizedBox(width: 6),
-                              Text('社群註解',
-                                  style: Theme.of(ctx)
-                                      .textTheme
-                                      .titleSmall
-                                      ?.copyWith(color: scheme.primary)),
-                            ]),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.groups_outlined,
+                                  size: 18,
+                                  color: scheme.primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '社群註解',
+                                  style: Theme.of(ctx).textTheme.titleSmall
+                                      ?.copyWith(color: scheme.primary),
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 6),
                             for (final n in publicNotes)
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(n.content,
-                                        style:
-                                            const TextStyle(height: 1.6)),
+                                    Text(
+                                      n.content,
+                                      style: const TextStyle(height: 1.6),
+                                    ),
                                     if (n.author.isNotEmpty)
-                                      Text('— ${n.author}',
-                                          style: Theme.of(ctx)
-                                              .textTheme
-                                              .bodySmall),
+                                      Text(
+                                        '— ${n.author}',
+                                        style: Theme.of(
+                                          ctx,
+                                        ).textTheme.bodySmall,
+                                      ),
                                   ],
                                 ),
                               ),
@@ -1249,8 +1415,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   void _submitPublicNote(Book book, int verseNo, String verseText) {
     final user = ref.read(authUserProvider).value;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('請先到「設定」用 Google 登入，才能投稿公開註解')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('請先到「設定」用 Google 登入，才能投稿公開註解')),
+      );
       return;
     }
     final controller = TextEditingController();
@@ -1268,11 +1435,15 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('投稿公開註解 · ${book.name} $_chapter:$verseNo',
-                style: Theme.of(ctx).textTheme.titleMedium),
+            Text(
+              '投稿公開註解 · ${book.name} $_chapter:$verseNo',
+              style: Theme.of(ctx).textTheme.titleMedium,
+            ),
             const SizedBox(height: 4),
-            Text('提交後由管理者審核，通過才會公開顯示。',
-                style: Theme.of(ctx).textTheme.bodySmall),
+            Text(
+              '提交後由管理者審核，通過才會公開顯示。',
+              style: Theme.of(ctx).textTheme.bodySmall,
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: controller,
@@ -1293,7 +1464,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   if (content.isEmpty) return;
                   final messenger = ScaffoldMessenger.of(context);
                   try {
-                    await ref.read(contentServiceProvider).submitPublicNote(
+                    await ref
+                        .read(contentServiceProvider)
+                        .submitPublicNote(
                           uid: user.uid,
                           author: user.displayName ?? '',
                           bookId: _bookId,
@@ -1301,11 +1474,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           verse: verseNo,
                           content: content,
                         );
-                    messenger.showSnackBar(const SnackBar(
-                        content: Text('已提交，待審核通過後公開')));
-                  } catch (e) {
                     messenger.showSnackBar(
-                        SnackBar(content: Text('提交失敗：$e')));
+                      const SnackBar(content: Text('已提交，待審核通過後公開')),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(SnackBar(content: Text('提交失敗：$e')));
                   }
                 },
                 child: const Text('提交審核'),
@@ -1340,8 +1513,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Text('${book.name} $_chapter:$verseNo 筆記',
-                      style: Theme.of(ctx).textTheme.titleMedium),
+                  child: Text(
+                    '${book.name} $_chapter:$verseNo 筆記',
+                    style: Theme.of(ctx).textTheme.titleMedium,
+                  ),
                 ),
                 TextButton.icon(
                   icon: const Icon(Icons.view_column_outlined, size: 18),
@@ -1352,7 +1527,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     controller.text =
                         '${t.isEmpty ? '' : '$t\n'}【觀察】\n\n【相信】\n\n【行動】\n';
                     controller.selection = TextSelection.collapsed(
-                        offset: controller.text.indexOf('\n【相信】'));
+                      offset: controller.text.indexOf('\n【相信】'),
+                    );
                   },
                 ),
               ],
@@ -1402,8 +1578,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     Navigator.pop(ctx);
                     if (content.isEmpty) return;
                     try {
-                      await db.saveNote(_bookId, _chapter, verseNo, content,
-                          tags: tags);
+                      await db.saveNote(
+                        _bookId,
+                        _chapter,
+                        verseNo,
+                        content,
+                        tags: tags,
+                      );
                     } finally {
                       _refreshMarks();
                     }
@@ -1461,10 +1642,12 @@ class _VerseTile extends StatelessWidget {
     final bg = selected
         ? scheme.primary.withValues(alpha: 0.18)
         : (flashing
-            ? scheme.primary.withValues(alpha: 0.28)
-            : (highlight != null
-                ? AppTheme.highlightColor(highlight!, isDark)
-                : (speaking ? scheme.primary.withValues(alpha: 0.12) : null)));
+              ? scheme.primary.withValues(alpha: 0.28)
+              : (highlight != null
+                    ? AppTheme.highlightColor(highlight!, isDark)
+                    : (speaking
+                          ? scheme.primary.withValues(alpha: 0.12)
+                          : null)));
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -1477,8 +1660,8 @@ class _VerseTile extends StatelessWidget {
                 border: selected
                     ? Border.all(color: scheme.primary, width: 1.5)
                     : (speaking
-                        ? Border.all(color: scheme.primary, width: 1.5)
-                        : null),
+                          ? Border.all(color: scheme.primary, width: 1.5)
+                          : null),
               )
             : null,
         child: Column(
@@ -1497,15 +1680,21 @@ class _VerseTile extends StatelessWidget {
                   ),
                   TextSpan(
                     // 人名/地名畫私名號（底線）
-                    children: properNameSpans(context, text,
-                        style: TextStyle(fontSize: fontSize, height: 1.8)),
+                    children: properNameSpans(
+                      context,
+                      text,
+                      style: TextStyle(fontSize: fontSize, height: 1.8),
+                    ),
                   ),
                   if (hasAnnotation)
                     WidgetSpan(
                       child: Padding(
                         padding: const EdgeInsets.only(left: 4),
-                        child: Icon(Icons.menu_book_outlined,
-                            size: 15, color: scheme.tertiary),
+                        child: Icon(
+                          Icons.menu_book_outlined,
+                          size: 15,
+                          color: scheme.tertiary,
+                        ),
                       ),
                     ),
                   if (bookmarked)
@@ -1550,8 +1739,9 @@ class _VerseTile extends StatelessWidget {
 Map<int, String> headingsFromOutline(List<String> outline) {
   final out = <int, String>{};
   for (final line in outline) {
-    final m = RegExp(r'^(\d+)(?:\s*[-–~－]\s*\d+)?\s*[、.．:：]?\s*(.+)$')
-        .firstMatch(line.trim());
+    final m = RegExp(
+      r'^(\d+)(?:\s*[-–~－]\s*\d+)?\s*[、.．:：]?\s*(.+)$',
+    ).firstMatch(line.trim());
     if (m != null) {
       out[int.parse(m.group(1)!)] = m.group(2)!.trim();
     }
@@ -1587,8 +1777,10 @@ class _SectionHeading extends StatelessWidget {
 /// 規則：累積到句末標點（。！？」』）且長度夠時斷段；
 /// [breakBefore]（段落標題所在節）一定另起新段。
 /// 回傳每段的節號清單（1-based）。
-List<List<int>> groupIntoParagraphs(List<String> verses,
-    {Set<int> breakBefore = const {}}) {
+List<List<int>> groupIntoParagraphs(
+  List<String> verses, {
+  Set<int> breakBefore = const {},
+}) {
   const enders = {'。', '！', '？', '」', '』', '.', '!', '?'};
   final paras = <List<int>>[];
   var current = <int>[];
@@ -1670,8 +1862,10 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
     _clearRecognizers();
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final scheme = Theme.of(context).colorScheme;
-    final paragraphs = groupIntoParagraphs(widget.verses,
-        breakBefore: widget.headings.keys.toSet());
+    final paragraphs = groupIntoParagraphs(
+      widget.verses,
+      breakBefore: widget.headings.keys.toSet(),
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1679,8 +1873,9 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
         for (final para in paragraphs) ...[
           if (widget.headings[para.first] != null)
             _SectionHeading(
-                text: widget.headings[para.first]!,
-                fontSize: widget.fontSize),
+              text: widget.headings[para.first]!,
+              fontSize: widget.fontSize,
+            ),
           Padding(
             // 定位節所在的段落掛上 key，供捲動 ensureVisible
             key: (widget.focusVerse != null && para.contains(widget.focusVerse))
@@ -1697,7 +1892,10 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
   }
 
   List<InlineSpan> _paragraphSpans(
-      List<int> verseNos, bool isDark, ColorScheme scheme) {
+    List<int> verseNos,
+    bool isDark,
+    ColorScheme scheme,
+  ) {
     final spans = <InlineSpan>[
       // 首行縮排（全形空格），像書本段落
       const TextSpan(text: '　　'),
@@ -1709,54 +1907,65 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
       _recognizers.add(recognizer);
       final hl = widget.highlights[verseNo];
 
-      spans.add(TextSpan(
-        text: ' $verseNo ',
-        style: TextStyle(
-          fontSize: widget.fontSize * 0.62,
-          color: scheme.primary,
-          fontWeight: FontWeight.bold,
-          fontFeatures: const [FontFeature.superscripts()],
+      spans.add(
+        TextSpan(
+          text: ' $verseNo ',
+          style: TextStyle(
+            fontSize: widget.fontSize * 0.62,
+            color: scheme.primary,
+            fontWeight: FontWeight.bold,
+            fontFeatures: const [FontFeature.superscripts()],
+          ),
+          recognizer: recognizer,
         ),
-        recognizer: recognizer,
-      ));
+      );
       if (widget.annotated.contains(verseNo)) {
-        spans.add(WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Icon(Icons.menu_book_outlined,
-              size: 13, color: scheme.tertiary),
-        ));
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Icon(
+              Icons.menu_book_outlined,
+              size: 13,
+              color: scheme.tertiary,
+            ),
+          ),
+        );
       }
       final speaking = widget.speakingVerse == verseNo;
       final flashing = widget.flashVerse == verseNo;
       // 人名/地名畫私名號（底線）；保留原本的高亮底色與點擊
-      spans.addAll(properNameSpans(
-        context,
-        widget.verses[i],
-        style: TextStyle(
-          fontSize: widget.fontSize,
-          height: 1.9,
-          fontWeight: (speaking || flashing) ? FontWeight.w700 : null,
-          backgroundColor: flashing
-              ? scheme.primary.withValues(alpha: 0.28)
-              : (hl != null
-                  ? AppTheme.highlightColor(hl, isDark)
-                  : (speaking
-                      ? scheme.primary.withValues(alpha: 0.12)
-                      : null)),
-        ),
-        recognizer: recognizer,
-      ));
-      final en = widget.english != null ? widget.english![i] : null;
-      if (en != null) {
-        spans.add(TextSpan(
-          text: ' $en ',
+      spans.addAll(
+        properNameSpans(
+          context,
+          widget.verses[i],
           style: TextStyle(
-            fontSize: widget.fontSize * 0.8,
+            fontSize: widget.fontSize,
             height: 1.9,
-            color: scheme.onSurface.withValues(alpha: 0.55),
+            fontWeight: (speaking || flashing) ? FontWeight.w700 : null,
+            backgroundColor: flashing
+                ? scheme.primary.withValues(alpha: 0.28)
+                : (hl != null
+                      ? AppTheme.highlightColor(hl, isDark)
+                      : (speaking
+                            ? scheme.primary.withValues(alpha: 0.12)
+                            : null)),
           ),
           recognizer: recognizer,
-        ));
+        ),
+      );
+      final en = widget.english != null ? widget.english![i] : null;
+      if (en != null) {
+        spans.add(
+          TextSpan(
+            text: ' $en ',
+            style: TextStyle(
+              fontSize: widget.fontSize * 0.8,
+              height: 1.9,
+              color: scheme.onSurface.withValues(alpha: 0.55),
+            ),
+            recognizer: recognizer,
+          ),
+        );
       }
     }
     return spans;
@@ -1783,25 +1992,33 @@ class _BookSummaryCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.workspace_premium,
-                    size: 20, color: scheme.onPrimaryContainer),
+                Icon(
+                  Icons.workspace_premium,
+                  size: 20,
+                  color: scheme.onPrimaryContainer,
+                ),
                 const SizedBox(width: 6),
-                Text('$bookName · 本卷統整',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: scheme.onPrimaryContainer,
-                        fontWeight: FontWeight.w600)),
+                Text(
+                  '$bookName · 本卷統整',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: scheme.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 10),
-            Text(text,
-                style: TextStyle(
-                    height: 1.8,
-                    fontSize: 16,
-                    color: scheme.onPrimaryContainer)),
+            Text(
+              text,
+              style: TextStyle(
+                height: 1.8,
+                fontSize: 16,
+                color: scheme.onPrimaryContainer,
+              ),
+            ),
           ],
         ),
       ),
     );
   }
 }
-

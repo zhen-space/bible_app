@@ -309,7 +309,11 @@ class _ReadingPlanDetailScreenState
                   books: books,
                   todayChapters: todayChapters,
                   nextChapter: nextChapter,
-                  onOpen: (c) => _openReader(c),
+                  onOpen: (c) => _openReader(
+                    c,
+                    planDay: todayIdx + 1,
+                    planDone: itemDone(c),
+                  ),
                   onComplete: nextChapter == null
                       ? null
                       : () => _completeNextChapter(todayIdx + 1, nextChapter),
@@ -375,7 +379,8 @@ class _ReadingPlanDetailScreenState
                       secondary: IconButton(
                         icon: const Icon(Icons.menu_book, size: 18),
                         tooltip: '閱讀',
-                        onPressed: () => _openReader(c),
+                        onPressed: () =>
+                            _openReader(c, planDay: day, planDone: itemDone(c)),
                       ),
                     ),
                 ],
@@ -387,7 +392,11 @@ class _ReadingPlanDetailScreenState
     );
   }
 
-  void _openReader(ChapterRef c) => Navigator.push(
+  void _openReader(
+    ChapterRef c, {
+    required int planDay,
+    required bool planDone,
+  }) => Navigator.push(
     context,
     MaterialPageRoute(
       // Plan Reader context 不覆蓋一般 Reading Position
@@ -395,6 +404,7 @@ class _ReadingPlanDetailScreenState
         bookId: c.bookId,
         chapter: c.chapter,
         updateReadingPosition: false,
+        onPlanComplete: planDone ? null : () => _setItem(planDay, c, true),
       ),
     ),
   );
