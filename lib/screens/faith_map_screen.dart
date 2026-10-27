@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../theme/app_theme.dart';
+import '../widgets/student_ux.dart';
 import 'books_screen.dart';
 import 'chapter_screen.dart';
 
@@ -15,15 +16,24 @@ class FaithMapScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final booksAsync = ref.watch(booksProvider);
-    final map = ref.watch(faithMapProvider).value;
+    final mapAsync = ref.watch(faithMapProvider);
 
     return Scaffold(
       appBar: AppBar(title: const Text('我的信仰地圖')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
-        data: (books) {
-          final read = map?.read ?? const {};
+        error: (_, _) => StudentErrorState(
+          message: '信仰地圖所需的書卷暫時載入失敗。',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
+        data: (books) => mapAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (_, _) => StudentErrorState(
+            message: '閱讀進度暫時載入失敗。',
+            onRetry: () => ref.invalidate(faithMapProvider),
+          ),
+          data: (map) {
+          final read = map.read;
           final totalRead = read.values.fold<int>(0, (a, b) => a + b);
           return ListView(
             padding: const EdgeInsets.all(16),
@@ -37,7 +47,8 @@ class FaithMapScreen extends ConsumerWidget {
                   books.where((b) => b.testament == 'nt').toList(), read),
             ],
           );
-        },
+          },
+        ),
       ),
     );
   }
