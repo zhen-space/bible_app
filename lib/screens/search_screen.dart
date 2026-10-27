@@ -15,6 +15,7 @@ import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'qa_screen.dart' show QuestionDetailScreen;
 import 'study_content_screen.dart';
+import 'verse_action_sheet.dart';
 
 const _searchSuggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
 
@@ -185,47 +186,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     ).showSnackBar(SnackBar(content: Text(bookmarked ? '已移除書籤' : '已加入書籤')));
   }
 
-  void _showVerseActions(Book book, VerseRef verse, bool bookmarked) {
-    showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      showDragHandle: true,
-      builder: (sheetContext) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ListTile(
-            leading: const Icon(Icons.menu_book_outlined),
-            title: const Text('開啟經文'),
-            subtitle: Text('${book.name} ${verse.chapter}:${verse.verse}'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              _openChapter(verse.bookId, verse.chapter, verse: verse.verse);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.copy_outlined),
-            title: const Text('複製經文'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              _copyVerse(book, verse);
-            },
-          ),
-          ListTile(
-            leading: Icon(
-              bookmarked ? Icons.bookmark_remove : Icons.bookmark_add_outlined,
-            ),
-            title: Text(bookmarked ? '移除書籤' : '加入書籤'),
-            onTap: () {
-              Navigator.pop(sheetContext);
-              _toggleBookmark(verse, bookmarked);
-            },
-          ),
-          const SizedBox(height: 8),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
@@ -386,10 +346,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       _copyVerse(books[hit.verse.bookId - 1], hit.verse),
                   onBookmark: (bookmarked) =>
                       _toggleBookmark(hit.verse, bookmarked),
-                  onMore: (bookmarked) => _showVerseActions(
-                    books[hit.verse.bookId - 1],
-                    hit.verse,
-                    bookmarked,
+                  onMore: (_) => showVerseActionSheet(
+                    context,
+                    ref,
+                    book: books[hit.verse.bookId - 1],
+                    chapter: hit.verse.chapter,
+                    verse: hit.verse.verse,
+                    text: hit.verse.text,
                   ),
                 ),
               if (_results.any((hit) => !hit.isExact))
@@ -413,10 +376,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       _copyVerse(books[hit.verse.bookId - 1], hit.verse),
                   onBookmark: (bookmarked) =>
                       _toggleBookmark(hit.verse, bookmarked),
-                  onMore: (bookmarked) => _showVerseActions(
-                    books[hit.verse.bookId - 1],
-                    hit.verse,
-                    bookmarked,
+                  onMore: (_) => showVerseActionSheet(
+                    context,
+                    ref,
+                    book: books[hit.verse.bookId - 1],
+                    chapter: hit.verse.chapter,
+                    verse: hit.verse.verse,
+                    text: hit.verse.text,
                   ),
                 ),
             ],
