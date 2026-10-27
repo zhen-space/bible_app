@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:bible_app/main.dart';
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/providers/providers.dart';
+import 'package:bible_app/screens/chapter_screen.dart';
 import 'package:bible_app/services/database_service.dart';
 
 /// 不碰真 DB 的替身（widget test 環境沒有 sqflite plugin）。
@@ -18,8 +19,9 @@ class FakeDatabaseService extends DatabaseService {
 
   @override
   Future<Map<int, HighlightColor>> getChapterHighlights(
-          int bookId, int chapter) async =>
-      {};
+    int bookId,
+    int chapter,
+  ) async => {};
 
   @override
   Future<Map<int, Note>> getChapterNotes(int bookId, int chapter) async => {};
@@ -55,6 +57,97 @@ List<Book> loadBooks() {
 }
 
 void main() {
+  test('相鄰章節會跨書卷衔接，並在聖經兩端停止', () {
+    const books = [
+      Book(
+        id: 1,
+        name: '創世記',
+        abbr: '創',
+        testament: 'ot',
+        chapters: [
+          ['創 1:1'],
+          ['創 2:1'],
+        ],
+      ),
+      Book(
+        id: 2,
+        name: '出埃及記',
+        abbr: '出',
+        testament: 'ot',
+        chapters: [
+          ['出 1:1'],
+        ],
+      ),
+    ];
+
+    expect(adjacentChapter(books, 1, 1, -1), isNull);
+    expect(adjacentChapter(books, 1, 2, 1), (bookId: 2, chapter: 1));
+    expect(adjacentChapter(books, 2, 1, -1), (bookId: 1, chapter: 2));
+    expect(adjacentChapter(books, 2, 1, 1), isNull);
+  });
+
+  testWidgets('375px 下一章可跨到下一卷，末章下一章會停用', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(375, 812);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const books = [
+      Book(
+        id: 1,
+        name: '創世記',
+        abbr: '創',
+        testament: 'ot',
+        chapters: [
+          ['創 1:1'],
+          ['創 2:1'],
+        ],
+      ),
+      Book(
+        id: 2,
+        name: '出埃及記',
+        abbr: '出',
+        testament: 'ot',
+        chapters: [
+          ['出 1:1'],
+        ],
+      ),
+    ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          booksProvider.overrideWith((ref) async => books),
+          databaseServiceProvider.overrideWithValue(FakeDatabaseService()),
+          chapterAnnotationProvider.overrideWith(
+            (ref, args) async => (
+              chapter: null,
+              verses: const <int, List<VerseAnnotationView>>{},
+            ),
+          ),
+          activeChurchNameProvider.overrideWith((ref) async => null),
+          publicNotesProvider.overrideWith((ref, args) async => const {}),
+          bookAnnotationProvider.overrideWith((ref, bookId) async => null),
+        ],
+        child: const MaterialApp(home: ChapterScreen(bookId: 1, chapter: 2)),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('創世記 第 2 章'), findsOneWidget);
+    await tester.tap(find.byTooltip('下一章'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('出埃及記 第 1 章'), findsOneWidget);
+    final nextButton = tester.widget<IconButton>(
+      find.ancestor(
+        of: find.byTooltip('下一章'),
+        matching: find.byType(IconButton),
+      ),
+    );
+    expect(nextButton.onPressed, isNull);
+  });
+
   testWidgets('首頁 → 創世記 → 第 1 章 → 看到經文', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final books = loadBooks();
@@ -71,8 +164,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // 新版學生端主殼：底部導覽切到「聖經」→ 選擇書卷與章節 → 書卷列表
-    await tester.tap(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('聖經')));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('聖經'),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('選擇書卷與章節'));
     await tester.pumpAndSettle();
@@ -109,8 +206,12 @@ void main() {
     await tester.pumpAndSettle();
 
     // 聖經 → 選擇書卷與章節 → 展開創世記，章節格前後應各有導讀/統整方格
-    await tester.tap(find.descendant(
-        of: find.byType(NavigationBar), matching: find.text('聖經')));
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('聖經'),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('選擇書卷與章節'));
     await tester.pumpAndSettle();

@@ -23,6 +23,28 @@ String annotationSectionLabel(bool isChurch, String? churchName) => isChurch
     ? '${(churchName == null || churchName.isEmpty) ? '教會' : churchName} · 教會專屬'
     : '公開註釋';
 
+/// 回傳相鄰章節；會跨書卷衔接，整本聖經的兩端則回傳 null。
+({int bookId, int chapter})? adjacentChapter(
+  List<Book> books,
+  int bookId,
+  int chapter,
+  int delta,
+) {
+  if (books.isEmpty || delta.abs() != 1) return null;
+  var nextBook = bookId;
+  var nextChapter = chapter + delta;
+  if (nextChapter < 1) {
+    if (nextBook == 1) return null;
+    nextBook -= 1;
+    nextChapter = books[nextBook - 1].chapterCount;
+  } else if (nextChapter > books[nextBook - 1].chapterCount) {
+    if (nextBook == books.length) return null;
+    nextBook += 1;
+    nextChapter = 1;
+  }
+  return (bookId: nextBook, chapter: nextChapter);
+}
+
 /// 讀經畫面：一次一章，左右滑或按鈕換章，點經節開操作選單。
 /// 支援兩種閱讀模式（逐節／整章）、章前導讀、章後統整、每節註解。
 class ChapterScreen extends ConsumerStatefulWidget {
@@ -357,18 +379,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   /// 上一章／下一章，跨書卷自動接續。
   void _turn(List<Book> books, int delta) {
-    var b = _bookId;
-    var c = _chapter + delta;
-    if (c < 1) {
-      if (b == 1) return;
-      b -= 1;
-      c = books[b - 1].chapterCount;
-    } else if (c > books[b - 1].chapterCount) {
-      if (b == books.length) return;
-      b += 1;
-      c = 1;
-    }
-    _goTo(b, c);
+    final target = adjacentChapter(books, _bookId, _chapter, delta);
+    if (target == null) return;
+    _goTo(target.bookId, target.chapter);
   }
 
   /// 依節位字串跳轉（交叉引用用）。
@@ -657,7 +670,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       IconButton(
                         icon: const Icon(Icons.chevron_left),
                         tooltip: '上一章',
-                        onPressed: () => _turn(books, -1),
+                        onPressed:
+                            adjacentChapter(books, _bookId, _chapter, -1) ==
+                                null
+                            ? null
+                            : () => _turn(books, -1),
                       ),
                       // 點中間開「選卷選章」（可切書卷、點章跳轉）
                       TextButton(
@@ -688,7 +705,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       IconButton(
                         icon: const Icon(Icons.chevron_right),
                         tooltip: '下一章',
-                        onPressed: () => _turn(books, 1),
+                        onPressed:
+                            adjacentChapter(books, _bookId, _chapter, 1) == null
+                            ? null
+                            : () => _turn(books, 1),
                       ),
                     ],
                   ),
