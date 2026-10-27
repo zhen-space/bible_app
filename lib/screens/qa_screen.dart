@@ -7,6 +7,7 @@ import '../providers/providers.dart';
 import '../services/app_links.dart';
 import '../services/qa_service.dart';
 import '../services/verse_locator.dart';
+import '../widgets/student_ux.dart';
 import 'qa_voice_screen.dart';
 import 'study_content_screen.dart';
 
@@ -21,6 +22,13 @@ class QaScreen extends ConsumerStatefulWidget {
 class _QaScreenState extends ConsumerState<QaScreen> {
   String _category = '';
   String _query = '';
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,6 +83,7 @@ class _QaScreenState extends ConsumerState<QaScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: TextField(
+                    controller: _searchController,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
                       hintText: '搜尋問題與回答…',
@@ -99,11 +108,35 @@ class _QaScreenState extends ConsumerState<QaScreen> {
                   child: questionsAsync.when(
                     loading: () =>
                         const Center(child: CircularProgressIndicator()),
-                    error: (e, _) => Center(child: Text('載入失敗：$e')),
+                    error: (_, _) => StudentErrorState(
+                      message: '問題與回答暫時載入失敗。',
+                      onRetry: () => ref.invalidate(
+                          publishedQuestionsProvider(_category)),
+                    ),
                     data: (all) {
                       final list = _filter(all);
                       if (list.isEmpty) {
-                        return const Center(child: Text('目前沒有相符的問題'));
+                        final filtering =
+                            _query.isNotEmpty || _category.isNotEmpty;
+                        return StudentEmptyState(
+                          title: filtering ? '找不到相符的問題' : '目前還沒有問題',
+                          subtitle: filtering
+                              ? '請試試其他關鍵字或分類。'
+                              : '你可以成為第一個提出問題的人。',
+                          icon: filtering
+                              ? Icons.search_off_outlined
+                              : Icons.help_outline,
+                          actionLabel: filtering ? '清除篩選' : null,
+                          onAction: filtering
+                              ? () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _query = '';
+                                    _category = '';
+                                  });
+                                }
+                              : null,
+                        );
                       }
                       return ListView.separated(
                         itemCount: list.length,
@@ -246,7 +279,10 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
       ),
       body: qAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (_, _) => StudentErrorState(
+          message: '問題內容暫時載入失敗。',
+          onRetry: () => ref.invalidate(questionProvider(widget.id)),
+        ),
         data: (q) {
           if (q == null) return const Center(child: Text('找不到這個問題'));
           // 進入詳情：把此問題標記為已讀（追蹤未讀提示用）
