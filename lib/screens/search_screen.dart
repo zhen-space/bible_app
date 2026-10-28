@@ -19,6 +19,15 @@ import 'verse_action_sheet.dart';
 
 const _searchSuggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
 
+String _resultSubtitle({
+  required String metadata,
+  required String body,
+  required String query,
+}) {
+  final preview = queryMatchSentence(query, body);
+  return preview == null || preview.isEmpty ? metadata : '$metadata\n$preview';
+}
+
 /// 全文搜尋 + 節位快速跳轉（約3:16）+ 搜尋歷史。
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -278,10 +287,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     leading: const Icon(Icons.auto_stories_outlined),
                     title: Text(i.title.isEmpty ? '(未命名)' : i.title),
                     subtitle: Text(
-                      [
-                        studyTypeLabel(i.contentType),
-                        if (i.audience == Audience.church) '教會專屬',
-                      ].join('・'),
+                      _resultSubtitle(
+                        metadata: [
+                          studyTypeLabel(i.contentType),
+                          if (i.audience == Audience.church) '教會專屬',
+                        ].join('・'),
+                        body: i.body,
+                        query: _controller.text,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
                     onTap: () {
                       _rememberSearch();
@@ -300,7 +315,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ListTile(
                     leading: const Icon(Icons.forum_outlined),
                     title: Text(question.title),
-                    subtitle: const Text('聖經／信仰問答'),
+                    subtitle: Text(
+                      _resultSubtitle(
+                        metadata: '聖經／信仰問答',
+                        body: question.body,
+                        query: _controller.text,
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     onTap: () {
                       _rememberSearch();
                       Navigator.push(

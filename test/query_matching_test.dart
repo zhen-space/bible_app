@@ -23,4 +23,13 @@ void main() {
   test('只有標點的查詢不命中', () {
     expect(matchesAllQueryTerms('，、；！？。', ['任何內容']), isFalse);
   });
+
+  test('命中預覽依查詢順序取正文中的第一個實際命中句', () {
+    expect(queryMatchSentence('平安，禱告', '先安靜等候。即使患難仍有平安。最後以禱告交託。'), '即使患難仍有平安。');
+    expect(
+      queryMatchSentence('GRACE', 'Saved by Grace. Keep walking.'),
+      'Saved by Grace. Keep walking.',
+    );
+    expect(queryMatchSentence('標籤命中', '正文沒有這個詞'), isNull);
+  });
 }
