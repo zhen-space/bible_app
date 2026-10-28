@@ -474,6 +474,8 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
   late int _reminderAt;
   late int _answeredAt;
   String? _validationError;
+  bool _saving = false;
+  bool _saveFailed = false;
 
   WidgetRef get ref => widget.parentRef;
   Prayer? get existing => widget.existing;
@@ -518,6 +520,52 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
 
   void _clearValidation() {
     if (_validationError != null) setState(() => _validationError = null);
+  }
+
+  // 先寫入、成功才關閉：寫入失敗時保留已輸入的內容，可直接重試。
+  Future<void> _save() async {
+    final text = _content.text.trim();
+    final title = _title.text.trim();
+    if (text.isEmpty && title.isEmpty && _refs.isEmpty) {
+      setState(() => _validationError = '請填寫標題、禱告內容或至少一處對應經文');
+      return;
+    }
+    final answered = _status != PrayerStatus.praying;
+    setState(() {
+      _saving = true;
+      _saveFailed = false;
+    });
+    try {
+      await ref
+          .read(databaseServiceProvider)
+          .savePrayer(
+            Prayer(
+              id: existing?.id,
+              category: _category.text.trim(),
+              subcategory: _subcategory.text.trim(),
+              title: title,
+              content: text,
+              prayerDate: _prayerDate,
+              refs: _refs,
+              status: _status,
+              reminderAt: _reminderAt,
+              answeredAt: answered ? _answeredAt : 0,
+              answeredReflection: answered ? _reflection.text.trim() : '',
+              createdAt: existing?.createdAt ?? 0,
+              updatedAt: existing?.updatedAt ?? 0,
+            ),
+          );
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _saveFailed = true;
+        });
+      }
+      return;
+    }
+    ref.invalidate(allPrayersProvider);
+    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -687,39 +735,19 @@ class _PrayerEditorSheetState extends State<_PrayerEditorSheet> {
             ),
           ],
           const SizedBox(height: 20),
+          if (_saveFailed) ...[
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                '儲存失敗，內容仍保留，請再試一次。',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           FilledButton(
-            onPressed: () async {
-              final text = _content.text.trim();
-              final title = _title.text.trim();
-              if (text.isEmpty && title.isEmpty && _refs.isEmpty) {
-                setState(() => _validationError = '請填寫標題、禱告內容或至少一處對應經文');
-                return;
-              }
-              Navigator.pop(context);
-              await ref
-                  .read(databaseServiceProvider)
-                  .savePrayer(
-                    Prayer(
-                      id: existing?.id,
-                      category: _category.text.trim(),
-                      subcategory: _subcategory.text.trim(),
-                      title: title,
-                      content: text,
-                      prayerDate: _prayerDate,
-                      refs: _refs,
-                      status: _status,
-                      reminderAt: _reminderAt,
-                      answeredAt: answered ? _answeredAt : 0,
-                      answeredReflection: answered
-                          ? _reflection.text.trim()
-                          : '',
-                      createdAt: existing?.createdAt ?? 0,
-                      updatedAt: existing?.updatedAt ?? 0,
-                    ),
-                  );
-              ref.invalidate(allPrayersProvider);
-            },
-            child: const Text('儲存'),
+            onPressed: _saving ? null : _save,
+            child: Text(_saving ? '儲存中…' : (_saveFailed ? '重試儲存' : '儲存')),
           ),
         ],
       ),
