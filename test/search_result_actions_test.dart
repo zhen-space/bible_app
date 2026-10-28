@@ -103,4 +103,75 @@ void main() {
     expect(find.text('約翰福音 1:1 筆記'), findsOneWidget);
     expect(find.text('儲存'), findsOneWidget);
   });
+
+  testWidgets('書籤狀態失敗不阻斷搜尋結果且可重試恢復', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.binding.setSurfaceSize(const Size(375, 812));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    const books = [
+      Book(
+        id: 1,
+        name: '約翰福音',
+        abbr: '約',
+        testament: 'nt',
+        chapters: [
+          ['神愛世人'],
+        ],
+      ),
+    ];
+    var bookmarkAttempts = 0;
+    var failBookmarks = true;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          bibleRepositoryProvider.overrideWithValue(
+            _SearchBibleRepository(books),
+          ),
+          booksProvider.overrideWith((ref) async => books),
+          databaseServiceProvider.overrideWithValue(_SearchDatabaseService()),
+          authorizedStudyContentProvider.overrideWith((ref) async => const []),
+          publishedQuestionsProvider('').overrideWith((ref) async => const []),
+          allBookmarksProvider.overrideWith((ref) async {
+            bookmarkAttempts++;
+            if (failBookmarks) throw Exception('offline');
+            return const [
+              Bookmark(bookId: 1, chapter: 1, verse: 1, createdAt: 1),
+            ];
+          }),
+        ],
+        child: const MaterialApp(home: SearchScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField).first, '神愛世人');
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.descendant(of: find.byType(ListTile), matching: find.text('神愛世人')),
+      findsOneWidget,
+    );
+    expect(find.text('書籤狀態暫時無法載入'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.widget<Dismissible>(find.byType(Dismissible)).direction,
+      DismissDirection.startToEnd,
+    );
+
+    final attemptsBeforeRetry = bookmarkAttempts;
+    failBookmarks = false;
+    await tester.tap(find.widgetWithText(TextButton, '重試'));
+    await tester.pumpAndSettle();
+
+    expect(bookmarkAttempts, greaterThan(attemptsBeforeRetry));
+    expect(find.text('書籤狀態暫時無法載入'), findsNothing);
+    expect(find.byIcon(Icons.bookmark), findsOneWidget);
+    expect(
+      tester.widget<Dismissible>(find.byType(Dismissible)).direction,
+      DismissDirection.horizontal,
+    );
+  });
 }

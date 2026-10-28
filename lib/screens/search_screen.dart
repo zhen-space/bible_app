@@ -198,6 +198,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
+    final bookmarksAsync = ref.watch(allBookmarksProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -239,10 +240,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         ),
         data: (books) {
           final bookmarkKeys = {
-            for (final bookmark
-                in ref.watch(allBookmarksProvider).value ?? const <Bookmark>[])
+            for (final bookmark in bookmarksAsync.value ?? const <Bookmark>[])
               '${bookmark.bookId}:${bookmark.chapter}:${bookmark.verse}',
           };
+          final bookmarkStateKnown = bookmarksAsync.hasValue;
           if (_searchError != null) {
             return _SearchError(
               label: _searchError!,
@@ -270,6 +271,15 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           }
           return ListView(
             children: [
+              if (!bookmarkStateKnown && bookmarksAsync.hasError)
+                _BookmarkLoadError(
+                  onRetry: () => ref.invalidate(allBookmarksProvider),
+                )
+              else if (!bookmarkStateKnown && bookmarksAsync.isLoading)
+                const LinearProgressIndicator(
+                  minHeight: 2,
+                  semanticsLabel: '正在載入書籤狀態',
+                ),
               if (_jump != null)
                 _JumpTile(
                   jump: _jump!,
@@ -360,6 +370,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   bookmarked: bookmarkKeys.contains(
                     '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
                   ),
+                  bookmarkStateKnown: bookmarkStateKnown,
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
@@ -390,6 +401,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   bookmarked: bookmarkKeys.contains(
                     '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
                   ),
+                  bookmarkStateKnown: bookmarkStateKnown,
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
@@ -470,6 +482,7 @@ class _VerseResultTile extends StatelessWidget {
     required this.books,
     required this.query,
     required this.bookmarked,
+    required this.bookmarkStateKnown,
     required this.onTap,
     required this.onCopy,
     required this.onBookmark,
@@ -480,6 +493,7 @@ class _VerseResultTile extends StatelessWidget {
   final List<Book> books;
   final String query;
   final bool bookmarked;
+  final bool bookmarkStateKnown;
   final VoidCallback onTap;
   final Future<void> Function() onCopy;
   final Future<void> Function(bool bookmarked) onBookmark;
@@ -507,7 +521,9 @@ class _VerseResultTile extends StatelessWidget {
       endIcon: bookmarked ? Icons.bookmark_remove : Icons.bookmark_add_outlined,
       endDestructive: false,
       onSwipeStartToEnd: onCopy,
-      onSwipeEndToStart: () => onBookmark(bookmarked),
+      onSwipeEndToStart: bookmarkStateKnown
+          ? () => onBookmark(bookmarked)
+          : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -527,6 +543,36 @@ class _VerseResultTile extends StatelessWidget {
           ),
           const Divider(height: 1),
         ],
+      ),
+    );
+  }
+}
+
+class _BookmarkLoadError extends StatelessWidget {
+  const _BookmarkLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.bookmark_border, color: scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '書籤狀態暫時無法載入',
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            TextButton(onPressed: onRetry, child: const Text('重試')),
+          ],
+        ),
       ),
     );
   }
