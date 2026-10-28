@@ -2,15 +2,11 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../data/entities.dart';
+import 'query_utils.dart';
 
 /// 搜尋多個詞時採 AND，比對不分英文字母大小寫。
 bool matchesAllQueryTerms(String query, Iterable<String> fields) {
-  final terms = query
-      .trim()
-      .toLowerCase()
-      .split(RegExp(r'\s+'))
-      .where((term) => term.isNotEmpty)
-      .toList();
+  final terms = queryTerms(query);
   if (terms.isEmpty) return false;
   final searchable = fields.join(' ').toLowerCase();
   return terms.every(searchable.contains);

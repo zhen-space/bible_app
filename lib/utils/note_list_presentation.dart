@@ -1,4 +1,5 @@
 import '../models/models.dart';
+import 'query_utils.dart';
 
 enum NoteSortOrder {
   updated('最近編輯'),
@@ -48,12 +49,7 @@ List<Note> searchNotesForList(
   String query, {
   String Function(Note note)? extraText,
 }) {
-  final terms = query
-      .trim()
-      .toLowerCase()
-      .split(RegExp(r'\s+'))
-      .where((term) => term.isNotEmpty)
-      .toList();
+  final terms = queryTerms(query);
   if (terms.isEmpty) return const [];
 
   final matches = values.where((note) {

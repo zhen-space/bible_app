@@ -109,6 +109,9 @@ void main() {
 
     expect(searchNotesForList(searchable, 'PRAYER').single.id, 10);
     expect(searchNotesForList(searchable, '平安 靈修').single.id, 10);
+    expect(searchNotesForList(searchable, '平安，禱告').single.id, 10);
+    expect(searchNotesForList(searchable, '平安、靈修').single.id, 10);
+    expect(searchNotesForList(searchable, '平安　禱告').single.id, 10);
     expect(
       searchNotesForList(
         searchable,
@@ -118,6 +121,7 @@ void main() {
       10,
     );
     expect(searchNotesForList(searchable, '不存在'), isEmpty);
+    expect(searchNotesForList(searchable, '，、；！？。'), isEmpty);
   });
 
   test('日期分組與清單日期顯示符合今天、昨天、近期與月份', () {
