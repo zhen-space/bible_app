@@ -49,7 +49,7 @@ class _SearchDatabaseService extends DatabaseService {
 }
 
 void main() {
-  testWidgets('搜尋結果長按可直接建立經文筆記', (tester) async {
+  testWidgets('搜尋結果可見更多按鈕可由語意操作建立經文筆記', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.binding.setSurfaceSize(const Size(375, 812));
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -91,7 +91,11 @@ void main() {
     );
     expect(result, findsOneWidget);
 
-    await tester.longPress(result);
+    final moreButton = find.byTooltip('更多經文操作');
+    expect(moreButton, findsOneWidget);
+    expect(find.bySemanticsLabel('更多經文操作'), findsOneWidget);
+
+    await tester.tap(moreButton);
     await tester.pumpAndSettle();
     expect(find.text('筆記'), findsOneWidget);
     expect(find.text('稍後讀'), findsOneWidget);

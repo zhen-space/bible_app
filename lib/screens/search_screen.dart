@@ -534,9 +534,26 @@ class _VerseResultTile extends StatelessWidget {
                   ? citation
                   : '$citation · 相關：$related',
             ),
-            trailing: Icon(
-              bookmarked ? Icons.bookmark : Icons.chevron_right,
-              size: bookmarked ? 20 : 24,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (bookmarked)
+                  const Icon(Icons.bookmark, size: 20, semanticLabel: '已加入書籤'),
+                Semantics(
+                  container: true,
+                  button: true,
+                  label: '更多經文操作',
+                  onTap: () => onMore(bookmarked),
+                  child: ExcludeSemantics(
+                    child: IconButton(
+                      tooltip: '更多經文操作',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.more_horiz),
+                      onPressed: () => onMore(bookmarked),
+                    ),
+                  ),
+                ),
+              ],
             ),
             onTap: onTap,
             onLongPress: () => onMore(bookmarked),
