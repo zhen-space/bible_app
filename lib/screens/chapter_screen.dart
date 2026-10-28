@@ -463,12 +463,14 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     )
                     .value ??
                 false);
+        final marksAsync = ref.watch(
+          chapterMarksProvider((bookId: _bookId, chapter: _chapter)),
+        );
+        // 個人標記狀態未知（載入中／失敗）時不可依空集合做切換類寫入，
+        // 否則會把「其實已有」的書籤／筆記誤判為沒有而反轉或覆蓋。
+        final marksKnown = marksAsync.hasValue;
         final marks =
-            ref
-                .watch(
-                  chapterMarksProvider((bookId: _bookId, chapter: _chapter)),
-                )
-                .value ??
+            marksAsync.value ??
             const ChapterMarks(bookmarks: {}, highlights: {}, notes: {});
         final ann = ref
             .watch(
@@ -490,7 +492,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
         return Scaffold(
           appBar: _selectionMode
-              ? _selectionAppBar(verses.length)
+              ? _selectionAppBar(verses.length, marksAsync)
               : AppBar(
                   // 點標題（頂部入口）先開「66 卷書卷目錄」
                   title: InkWell(
@@ -568,6 +570,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           _showBookChapterPicker(books, startInBookList: true),
                     ),
                   ],
+                  bottom: _marksStatusBar(marksAsync),
                 ),
           body: GestureDetector(
             onHorizontalDragEnd: (details) {
@@ -625,6 +628,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                               verses[i],
                               marks,
                               verseAnns[verseNo] ?? const [],
+                              marksKnown: marksKnown,
                             );
                           }
                         },
@@ -677,6 +681,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           verses[verseNo - 1],
                           marks,
                           verseAnns[verseNo] ?? const [],
+                          marksKnown: marksKnown,
                         ),
                       ),
                       if (bookSummary != null)
@@ -688,7 +693,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                   ),
           ),
           bottomNavigationBar: _selectionMode
-              ? _selectionBar(book, verses, marks)
+              ? _selectionBar(book, verses, marks, marksKnown)
               : BottomAppBar(
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -744,8 +749,28 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     );
   }
 
+  /// 個人標記載入中顯示細進度條、失敗顯示可重試提示（掛在 AppBar 底部，
+  /// 經文本身照常顯示）；已載入則不佔空間。
+  PreferredSizeWidget? _marksStatusBar(AsyncValue<ChapterMarks> marksAsync) {
+    if (marksAsync.hasValue) return null;
+    if (marksAsync.hasError) {
+      return PreferredSize(
+        preferredSize: const Size.fromHeight(48),
+        child: _MarksLoadError(onRetry: _refreshMarks),
+      );
+    }
+    return const PreferredSize(
+      preferredSize: Size.fromHeight(2),
+      child: LinearProgressIndicator(minHeight: 2, semanticsLabel: '正在載入個人標記'),
+    );
+  }
+
   /// 多選模式的 AppBar：顯示已選數、清除、全選。
-  AppBar _selectionAppBar(int verseCount) => AppBar(
+  AppBar _selectionAppBar(
+    int verseCount,
+    AsyncValue<ChapterMarks> marksAsync,
+  ) => AppBar(
+    bottom: _marksStatusBar(marksAsync),
     leading: IconButton(
       icon: const Icon(Icons.close),
       tooltip: '取消選取',
@@ -766,7 +791,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   );
 
   /// 多選模式的底部批次動作列：螢光筆／書籤／稍後讀／複製／分享。
-  Widget _selectionBar(Book book, List<String> verses, ChapterMarks marks) {
+  Widget _selectionBar(
+    Book book,
+    List<String> verses,
+    ChapterMarks marks,
+    bool marksKnown,
+  ) {
     return BottomAppBar(
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -779,7 +809,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           IconButton(
             icon: const Icon(Icons.bookmark_add_outlined),
             tooltip: '書籤',
-            onPressed: () => _bulkBookmark(marks.bookmarks),
+            // 已有書籤會略過，所以需要已知的書籤狀態。
+            onPressed: marksKnown ? () => _bulkBookmark(marks.bookmarks) : null,
           ),
           IconButton(
             icon: const Icon(Icons.watch_later_outlined),
@@ -1010,8 +1041,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     int verseNo,
     String text,
     ChapterMarks marks,
-    List<VerseAnnotationView> anns,
-  ) {
+    List<VerseAnnotationView> anns, {
+    bool marksKnown = true,
+  }) {
     // 目前 Active Church 名（教會專屬標題用；純 presentation，非授權依據）。
     final churchName = ref.read(activeChurchNameProvider).value;
     final db = ref.read(databaseServiceProvider);
@@ -1038,7 +1070,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       useSafeArea: true,
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
-        Widget quickAction(IconData icon, String label, VoidCallback onTap) =>
+        Widget quickAction(IconData icon, String label, VoidCallback? onTap) =>
             InkWell(
               borderRadius: BorderRadius.circular(10),
               onTap: onTap,
@@ -1050,7 +1082,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(icon, size: 22, color: scheme.secondary),
+                    Icon(
+                      icon,
+                      size: 22,
+                      color: onTap == null ? scheme.outline : scheme.secondary,
+                    ),
                     const SizedBox(height: 2),
                     Text(label, style: Theme.of(ctx).textTheme.labelSmall),
                   ],
@@ -1132,6 +1168,16 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                       ),
                     ),
                   ),
+                if (!marksKnown)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                    child: Text(
+                      '個人標記暫時無法載入，書籤與筆記請稍後再試。',
+                      style: Theme.of(
+                        ctx,
+                      ).textTheme.bodySmall?.copyWith(color: scheme.error),
+                    ),
+                  ),
                 // 螢光筆選色（可命名）
                 Padding(
                   padding: const EdgeInsets.symmetric(
@@ -1208,22 +1254,30 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           ? Icons.bookmark_remove
                           : Icons.bookmark_add_outlined,
                       isBookmarked ? '移除書籤' : '書籤',
-                      () async {
-                        Navigator.pop(ctx);
-                        try {
-                          await db.toggleBookmark(_bookId, _chapter, verseNo);
-                        } finally {
-                          _refreshMarks();
-                        }
-                      },
+                      marksKnown
+                          ? () async {
+                              Navigator.pop(ctx);
+                              try {
+                                await db.toggleBookmark(
+                                  _bookId,
+                                  _chapter,
+                                  verseNo,
+                                );
+                              } finally {
+                                _refreshMarks();
+                              }
+                            }
+                          : null,
                     ),
                     quickAction(
                       Icons.edit_note,
                       note == null ? '筆記' : '編輯筆記',
-                      () {
-                        Navigator.pop(ctx);
-                        _showNoteEditor(book, verseNo, note);
-                      },
+                      marksKnown
+                          ? () {
+                              Navigator.pop(ctx);
+                              _showNoteEditor(book, verseNo, note);
+                            }
+                          : null,
                     ),
                     quickAction(Icons.copy, '複製', () async {
                       await Clipboard.setData(
@@ -2023,6 +2077,37 @@ class _ParagraphChapterState extends State<_ParagraphChapter> {
       }
     }
     return spans;
+  }
+}
+
+/// 個人標記（書籤／螢光筆／筆記）載入失敗：不擋讀經，提示並可重試。
+class _MarksLoadError extends StatelessWidget {
+  const _MarksLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            Icon(Icons.bookmark_border, color: scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '個人標記暫時無法載入',
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            TextButton(onPressed: onRetry, child: const Text('重試')),
+          ],
+        ),
+      ),
+    );
   }
 }
 
