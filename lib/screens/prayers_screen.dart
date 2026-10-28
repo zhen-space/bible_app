@@ -126,12 +126,51 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
       ),
     );
     if (ok != true) return;
+    await _performDelete(list);
+  }
+
+  /// 已確認後的刪除；重試走這裡，不再重複詢問。
+  Future<void> _performDelete(List<Prayer> list) async {
     final db = ref.read(databaseServiceProvider);
-    for (final prayer in list) {
-      await db.deletePrayer(prayer.id!);
+    var deleted = 0;
+    var failed = false;
+    try {
+      for (final prayer in list) {
+        await db.deletePrayer(prayer.id!);
+        deleted++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    _selection.cancel();
+    // 不論成敗都重新讀取：刪到一半失敗時，畫面要反映實際還在的禱告事項，
+    // 不能假裝全部刪除（也不把例外丟回滑動手勢）。
     ref.invalidate(allPrayersProvider);
+    if (!mounted) return;
+    if (!failed) {
+      _selection.cancel();
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未刪除的項目；已刪的移出選取，計數才與畫面一致。
+    final remaining = list.skip(deleted).toList();
+    if (_selection.active) {
+      _selection.selectAll(remaining.map((prayer) => prayer.id!));
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            deleted == 0
+                ? '刪除失敗，禱告事項仍保留。'
+                : '只刪除了 $deleted / ${list.length} 則，其餘仍保留。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _performDelete(remaining),
+          ),
+        ),
+      );
   }
 
   String _copyPrayer(Prayer prayer, List<Book>? books) {

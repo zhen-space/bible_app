@@ -1190,14 +1190,18 @@ class DatabaseService {
     return p.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗（同 [deleteTodo]）。
+  /// 墓碑寫入失敗時本體刪除一併回滾，禱告保留、可重試，不會在下次同步從雲端復活。
   Future<void> deletePrayer(int id) async {
     final db = await database;
-    final rows = await db.query('prayers',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('prayers', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'prayer', 'p${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.query('prayers',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('prayers', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'prayer', 'p${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
