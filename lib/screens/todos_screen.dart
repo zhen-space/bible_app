@@ -336,6 +336,8 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
     for (final t in todos)
       if (t.category.isNotEmpty) t.category,
   }.toList();
+  var saving = false;
+  var saveFailed = false;
 
   showModalBottomSheet<void>(
     context: context,
@@ -390,26 +392,65 @@ void _editTodo(BuildContext context, WidgetRef ref, Todo? existing) {
               ),
             ],
             const SizedBox(height: 20),
-            FilledButton(
-              onPressed: () async {
-                if (!(formKey.currentState?.validate() ?? false)) return;
-                final text = content.text.trim();
-                Navigator.pop(ctx);
-                await ref
-                    .read(databaseServiceProvider)
-                    .saveTodo(
-                      Todo(
-                        id: existing?.id,
-                        category: category.text.trim(),
-                        content: text,
-                        done: existing?.done ?? false,
-                        createdAt: existing?.createdAt ?? 0,
-                        updatedAt: existing?.updatedAt ?? 0,
+            // 先寫入、成功才關閉：寫入失敗時保留已輸入的文字，可直接重試。
+            StatefulBuilder(
+              builder: (ctx, setSheetState) => Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (saveFailed)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          '儲存失敗，內容仍保留，請再試一次。',
+                          style: TextStyle(
+                            color: Theme.of(ctx).colorScheme.error,
+                          ),
+                        ),
                       ),
-                    );
-                ref.invalidate(allTodosProvider);
-              },
-              child: const Text('儲存'),
+                    ),
+                  FilledButton(
+                    onPressed: saving
+                        ? null
+                        : () async {
+                            if (!(formKey.currentState?.validate() ?? false)) {
+                              return;
+                            }
+                            setSheetState(() {
+                              saving = true;
+                              saveFailed = false;
+                            });
+                            try {
+                              await ref
+                                  .read(databaseServiceProvider)
+                                  .saveTodo(
+                                    Todo(
+                                      id: existing?.id,
+                                      category: category.text.trim(),
+                                      content: content.text.trim(),
+                                      done: existing?.done ?? false,
+                                      createdAt: existing?.createdAt ?? 0,
+                                      updatedAt: existing?.updatedAt ?? 0,
+                                    ),
+                                  );
+                            } catch (_) {
+                              if (ctx.mounted) {
+                                setSheetState(() {
+                                  saving = false;
+                                  saveFailed = true;
+                                });
+                              }
+                              return;
+                            }
+                            ref.invalidate(allTodosProvider);
+                            if (ctx.mounted) Navigator.pop(ctx);
+                          },
+                    child: Text(saving ? '儲存中…' : (saveFailed ? '重試儲存' : '儲存')),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
