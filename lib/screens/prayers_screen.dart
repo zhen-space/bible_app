@@ -306,6 +306,8 @@ class _PrayersScreenState extends ConsumerState<PrayersScreen> {
                     title: _prayerFilterEmptyTitle(_filter),
                     subtitle: '可切換其他狀態查看禱告事項。',
                     icon: Icons.volunteer_activism_outlined,
+                    actionLabel: '清除篩選',
+                    onAction: () => _changeFilter(PrayerListFilter.all),
                   ),
                 )
               else
