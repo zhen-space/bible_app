@@ -443,30 +443,41 @@ class TypesScreen extends ConsumerWidget {
                           ),
                         ),
                       const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          if (t.otRef.isNotEmpty)
-                            _refChip(
-                              context,
-                              ref,
-                              '預表',
-                              t.otRef,
-                              scheme.primaryContainer,
-                            ),
-                          if (t.otRef.isNotEmpty && t.ntRef.isNotEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Icon(Icons.arrow_forward, size: 18),
-                            ),
-                          if (t.ntRef.isNotEmpty)
-                            _refChip(
-                              context,
-                              ref,
-                              '應驗',
-                              t.ntRef,
-                              scheme.secondaryContainer,
-                            ),
-                        ],
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final narrow = constraints.maxWidth < 520;
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              if (t.otRef.isNotEmpty)
+                                _refChip(
+                                  context,
+                                  ref,
+                                  '預表',
+                                  t.otRef,
+                                  scheme.primaryContainer,
+                                ),
+                              if (t.otRef.isNotEmpty && t.ntRef.isNotEmpty)
+                                Icon(
+                                  narrow
+                                      ? Icons.arrow_downward
+                                      : Icons.arrow_forward,
+                                  size: 18,
+                                  semanticLabel: '預表到應驗',
+                                ),
+                              if (t.ntRef.isNotEmpty)
+                                _refChip(
+                                  context,
+                                  ref,
+                                  '應驗',
+                                  t.ntRef,
+                                  scheme.secondaryContainer,
+                                ),
+                            ],
+                          );
+                        },
                       ),
                       if (t.note.isNotEmpty) ...[
                         const SizedBox(height: 8),
