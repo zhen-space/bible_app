@@ -338,39 +338,77 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
     super.dispose();
   }
 
+  /// 移除與復原都是 idempotent 的 setHighlight：重試已移除的不會再記墓碑，
+  /// 復原已加回的只會覆寫同色。
   Future<void> remove(Iterable<Highlight> items) async {
-    final removed = items.toList();
-    if (removed.isEmpty) return;
+    final list = items.toList();
+    if (list.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in removed) {
-      await db.setHighlight(item.bookId, item.chapter, item.verse, null);
+    var removed = 0;
+    var failed = false;
+    try {
+      for (final item in list) {
+        await db.setHighlight(item.bookId, item.chapter, item.verse, null);
+        removed++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：移除到一半失敗時，畫面要反映實際還在的螢光筆，
+    // 不能假裝全部移除（也不把例外丟回滑動手勢）。
     ref.invalidate(allHighlightsProvider);
     ref.invalidate(chapterMarksProvider);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('已移除 ${removed.length} 個螢光筆標記'),
-        action: SnackBarAction(
-          label: '復原',
-          onPressed: () async {
-            if (!mounted) return;
-            for (final item in removed) {
-              await db.setHighlight(
-                item.bookId,
-                item.chapter,
-                item.verse,
-                item.color,
-              );
-            }
-            if (!mounted) return;
-            ref.invalidate(allHighlightsProvider);
-            ref.invalidate(chapterMarksProvider);
-          },
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      selection.cancel();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已移除 ${list.length} 個螢光筆標記'),
+          action: SnackBarAction(label: '復原', onPressed: () => _restore(list)),
         ),
+      );
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未移除的項目；已移除的移出選取，計數才與畫面一致。
+    final remaining = list.skip(removed).toList();
+    if (selection.active) selection.selectAll(remaining.map(keyOf));
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          removed == 0
+              ? '移除失敗，螢光筆仍保留。'
+              : '只移除了 $removed / ${list.length} 個，其餘仍保留。',
+        ),
+        action: SnackBarAction(label: '重試', onPressed: () => remove(remaining)),
       ),
     );
+  }
+
+  Future<void> _restore(List<Highlight> items) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final item in items) {
+        await db.setHighlight(item.bookId, item.chapter, item.verse, item.color);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    ref.invalidate(allHighlightsProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
+          // 已加回的再設一次只是覆寫同色，重試整批是安全的。
+          action: SnackBarAction(label: '重試', onPressed: () => _restore(items)),
+        ),
+      );
   }
 
   @override

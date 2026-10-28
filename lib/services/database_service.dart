@@ -541,19 +541,27 @@ class DatabaseService {
   // ---- Highlights ----
 
   /// 設定螢光筆顏色；color 為 null 表示移除。
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [toggleBookmark]）。
+  /// 移除時墓碑寫入失敗→刪除回滾，螢光筆保留，不會在下次同步從雲端復活；
+  /// 設色時清墓碑失敗→寫入回滾，不會留下「有螢光筆又有墓碑」被同步刪掉。
+  /// Idempotent（重試安全）：該節本來就沒有螢光筆時移除是 no-op，不記墓碑、
+  /// 不觸發同步——否則多餘的墓碑會在同步時蓋掉別台裝置較舊、尚未同步過來的同節螢光筆。
   Future<void> setHighlight(
       int bookId, int chapter, int verse, HighlightColor? color) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    if (color == null) {
-      await db.delete(
-        'highlights',
-        where: 'book_id = ? AND chapter = ? AND verse = ?',
-        whereArgs: [bookId, chapter, verse],
-      );
-      await _tombstone(db, 'highlight', ref);
-    } else {
-      await db.insert(
+    final changed = await db.transaction((txn) async {
+      if (color == null) {
+        final deleted = await txn.delete(
+          'highlights',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'highlight', ref);
+        return true;
+      }
+      await txn.insert(
         'highlights',
         {
           'book_id': bookId,
@@ -564,9 +572,10 @@ class DatabaseService {
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await _untomb(db, 'highlight', ref);
-    }
-    _mutated();
+      await _untomb(txn, 'highlight', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   Future<List<Highlight>> getAllHighlights() async {
