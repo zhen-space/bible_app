@@ -118,6 +118,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       _restoreOffset = widget.initialOffset > 0 ? widget.initialOffset : null;
     }
     _scroll.addListener(_onScroll);
+    HardwareKeyboard.instance.addHandler(_handleChapterKey);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ttsCtrl = ref.read(ttsProvider.notifier);
       // 臨時瀏覽不更新一般 Reading Position／閱讀紀錄
@@ -139,6 +140,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _flashTimer?.cancel();
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
+    HardwareKeyboard.instance.removeHandler(_handleChapterKey);
     // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref）
     _ttsCtrl?.stop();
     super.dispose();
@@ -382,6 +384,30 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final target = adjacentChapter(books, _bookId, _chapter, delta);
     if (target == null) return;
     _goTo(target.bookId, target.chapter);
+  }
+
+  /// 鍵盤左右鍵提供與底部上一章／下一章相同的等價操作。
+  bool _handleChapterKey(KeyEvent event) {
+    if (event is! KeyDownEvent || ModalRoute.of(context)?.isCurrent != true) {
+      return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    if (keyboard.isAltPressed ||
+        keyboard.isControlPressed ||
+        keyboard.isMetaPressed) {
+      return false;
+    }
+    final delta = switch (event.logicalKey) {
+      LogicalKeyboardKey.arrowLeft => -1,
+      LogicalKeyboardKey.arrowRight => 1,
+      _ => 0,
+    };
+    final books = ref.read(booksProvider).value;
+    if (delta == 0 || books == null) return false;
+    final target = adjacentChapter(books, _bookId, _chapter, delta);
+    if (target == null) return false;
+    _goTo(target.bookId, target.chapter);
+    return true;
   }
 
   /// 依節位字串跳轉（交叉引用用）。
