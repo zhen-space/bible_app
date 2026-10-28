@@ -60,29 +60,78 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
     final changed = todos.where((todo) => todo.done != done).toList();
     if (changed.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final todo in changed) {
-      await db.saveTodo(todo.copyWith(done: done));
+    var written = 0;
+    var failed = false;
+    try {
+      for (final todo in changed) {
+        await db.saveTodo(todo.copyWith(done: done));
+        written++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    _selection.cancel();
+    // 不論成敗都重新讀取：寫到一半失敗時，畫面要反映實際已寫入的狀態，
+    // 不能停在舊狀態（也讓滑動列正常回彈，不把例外丟回手勢）。
     await _refresh();
     if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (failed) {
+      // 保留選取，使用者可直接重試尚未寫入的項目。
+      final remaining = changed.skip(written).toList();
+      messenger.showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            written == 0
+                ? '更新失敗，代辦狀態沒有變更。'
+                : '只更新了 $written / ${changed.length} 項，其餘沒有變更。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _setDone(remaining, done),
+          ),
+        ),
+      );
+      return;
+    }
+    _selection.cancel();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          changed.length == 1
+              ? (done ? '已標記為完成' : '已改回待完成')
+              : '已更新 ${changed.length} 項代辦',
+        ),
+        action: SnackBarAction(
+          label: '復原',
+          onPressed: () => _restoreDone(changed),
+        ),
+      ),
+    );
+  }
+
+  /// 復原打勾：寫回原本狀態；失敗時同樣重新讀取並提供重試（寫回原值可重複執行）。
+  Future<void> _restoreDone(List<Todo> originals) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final todo in originals) {
+        await db.saveTodo(todo);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    await _refresh();
+    if (!failed || !mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         SnackBar(
-          content: Text(
-            changed.length == 1
-                ? (done ? '已標記為完成' : '已改回待完成')
-                : '已更新 ${changed.length} 項代辦',
-          ),
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
           action: SnackBarAction(
-            label: '復原',
-            onPressed: () async {
-              for (final todo in changed) {
-                await db.saveTodo(todo);
-              }
-              await _refresh();
-            },
+            label: '重試',
+            onPressed: () => _restoreDone(originals),
           ),
         ),
       );
