@@ -75,13 +75,53 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
       ),
     );
     if (ok != true) return;
+    await _performDelete(selected);
+  }
+
+  /// 已確認後移到最近刪除；重試走這裡，不再重複詢問。
+  /// softDeleteNoteById 對已刪的筆記是 no-op，所以重試不會重寫刪除時間。
+  Future<void> _performDelete(List<Note> notes) async {
     final db = ref.read(databaseServiceProvider);
-    for (final note in selected) {
-      await db.softDeleteNoteById(note.id!);
+    var deleted = 0;
+    var failed = false;
+    try {
+      for (final note in notes) {
+        await db.softDeleteNoteById(note.id!);
+        deleted++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    _selection.cancel();
+    // 不論成敗都重新讀取：刪到一半失敗時，畫面要反映實際還在的筆記，
+    // 不能假裝全部刪除（也不把例外丟回滑動手勢）。
     ref.invalidate(allNotesProvider);
     ref.invalidate(deletedNotesProvider);
+    if (!mounted) return;
+    if (!failed) {
+      if (_selection.active) _selection.cancel();
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未刪除的筆記；已刪的移出選取，計數才與畫面一致。
+    final remaining = notes.skip(deleted).toList();
+    if (_selection.active) {
+      _selection.selectAll(remaining.map((n) => n.id!));
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            deleted == 0
+                ? '刪除失敗，筆記仍保留。'
+                : '只刪除了 $deleted / ${notes.length} 則，其餘仍保留。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _performDelete(remaining),
+          ),
+        ),
+      );
   }
 
   String _noteCopy(Note note, List<Book>? books) {
@@ -252,9 +292,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
       ),
     );
     if (ok != true) return;
-    await ref.read(databaseServiceProvider).softDeleteNoteById(note.id!);
-    ref.invalidate(allNotesProvider);
-    ref.invalidate(deletedNotesProvider);
+    await _performDelete([note]);
   }
 
   Future<void> _copyOne(BuildContext context, Note note) async {
@@ -605,16 +643,50 @@ class _SearchViewState extends ConsumerState<_SearchView> {
   }
 }
 
-class _DeletedNotesScreen extends ConsumerWidget {
+class _DeletedNotesScreen extends ConsumerStatefulWidget {
   const _DeletedNotesScreen();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final deleted = ref.watch(deletedNotesProvider);
-    void refresh() {
-      ref.invalidate(deletedNotesProvider);
-      ref.invalidate(allNotesProvider);
+  ConsumerState<_DeletedNotesScreen> createState() => _DeletedNotesScreenState();
+}
+
+class _DeletedNotesScreenState extends ConsumerState<_DeletedNotesScreen> {
+  /// 還原／永久刪除。兩者在 DB 層都可安全重試（已完成就 no-op；永久刪除與墓碑
+  /// 同一交易），所以失敗時一律重新讀取、顯示實際狀態，並提供只針對這則的重試。
+  Future<void> _run(Note n, {required bool restore}) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      if (restore) {
+        await db.restoreNote(n.id!);
+      } else {
+        await db.purgeNote(n.id!);
+      }
+    } catch (_) {
+      failed = true;
     }
+    ref.invalidate(deletedNotesProvider);
+    ref.invalidate(allNotesProvider);
+    if (!mounted || !failed) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(restore
+              ? '還原失敗，筆記仍在最近刪除。'
+              : '永久刪除失敗，筆記仍在最近刪除。'),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _run(n, restore: restore),
+          ),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final deleted = ref.watch(deletedNotesProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('最近刪除')),
       body: deleted.when(
@@ -631,10 +703,9 @@ class _DeletedNotesScreen extends ConsumerWidget {
                     title: Text(n.title.isNotEmpty ? n.title : '經文筆記'),
                     subtitle: Text(n.content, maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: PopupMenuButton<String>(
-                      onSelected: (value) async {
-                        if (value == 'restore') await ref.read(databaseServiceProvider).restoreNote(n.id!);
-                        if (value == 'delete') await ref.read(databaseServiceProvider).purgeNote(n.id!);
-                        refresh();
+                      onSelected: (value) {
+                        if (value == 'restore') _run(n, restore: true);
+                        if (value == 'delete') _run(n, restore: false);
                       },
                       itemBuilder: (_) => const [
                         PopupMenuItem(value: 'restore', child: Text('還原')),

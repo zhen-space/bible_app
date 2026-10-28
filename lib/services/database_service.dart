@@ -602,123 +602,146 @@ class DatabaseService {
 
   /// 逐節快速筆記（Reader/單節面板用）：以錨點 (book,chapter,verse) upsert。
   /// **不動** title/refs（保留 v2 欄位不被簡易編輯清掉）；會清軟刪除旗標。
+  /// 寫入與清墓碑在同一個交易：不會留下「活資料＋墓碑」並存（下次同步會被刪掉）。
   Future<void> saveNote(int bookId, int chapter, int verse, String content,
       {String tags = ''}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final existing = await db.query(
-      'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (existing.isEmpty) {
-      await db.insert('notes', {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'content': content,
-        'tags': tags,
-        'created_at': now,
-        'updated_at': now,
-      });
-    } else {
-      await db.update(
+    await db.transaction((txn) async {
+      final existing = await txn.query(
         'notes',
-        {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
-        where: 'id = ?',
-        whereArgs: [existing.first['id']],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
       );
-    }
-    await _untomb(db, 'note', _rowRef(bookId, chapter, verse));
+      if (existing.isEmpty) {
+        await txn.insert('notes', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'content': content,
+          'tags': tags,
+          'created_at': now,
+          'updated_at': now,
+        });
+      } else {
+        await txn.update(
+          'notes',
+          {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
+          where: 'id = ?',
+          whereArgs: [existing.first['id']],
+        );
+      }
+      await _untomb(txn, 'note', _rowRef(bookId, chapter, verse));
+    });
     _mutated();
   }
 
   /// Notes v2 完整存檔（含標題/額外引用/標籤）。id 為 null＝新增，回傳 id。
+  /// 寫入與清墓碑同一個交易（理由同 [saveNote]）。
   Future<int> saveNoteFull(Note note) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (note.id == null) {
-      final id = await db.insert('notes', {
-        'book_id': note.bookId,
-        'chapter': note.chapter,
-        'verse': note.verse,
-        'title': note.title,
-        'content': note.content,
-        'tags': note.tags,
-        'refs': note.refs.join(','),
-        'deleted_at': 0,
-        'created_at': now,
-        'updated_at': now,
-      });
-      await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
-      _mutated();
-      return id;
-    }
-    await db.update(
-      'notes',
-      {
-        'book_id': note.bookId,
-        'chapter': note.chapter,
-        'verse': note.verse,
-        'title': note.title,
-        'content': note.content,
-        'tags': note.tags,
-        'refs': note.refs.join(','),
-        'deleted_at': 0,
-        'updated_at': now,
-      },
-      where: 'id = ?',
-      whereArgs: [note.id],
-    );
-    await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+    final ref = _rowRef(note.bookId, note.chapter, note.verse);
+    final id = await db.transaction((txn) async {
+      if (note.id == null) {
+        final id = await txn.insert('notes', {
+          'book_id': note.bookId,
+          'chapter': note.chapter,
+          'verse': note.verse,
+          'title': note.title,
+          'content': note.content,
+          'tags': note.tags,
+          'refs': note.refs.join(','),
+          'deleted_at': 0,
+          'created_at': now,
+          'updated_at': now,
+        });
+        await _untomb(txn, 'note', ref);
+        return id;
+      }
+      await txn.update(
+        'notes',
+        {
+          'book_id': note.bookId,
+          'chapter': note.chapter,
+          'verse': note.verse,
+          'title': note.title,
+          'content': note.content,
+          'tags': note.tags,
+          'refs': note.refs.join(','),
+          'deleted_at': 0,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [note.id],
+      );
+      await _untomb(txn, 'note', ref);
+      return note.id!;
+    });
     _mutated();
-    return note.id!;
+    return id;
   }
 
   /// 軟刪除到「最近刪除」（不寫墓碑；真正刪除走 purgeNote）。
+  /// 單一 UPDATE；已在最近刪除就不重寫、不觸發同步（重試安全）。
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.update(
+    final n = await db.update(
       'notes',
       {'deleted_at': now, 'updated_at': now},
       where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter, verse],
     );
-    _mutated();
+    if (n > 0) _mutated();
   }
 
+  /// 依 id 軟刪除。已在最近刪除（或不存在）就什麼都不做：重試不會把
+  /// deleted_at 往後推，也不觸發同步。
   Future<void> softDeleteNoteById(int id) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.update('notes', {'deleted_at': now, 'updated_at': now},
-        where: 'id = ?', whereArgs: [id]);
-    _mutated();
+    final n = await db.update('notes', {'deleted_at': now, 'updated_at': now},
+        where: 'id = ? AND deleted_at = 0', whereArgs: [id]);
+    if (n > 0) _mutated();
   }
 
+  /// 從最近刪除還原。已還原（或不存在）就什麼都不做（重試安全）。
   Future<void> restoreNote(int id) async {
     final db = await database;
-    await db.update(
+    final n = await db.update(
         'notes',
         {'deleted_at': 0, 'updated_at': DateTime.now().millisecondsSinceEpoch},
-        where: 'id = ?', whereArgs: [id]);
-    _mutated();
+        where: 'id = ? AND deleted_at > 0', whereArgs: [id]);
+    if (n > 0) _mutated();
   }
 
   /// 從「最近刪除」永久刪除（寫墓碑，同步刪除）。
+  ///
+  /// 查詢、刪除、寫墓碑在同一個交易：墓碑寫入失敗時整筆回滾、筆記仍在最近刪除，
+  /// 不會出現「本機已刪但沒墓碑 → 下次同步從雲端下載回來」。已不存在就什麼都不做
+  /// （重試安全）。同一節若還有其他筆記（雲端 doc 以節位為 id），不寫墓碑，
+  /// 否則同步會把那則仍在的筆記一起刪掉。
   Future<void> purgeNote(int id) async {
     final db = await database;
-    final rows = await db.query('notes',
-        columns: ['book_id', 'chapter', 'verse'],
-        where: 'id = ?',
-        whereArgs: [id]);
-    await db.delete('notes', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
+    final removed = await db.transaction((txn) async {
+      final rows = await txn.query('notes',
+          columns: ['book_id', 'chapter', 'verse'],
+          where: 'id = ?',
+          whereArgs: [id]);
+      if (rows.isEmpty) return false;
       final r = rows.first;
-      await _tombstone(db, 'note',
-          _rowRef(r['book_id'] as int, r['chapter'] as int, r['verse'] as int));
-    }
-    _mutated();
+      final b = r['book_id'] as int, c = r['chapter'] as int, v = r['verse'] as int;
+      await txn.delete('notes', where: 'id = ?', whereArgs: [id]);
+      final others = await txn.query('notes',
+          columns: ['id'],
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [b, c, v],
+          limit: 1);
+      if (others.isEmpty) await _tombstone(txn, 'note', _rowRef(b, c, v));
+      return true;
+    });
+    if (removed) _mutated();
   }
 
   /// 全部正常（未軟刪除）筆記。
