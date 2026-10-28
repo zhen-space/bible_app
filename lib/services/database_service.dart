@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart'
-    show Database, ConflictAlgorithm, OpenDatabaseOptions;
+    show Database, DatabaseExecutor, ConflictAlgorithm, OpenDatabaseOptions;
 
 import '../models/models.dart';
 import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dart';
@@ -33,6 +33,10 @@ class DatabaseService {
   /// 用來對「既有使用者舊 schema → 最新」做真實 migration 整合測試。不改任何 production 行為。
   @visibleForTesting
   int get debugDbVersion => _dbVersion;
+
+  /// 測試專用：讓寫入方法直接使用測試提供的 [Database]（用於失敗注入測試）。
+  @visibleForTesting
+  void debugUseDatabase(Database db) => _db = db;
 
   @visibleForTesting
   Future<void> debugCreateAllTables(Database db) => _createAllTables(db);
@@ -252,7 +256,7 @@ class DatabaseService {
   String _rowRef(int bookId, int chapter, int verse) =>
       'b${bookId}_c${chapter}_v$verse';
 
-  Future<void> _tombstone(Database db, String kind, String ref) async {
+  Future<void> _tombstone(DatabaseExecutor db, String kind, String ref) async {
     await db.insert(
       'tombstones',
       {
@@ -264,7 +268,7 @@ class DatabaseService {
     );
   }
 
-  Future<void> _untomb(Database db, String kind, String ref) async {
+  Future<void> _untomb(DatabaseExecutor db, String kind, String ref) async {
     await db.delete('tombstones',
         where: 'kind = ? AND ref = ?', whereArgs: [kind, ref]);
   }
@@ -1225,14 +1229,19 @@ class DatabaseService {
     return t.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗。
+  /// 若墓碑寫入失敗，本體刪除一併回滾（本機資料保留、可重試），
+  /// 不會出現「本機已刪、沒有墓碑 → 下次同步雲端資料復活」。
   Future<void> deleteTodo(int id) async {
     final db = await database;
-    final rows = await db.query('todos',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('todos', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'todo', 't${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.query('todos',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('todos', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'todo', 't${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
