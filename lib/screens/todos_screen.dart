@@ -270,6 +270,8 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
                     icon: _filter == TodoListFilter.completed
                         ? Icons.check_circle_outline
                         : Icons.task_alt,
+                    actionLabel: '清除篩選',
+                    onAction: () => _changeFilter(TodoListFilter.all),
                   ),
                 );
               }
