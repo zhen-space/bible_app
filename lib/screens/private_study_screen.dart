@@ -844,22 +844,69 @@ class _PrivateStudySearchScreenState extends ConsumerState<PrivateStudySearchScr
   String bookId = '';
   String topic = '';
   bool? hasScripture;
+  late final PrivateStudyRepository _repo;
+  late Future<List<PrivateStudyBook>> _booksFuture;
+  Future<List<PrivateStudyNote>>? _resultsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = ref.read(privateStudyRepositoryProvider);
+    _booksFuture = _repo.getBooks();
+  }
+
+  Future<List<PrivateStudyNote>> _search() async {
+    // 讓 FutureBuilder 先訂閱新 Future，再發出請求，避免同步失敗成為未處理錯誤。
+    await Future<void>.delayed(Duration.zero);
+    return _repo.search(
+      query: query,
+      bookId: bookId.isEmpty ? null : bookId,
+      topic: topic.isEmpty ? null : topic,
+      hasScripture: hasScripture,
+    );
+  }
+
+  void _updateSearch(VoidCallback update) {
+    setState(() {
+      update();
+      _resultsFuture = _search();
+    });
+  }
+
+  void _retryBooks() {
+    setState(() {
+      _booksFuture = _repo.getBooks();
+    });
+  }
+
+  void _retryResults() {
+    setState(() {
+      _resultsFuture = _search();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    final repo = ref.watch(privateStudyRepositoryProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('搜尋我的研讀')),
       body: FutureBuilder<List<PrivateStudyBook>>(
-        future: repo.getBooks(),
+        future: _booksFuture,
         builder: (context, booksSnap) {
-          final books = booksSnap.data ?? const <PrivateStudyBook>[];
+          if (booksSnap.hasError) {
+            return StudentErrorState(
+              message: '研讀書籍暫時無法載入。',
+              onRetry: _retryBooks,
+            );
+          }
+          if (!booksSnap.hasData) return const StudentCompactLoading();
+          final books = booksSnap.data!;
+          final resultsFuture = _resultsFuture ??= _search();
           return Column(children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
               child: TextField(
                 decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: '搜尋話語、心得、實踐、來源、書名或作者'),
-                onChanged: (value) => setState(() => query = value),
+                onChanged: (value) => _updateSearch(() => query = value),
               ),
             ),
             SingleChildScrollView(
@@ -872,7 +919,7 @@ class _PrivateStudySearchScreenState extends ConsumerState<PrivateStudySearchScr
                     const DropdownMenuItem(value: '', child: Text('全部書籍')),
                     for (final b in books) DropdownMenuItem(value: b.id, child: Text(b.title)),
                   ],
-                  onChanged: (value) => setState(() => bookId = value ?? ''),
+                  onChanged: (value) => _updateSearch(() => bookId = value ?? ''),
                 ),
                 const SizedBox(width: 14),
                 DropdownButton<String>(
@@ -881,26 +928,27 @@ class _PrivateStudySearchScreenState extends ConsumerState<PrivateStudySearchScr
                     const DropdownMenuItem(value: '', child: Text('全部主題')),
                     for (final t in [...kPrivateStudyTopics, '未分類']) DropdownMenuItem(value: t, child: Text(t)),
                   ],
-                  onChanged: (value) => setState(() => topic = value ?? ''),
+                  onChanged: (value) => _updateSearch(() => topic = value ?? ''),
                 ),
                 const SizedBox(width: 14),
                 ChoiceChip(
                   label: const Text('有對應經文'),
                   selected: hasScripture == true,
-                  onSelected: (value) => setState(() => hasScripture = value ? true : null),
+                  onSelected: (value) => _updateSearch(() => hasScripture = value ? true : null),
                 ),
               ]),
             ),
             const Divider(height: 1),
             Expanded(
               child: FutureBuilder<List<PrivateStudyNote>>(
-                future: repo.search(
-                  query: query,
-                  bookId: bookId.isEmpty ? null : bookId,
-                  topic: topic.isEmpty ? null : topic,
-                  hasScripture: hasScripture,
-                ),
+                future: resultsFuture,
                 builder: (context, resultSnap) {
+                  if (resultSnap.hasError) {
+                    return StudentErrorState(
+                      message: '研讀筆記暫時無法搜尋。',
+                      onRetry: _retryResults,
+                    );
+                  }
                   if (!resultSnap.hasData) return const StudentCompactLoading();
                   final notes = resultSnap.data!;
                   final byId = {for (final b in books) b.id: b};
@@ -932,20 +980,51 @@ class _PrivateStudySearchScreenState extends ConsumerState<PrivateStudySearchScr
   }
 }
 
-class PrivateStudyDeletedScreen extends ConsumerWidget {
+class PrivateStudyDeletedScreen extends ConsumerStatefulWidget {
   const PrivateStudyDeletedScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final repo = ref.watch(privateStudyRepositoryProvider);
+  ConsumerState<PrivateStudyDeletedScreen> createState() =>
+      _PrivateStudyDeletedScreenState();
+}
+
+class _PrivateStudyDeletedScreenState
+    extends ConsumerState<PrivateStudyDeletedScreen> {
+  late final PrivateStudyRepository _repo;
+  late Future<List<Object>> _deletedFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _repo = ref.read(privateStudyRepositoryProvider);
+    _deletedFuture = _loadDeleted();
+  }
+
+  Future<List<Object>> _loadDeleted() => Future.wait<Object>([
+        _repo.getBooks(includeDeleted: true),
+        _repo.getNotes(includeDeleted: true),
+      ]);
+
+  void _reload() {
+    if (!mounted) return;
+    setState(() {
+      _deletedFuture = _loadDeleted();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('最近刪除')),
       body: FutureBuilder<List<Object>>(
-        future: Future.wait<Object>([
-          repo.getBooks(includeDeleted: true),
-          repo.getNotes(includeDeleted: true),
-        ]),
+        future: _deletedFuture,
         builder: (context, snap) {
+          if (snap.hasError) {
+            return StudentErrorState(
+              message: '最近刪除暫時無法載入。',
+              onRetry: _reload,
+            );
+          }
           if (!snap.hasData) return const StudentCompactLoading();
           final allBooks = snap.data![0] as List<PrivateStudyBook>;
           final books = allBooks.where((b) => b.isDeleted).toList();
@@ -959,12 +1038,14 @@ class PrivateStudyDeletedScreen extends ConsumerWidget {
                 _DeletedTile(
                   title: b.title,
                   onRestore: () async {
-                    await repo.restoreBook(b.id);
+                    await _repo.restoreBook(b.id);
                     _refreshPrivateStudy(ref);
+                    _reload();
                   },
                   onDelete: () async {
-                    await repo.purgeBook(b.id);
+                    await _repo.purgeBook(b.id);
                     _refreshPrivateStudy(ref);
+                    _reload();
                   },
                 ),
             ],
@@ -975,12 +1056,14 @@ class PrivateStudyDeletedScreen extends ConsumerWidget {
                   title: n.displayText,
                   subtitle: byId[n.bookId]?.title,
                   onRestore: () async {
-                    await repo.restoreNote(n.id);
+                    await _repo.restoreNote(n.id);
                     _refreshPrivateStudy(ref, bookId: n.bookId);
+                    _reload();
                   },
                   onDelete: () async {
-                    await repo.purgeNote(n.id);
+                    await _repo.purgeNote(n.id);
                     _refreshPrivateStudy(ref, bookId: n.bookId);
+                    _reload();
                   },
                 ),
             ],
