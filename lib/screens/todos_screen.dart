@@ -158,12 +158,51 @@ class _TodosScreenState extends ConsumerState<TodosScreen> {
       ),
     );
     if (ok != true) return;
+    await _performDelete(list);
+  }
+
+  /// 已確認後的刪除；重試走這裡，不再重複詢問。
+  Future<void> _performDelete(List<Todo> list) async {
     final db = ref.read(databaseServiceProvider);
-    for (final todo in list) {
-      await db.deleteTodo(todo.id!);
+    var deleted = 0;
+    var failed = false;
+    try {
+      for (final todo in list) {
+        await db.deleteTodo(todo.id!);
+        deleted++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    _selection.cancel();
+    // 不論成敗都重新讀取：刪到一半失敗時，畫面要反映實際還在的代辦，
+    // 不能假裝全部刪除（也不把例外丟回滑動手勢）。
     await _refresh();
+    if (!mounted) return;
+    if (!failed) {
+      _selection.cancel();
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未刪除的項目；已刪的移出選取，計數才與畫面一致。
+    final remaining = list.skip(deleted).toList();
+    if (_selection.active) {
+      _selection.selectAll(remaining.map((todo) => todo.id!));
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            deleted == 0
+                ? '刪除失敗，代辦仍保留。'
+                : '只刪除了 $deleted / ${list.length} 項，其餘仍保留。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _performDelete(remaining),
+          ),
+        ),
+      );
   }
 
   @override
