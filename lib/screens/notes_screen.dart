@@ -265,6 +265,14 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 typedef NoteOpen = void Function(BuildContext context, Note note);
 typedef NoteAction = Future<void> Function(BuildContext context, Note note);
 
+Widget _notesLoadError(WidgetRef ref, {bool retryBooks = false}) =>
+    StudentErrorState(
+      onRetry: () {
+        ref.invalidate(allNotesProvider);
+        if (retryBooks) ref.invalidate(booksProvider);
+      },
+    );
+
 class _NoteRow extends StatelessWidget {
   const _NoteRow({
     required this.note,
@@ -420,29 +428,40 @@ class _ByBookView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    final books = ref.watch(booksProvider).value;
-    if (books == null) return const StudentCompactLoading();
-    if (notes.isEmpty) return const StudentEmptyState(title: '還沒有經文筆記');
-    final byBook = <int, List<Note>>{};
-    for (final n in notes) {
-      (byBook[n.bookId] ??= []).add(n);
-    }
-    final ids = byBook.keys.toList()..sort();
-    return ListView(children: [
-      for (final id in ids)
-        ExpansionTile(
-          title: Text(books[id - 1].name),
-          subtitle: Text('${byBook[id]!.length} 則'),
-          children: [
-            for (final n in sortNotesForList(
-              byBook[id]!,
-              NoteSortOrder.scripture,
-            ))
-              _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
-          ],
-        ),
-    ]);
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref, retryBooks: true),
+      data: (notes) {
+        if (notes.isEmpty) {
+          return const StudentEmptyState(title: '還沒有經文筆記');
+        }
+        return ref.watch(booksProvider).when(
+          loading: () => const StudentCompactLoading(),
+          error: (_, _) => _notesLoadError(ref, retryBooks: true),
+          data: (books) {
+            final byBook = <int, List<Note>>{};
+            for (final n in notes) {
+              (byBook[n.bookId] ??= []).add(n);
+            }
+            final ids = byBook.keys.toList()..sort();
+            return ListView(children: [
+              for (final id in ids)
+                ExpansionTile(
+                  title: Text(books[id - 1].name),
+                  subtitle: Text('${byBook[id]!.length} 則'),
+                  children: [
+                    for (final n in sortNotesForList(
+                      byBook[id]!,
+                      NoteSortOrder.scripture,
+                    ))
+                      _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+                  ],
+                ),
+            ]);
+          },
+        );
+      },
+    );
   }
 }
 
@@ -455,30 +474,42 @@ class _ByTagView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    if (notes.isEmpty) return const StudentEmptyState(title: '還沒有經文筆記');
-    final byTag = <String, List<Note>>{};
-    for (final n in notes) {
-      for (final t in n.tagList) {
-        (byTag[t] ??= []).add(n);
-      }
-    }
-    final tags = byTag.keys.toList()..sort();
-    if (tags.isEmpty) return const StudentEmptyState(title: '目前沒有標籤', subtitle: '編輯筆記時可以加入標籤。');
-    return ListView(children: [
-      for (final tag in tags)
-        ExpansionTile(
-          title: Text('#$tag'),
-          subtitle: Text('${byTag[tag]!.length} 則'),
-          children: [
-            for (final n in sortNotesForList(
-              byTag[tag]!,
-              NoteSortOrder.updated,
-            ))
-              _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
-          ],
-        ),
-    ]);
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref),
+      data: (notes) {
+        if (notes.isEmpty) {
+          return const StudentEmptyState(title: '還沒有經文筆記');
+        }
+        final byTag = <String, List<Note>>{};
+        for (final n in notes) {
+          for (final t in n.tagList) {
+            (byTag[t] ??= []).add(n);
+          }
+        }
+        final tags = byTag.keys.toList()..sort();
+        if (tags.isEmpty) {
+          return const StudentEmptyState(
+            title: '目前沒有標籤',
+            subtitle: '編輯筆記時可以加入標籤。',
+          );
+        }
+        return ListView(children: [
+          for (final tag in tags)
+            ExpansionTile(
+              title: Text('#$tag'),
+              subtitle: Text('${byTag[tag]!.length} 則'),
+              children: [
+                for (final n in sortNotesForList(
+                  byTag[tag]!,
+                  NoteSortOrder.updated,
+                ))
+                  _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+              ],
+            ),
+        ]);
+      },
+    );
   }
 }
 
@@ -510,22 +541,25 @@ class _SearchViewState extends ConsumerState<_SearchView> {
 
   @override
   Widget build(BuildContext context) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    final books = ref.watch(booksProvider).value;
-    final q = query.trim();
-    final matches = searchNotesForList(
-      notes,
-      q,
-      extraText: (note) {
-        final fallback = '${note.bookId} ${note.chapter}:${note.verse}';
-        if (books == null || note.bookId < 1 || note.bookId > books.length) {
-          return fallback;
-        }
-        final book = books[note.bookId - 1];
-        return '${book.name} ${book.abbr} $fallback';
-      },
-    );
-    return Column(children: [
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref),
+      data: (notes) {
+        final books = ref.watch(booksProvider).value;
+        final q = query.trim();
+        final matches = searchNotesForList(
+          notes,
+          q,
+          extraText: (note) {
+            final fallback = '${note.bookId} ${note.chapter}:${note.verse}';
+            if (books == null || note.bookId < 1 || note.bookId > books.length) {
+              return fallback;
+            }
+            final book = books[note.bookId - 1];
+            return '${book.name} ${book.abbr} $fallback';
+          },
+        );
+        return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: TextField(
@@ -565,7 +599,9 @@ class _SearchViewState extends ConsumerState<_SearchView> {
                 ? StudentEmptyState(title: '找不到符合「$q」的筆記')
                 : _noteList(notes: matches, selection: widget.selection, onOpen: widget.onOpen, onDelete: widget.onDelete, onCopy: widget.onCopy),
       ),
-    ]);
+        ]);
+      },
+    );
   }
 }
 
