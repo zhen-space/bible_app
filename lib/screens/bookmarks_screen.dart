@@ -132,34 +132,76 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
     super.dispose();
   }
 
+  /// 移除與復原都用 idempotent 的 setBookmark：重試不會把已移除的書籤又加回來。
   Future<void> remove(Iterable<Bookmark> items) async {
-    final removed = items.toList();
-    if (removed.isEmpty) return;
+    final list = items.toList();
+    if (list.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in removed) {
-      await db.toggleBookmark(item.bookId, item.chapter, item.verse);
+    var removed = 0;
+    var failed = false;
+    try {
+      for (final item in list) {
+        await db.setBookmark(item.bookId, item.chapter, item.verse, false);
+        removed++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：移除到一半失敗時，畫面要反映實際還在的書籤，
+    // 不能假裝全部移除（也不把例外丟回滑動手勢）。
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(chapterMarksProvider);
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('已移除 ${removed.length} 個書籤'),
-        action: SnackBarAction(
-          label: '復原',
-          onPressed: () async {
-            if (!mounted) return;
-            for (final item in removed) {
-              await db.toggleBookmark(item.bookId, item.chapter, item.verse);
-            }
-            if (!mounted) return;
-            ref.invalidate(allBookmarksProvider);
-            ref.invalidate(chapterMarksProvider);
-          },
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      selection.cancel();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已移除 ${list.length} 個書籤'),
+          action: SnackBarAction(label: '復原', onPressed: () => _restore(list)),
         ),
+      );
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未移除的項目；已移除的移出選取，計數才與畫面一致。
+    final remaining = list.skip(removed).toList();
+    if (selection.active) selection.selectAll(remaining.map(keyOf));
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          removed == 0
+              ? '移除失敗，書籤仍保留。'
+              : '只移除了 $removed / ${list.length} 個，其餘仍保留。',
+        ),
+        action: SnackBarAction(label: '重試', onPressed: () => remove(remaining)),
       ),
     );
+  }
+
+  Future<void> _restore(List<Bookmark> items) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final item in items) {
+        await db.setBookmark(item.bookId, item.chapter, item.verse, true);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    ref.invalidate(allBookmarksProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
+          // 已加回的再加一次不會變動，重試整批是安全的。
+          action: SnackBarAction(label: '重試', onPressed: () => _restore(items)),
+        ),
+      );
   }
 
   @override

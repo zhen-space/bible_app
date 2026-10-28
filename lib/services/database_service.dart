@@ -371,26 +371,68 @@ class DatabaseService {
 
   // ---- Bookmarks ----
 
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [deletePrayer]）。
+  /// 刪除時墓碑寫入失敗→刪除回滾，書籤保留，不會在下次同步從雲端復活；
+  /// 加入時清墓碑失敗→插入回滾，不會留下「有書籤又有墓碑」被同步刪掉。
   Future<void> toggleBookmark(int bookId, int chapter, int verse) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    final deleted = await db.delete(
-      'bookmarks',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (deleted == 0) {
-      await db.insert('bookmarks', {
+    await db.transaction((txn) async {
+      final deleted = await txn.delete(
+        'bookmarks',
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (deleted == 0) {
+        await txn.insert('bookmarks', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        await _untomb(txn, 'bookmark', ref); // 重新加入：清掉舊墓碑
+      } else {
+        await _tombstone(txn, 'bookmark', ref); // 刪除：記墓碑
+      }
+    });
+    _mutated();
+  }
+
+  /// 設定書籤為指定狀態（idempotent，重試安全）：已是該狀態就不動、不記墓碑。
+  /// 與 [toggleBookmark] 不同，重複呼叫不會把剛移除的書籤又加回來。
+  /// 加回時 created_at 用現在（同 toggle），才會比雲端墓碑新、不被同步刪掉。
+  Future<void> setBookmark(
+      int bookId, int chapter, int verse, bool bookmarked) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final changed = await db.transaction((txn) async {
+      if (!bookmarked) {
+        final deleted = await txn.delete(
+          'bookmarks',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'bookmark', ref);
+        return true;
+      }
+      final existing = await txn.query(
+        'bookmarks',
+        columns: ['id'],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (existing.isNotEmpty) return false;
+      await txn.insert('bookmarks', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
-      await _untomb(db, 'bookmark', ref); // 重新加入：清掉舊墓碑
-    } else {
-      await _tombstone(db, 'bookmark', ref); // 刪除：記墓碑
-    }
-    _mutated();
+      await _untomb(txn, 'bookmark', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   Future<List<Bookmark>> getAllBookmarks() async {
