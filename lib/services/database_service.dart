@@ -937,15 +937,19 @@ class DatabaseService {
     return note.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗（同 [deletePrayer]）。
+  /// 墓碑寫入失敗時本體刪除一併回滾，筆記保留、可重試，不會在下次同步從雲端復活。
   Future<void> deleteSermonNote(int id) async {
     final db = await database;
-    // 先取 created_at（雲端 doc id = s{createdAt}）再刪，才能記正確墓碑
-    final rows = await db.query('sermon_notes',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'sermon', 's${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      // 先取 created_at（雲端 doc id = s{createdAt}）再刪，才能記正確墓碑
+      final rows = await txn.query('sermon_notes',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'sermon', 's${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
