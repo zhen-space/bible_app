@@ -186,7 +186,10 @@ class _PrivateStudyHomeScreenState extends ConsumerState<PrivateStudyHomeScreen>
             ),
             notesAsync.when(
               loading: () => const StudentCompactLoading(),
-              error: (_, _) => const SizedBox.shrink(),
+              error: (_, _) => StudentErrorState(
+                message: '研讀筆記暫時無法載入。',
+                onRetry: () => ref.invalidate(privateStudyAllNotesProvider),
+              ),
               data: (notes) => ListTile(
                 leading: const Icon(Icons.library_books_outlined),
                 title: const Text('主題分類'),
