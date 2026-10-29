@@ -183,16 +183,55 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     success: '已複製 ${book.name} ${verse.chapter}:${verse.verse}',
   );
 
-  Future<void> _toggleBookmark(VerseRef verse, bool bookmarked) async {
-    await ref
-        .read(databaseServiceProvider)
-        .toggleBookmark(verse.bookId, verse.chapter, verse.verse);
-    ref.invalidate(allBookmarksProvider);
-    ref.invalidate(chapterMarksProvider);
+  /// 書籤寫入中的經節（`book:chapter:verse`）：滑動動畫中或連續滑動不會重複寫入。
+  final _bookmarkWrites = <String>{};
+
+  static String _verseKey(VerseRef v) => '${v.bookId}:${v.chapter}:${v.verse}';
+
+  /// 左滑書籤：依列上顯示的狀態決定**目標狀態**（已加入 → 移除；未加入 → 加入）。
+  Future<void> _swipeBookmark(VerseRef verse, bool bookmarked) =>
+      _writeBookmark(verse, !bookmarked);
+
+  /// 寫書籤目標狀態（`setBookmark`，idempotent、本體＋墓碑同一交易）。
+  /// 同一節寫入中就略過；不論成敗都重讀書籤，列上顯示實際儲存的狀態；
+  /// 失敗時 SnackBar（螢幕閱讀器會念）＋「重試」寫同一個目標，不會把狀態翻回去。
+  Future<void> _writeBookmark(VerseRef verse, bool target) async {
+    // 列的滑動設定在寫入中不變（避免動畫進行中改 Dismissible 方向），
+    // 重複滑動由這個 guard 擋下：直接回彈、不寫。
+    final key = _verseKey(verse);
+    if (!_bookmarkWrites.add(key)) return;
+    var failed = false;
+    try {
+      await ref
+          .read(databaseServiceProvider)
+          .setBookmark(verse.bookId, verse.chapter, verse.verse, target);
+    } catch (_) {
+      failed = true;
+    } finally {
+      _bookmarkWrites.remove(key);
+      if (mounted) {
+        ref.invalidate(allBookmarksProvider);
+        ref.invalidate(chapterMarksProvider);
+      }
+    }
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(bookmarked ? '已移除書籤' : '已加入書籤')));
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(target ? '已加入書籤' : '已移除書籤')),
+      );
+      return;
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(target ? '加入書籤失敗，這節沒有加入書籤。' : '移除書籤失敗，書籤仍保留。'),
+        action: SnackBarAction(
+          label: '重試',
+          onPressed: () => _writeBookmark(verse, target),
+        ),
+      ),
+    );
   }
 
   @override
@@ -379,7 +418,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   onCopy: () =>
                       _copyVerse(books[hit.verse.bookId - 1], hit.verse),
                   onBookmark: (bookmarked) =>
-                      _toggleBookmark(hit.verse, bookmarked),
+                      _swipeBookmark(hit.verse, bookmarked),
                   onMore: (_) => showVerseActionSheet(
                     context,
                     ref,
@@ -410,7 +449,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   onCopy: () =>
                       _copyVerse(books[hit.verse.bookId - 1], hit.verse),
                   onBookmark: (bookmarked) =>
-                      _toggleBookmark(hit.verse, bookmarked),
+                      _swipeBookmark(hit.verse, bookmarked),
                   onMore: (_) => showVerseActionSheet(
                     context,
                     ref,
