@@ -1361,17 +1361,8 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                 ),
                 // 我的筆記：數量＋最新一則摘要，點開看同節全部筆記。
                 if (marksKnown && verseNotes.isNotEmpty)
-                  ListTile(
-                    dense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                    leading: const Icon(Icons.sticky_note_2_outlined),
-                    title: Text('我的筆記 · ${verseNotes.length} 則'),
-                    subtitle: Text(
-                      '最新：${verseNoteSummary(verseNotes.first)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
+                  VerseNotesSummaryTile(
+                    notes: verseNotes,
                     onTap: () {
                       Navigator.pop(ctx);
                       _openVerseNotes(book, verseNo, verseNotes);
@@ -1678,27 +1669,16 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     );
   }
 
-  /// 這一節沒有筆記 → 直接開新增；有 → 開同節筆記清單（看全部／選一則編輯／刪除／新增）。
   void _openVerseNotes(Book book, int verseNo, List<Note> notes) {
-    if (notes.isEmpty) {
-      showVerseNoteEditor(
-        context,
-        bookName: book.name,
-        bookId: _bookId,
-        chapter: _chapter,
-        verse: verseNo,
-        onChanged: _refreshMarks,
-      );
-    } else {
-      showVerseNotesSheet(
-        context,
-        bookName: book.name,
-        bookId: _bookId,
-        chapter: _chapter,
-        verse: verseNo,
-        onChanged: _refreshMarks,
-      );
-    }
+    openVerseNotes(
+      context,
+      bookName: book.name,
+      bookId: _bookId,
+      chapter: _chapter,
+      verse: verseNo,
+      hasNotes: notes.isNotEmpty,
+      onChanged: _refreshMarks,
+    );
   }
 }
 

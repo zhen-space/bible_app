@@ -7,12 +7,18 @@ import '../providers/providers.dart';
 import '../theme/app_theme.dart';
 import '../utils/share_utils.dart';
 import 'chapter_screen.dart';
+import 'verse_notes_sheet.dart';
 
 /// 共用的「單節動作」面板（每日經文、書籤列表等非讀經頁的入口用）。
 ///
 /// 提供螢光筆（可改色/移除）、書籤、筆記、複製（純經文／經文＋出處）、
 /// 分享（走剪貼簿）、以及「在經文中閱讀」（臨時瀏覽，不動一般 Reading Position）。
 /// 讀經頁本身有自己的深度註釋面板，不走這裡。
+///
+/// 筆記和讀經頁一樣支援同一節多則（共用 `verse_notes_sheet.dart`）：顯示則數與最新摘要，
+/// 點入看同節全部筆記、選一則編輯／刪除、或新增；一律以筆記 id 寫，不會整節覆蓋或刪除。
+/// 個人標記讀取失敗時面板照常開（複製／分享／在經文中閱讀可用），依狀態才能決定的
+/// 書籤／稍後讀／筆記先停用並提供重試，避免以「未知」當「沒有」去切換或覆蓋。
 Future<void> showVerseActionSheet(
   BuildContext context,
   WidgetRef ref, {
@@ -23,16 +29,23 @@ Future<void> showVerseActionSheet(
 }) async {
   final db = ref.read(databaseServiceProvider);
   final bookId = book.id;
-  final highlights = await db.getChapterHighlights(bookId, chapter);
-  final bookmarks = await db.getBookmarkedVerses(bookId, chapter);
-  final notes = await db.getChapterNotes(bookId, chapter);
-  final later = await db.getLaterVerses(bookId, chapter);
+  HighlightColor? currentColor;
+  var isBookmarked = false;
+  var isLater = false;
+  var notes = const <Note>[];
+  var marksKnown = true;
+  try {
+    final highlights = await db.getChapterHighlights(bookId, chapter);
+    final bookmarks = await db.getBookmarkedVerses(bookId, chapter);
+    final later = await db.getLaterVerses(bookId, chapter);
+    notes = await db.getVerseNotes(bookId, chapter, verse);
+    currentColor = highlights[verse];
+    isBookmarked = bookmarks.contains(verse);
+    isLater = later.contains(verse);
+  } catch (_) {
+    marksKnown = false;
+  }
   if (!context.mounted) return;
-
-  final currentColor = highlights[verse];
-  final isBookmarked = bookmarks.contains(verse);
-  final isLater = later.contains(verse);
-  final existingNote = notes[verse];
   final citation = verseCitation(book, chapter, verse);
   final labels = ref.read(highlightLabelsProvider);
 
@@ -50,6 +63,20 @@ Future<void> showVerseActionSheet(
     useSafeArea: true,
     builder: (ctx) {
       final scheme = Theme.of(ctx).colorScheme;
+      void openNotes() {
+        Navigator.pop(ctx);
+        if (!context.mounted) return;
+        openVerseNotes(
+          context,
+          bookName: book.name,
+          bookId: bookId,
+          chapter: chapter,
+          verse: verse,
+          hasNotes: notes.isNotEmpty,
+          onChanged: refresh,
+        );
+      }
+
       return SafeArea(
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
@@ -76,6 +103,31 @@ Future<void> showVerseActionSheet(
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(height: 1.7)),
               const Divider(height: 24),
+              if (!marksKnown)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(children: [
+                    Expanded(
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text('個人標記暫時無法載入，書籤、稍後讀與筆記請稍後再試。',
+                            style: TextStyle(color: scheme.error)),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        if (!context.mounted) return;
+                        showVerseActionSheet(context, ref,
+                            book: book,
+                            chapter: chapter,
+                            verse: verse,
+                            text: text);
+                      },
+                      child: const Text('重試'),
+                    ),
+                  ]),
+                ),
               // 螢光筆選色
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -126,21 +178,18 @@ Future<void> showVerseActionSheet(
                       isBookmarked
                           ? Icons.bookmark_remove
                           : Icons.bookmark_add_outlined,
-                      isBookmarked ? '移除書籤' : '書籤', () async {
+                      isBookmarked ? '移除書籤' : '書籤', !marksKnown ? null : () async {
                     Navigator.pop(ctx);
                     await db.toggleBookmark(bookId, chapter, verse);
                     refresh();
                   }),
                   _act(ctx, Icons.edit_note,
-                      existingNote == null ? '筆記' : '編輯筆記', () {
-                    Navigator.pop(ctx);
-                    _showNoteEditor(context, ref, book, chapter, verse,
-                        existingNote, refresh);
-                  }),
+                      notes.isEmpty ? '筆記' : '筆記 ${notes.length}',
+                      !marksKnown ? null : openNotes),
                   _act(
                       ctx,
                       isLater ? Icons.watch_later : Icons.watch_later_outlined,
-                      isLater ? '移除待讀' : '稍後讀', () async {
+                      isLater ? '移除待讀' : '稍後讀', !marksKnown ? null : () async {
                     Navigator.pop(ctx);
                     // 設定目標狀態（非切換）：失敗後重試不會把狀態翻回去。
                     final messenger = ScaffoldMessenger.maybeOf(context);
@@ -175,6 +224,10 @@ Future<void> showVerseActionSheet(
                   }),
                 ],
               ),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                VerseNotesSummaryTile(notes: notes, onTap: openNotes),
+              ],
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 icon: const Icon(Icons.menu_book_outlined),
@@ -202,14 +255,19 @@ Future<void> showVerseActionSheet(
   );
 }
 
-Widget _act(BuildContext ctx, IconData icon, String label, VoidCallback onTap) =>
+Widget _act(
+        BuildContext ctx, IconData icon, String label, VoidCallback? onTap) =>
     InkWell(
       borderRadius: BorderRadius.circular(10),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 22, color: Theme.of(ctx).colorScheme.secondary),
+          Icon(icon,
+              size: 22,
+              color: onTap == null
+                  ? Theme.of(ctx).colorScheme.outline
+                  : Theme.of(ctx).colorScheme.secondary),
           const SizedBox(height: 2),
           Text(label, style: Theme.of(ctx).textTheme.labelSmall),
         ]),
@@ -258,73 +316,4 @@ Future<void> _toClipboard(
         content: Text(share ? '已複製，可貼到任何 App 分享' : '已複製'),
         duration: const Duration(seconds: 2)));
   }
-}
-
-void _showNoteEditor(BuildContext context, WidgetRef ref, Book book,
-    int chapter, int verse, Note? existing, VoidCallback onSaved) {
-  final controller = TextEditingController(text: existing?.content ?? '');
-  final tagsController = TextEditingController(text: existing?.tags ?? '');
-  final db = ref.read(databaseServiceProvider);
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    builder: (ctx) => Padding(
-      padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          left: 16,
-          right: 16,
-          top: 16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('${book.name} $chapter:$verse 筆記',
-              style: Theme.of(ctx).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          TextField(
-            controller: controller,
-            maxLines: 5,
-            autofocus: true,
-            decoration: const InputDecoration(
-                border: OutlineInputBorder(), hintText: '寫下你的想法…'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: tagsController,
-            decoration: const InputDecoration(
-              border: OutlineInputBorder(),
-              prefixIcon: Icon(Icons.tag, size: 18),
-              hintText: '標籤（空格分隔）',
-              isDense: true,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-            if (existing != null)
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  await db.deleteNote(book.id, chapter, verse);
-                  onSaved();
-                },
-                child: const Text('刪除'),
-              ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: () async {
-                final content = controller.text.trim();
-                final tags = tagsController.text.trim();
-                Navigator.pop(ctx);
-                if (content.isEmpty) return;
-                await db.saveNote(book.id, chapter, verse, content, tags: tags);
-                onSaved();
-              },
-              child: const Text('儲存'),
-            ),
-          ]),
-          const SizedBox(height: 16),
-        ],
-      ),
-    ),
-  );
 }

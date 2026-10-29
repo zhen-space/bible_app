@@ -32,6 +32,65 @@ String _fmtUpdated(int millis) {
   return '${d.year}/${d.month}/${d.day}';
 }
 
+/// 經節「筆記」入口（讀經頁節面板與共用單節面板都走這裡，行為一致）：
+/// 這一節沒有筆記 → 直接開新增；有 → 開同節筆記清單（看全部／選一則編輯／刪除／新增）。
+Future<void> openVerseNotes(
+  BuildContext context, {
+  required String bookName,
+  required int bookId,
+  required int chapter,
+  required int verse,
+  required bool hasNotes,
+  required VoidCallback onChanged,
+}) async {
+  if (hasNotes) {
+    await showVerseNotesSheet(
+      context,
+      bookName: bookName,
+      bookId: bookId,
+      chapter: chapter,
+      verse: verse,
+      onChanged: onChanged,
+    );
+  } else {
+    await showVerseNoteEditor(
+      context,
+      bookName: bookName,
+      bookId: bookId,
+      chapter: chapter,
+      verse: verse,
+      onChanged: onChanged,
+    );
+  }
+}
+
+/// 節面板的「我的筆記 · n 則」＋最新一則摘要（[notes] 最新在前、不可為空）。
+class VerseNotesSummaryTile extends StatelessWidget {
+  final List<Note> notes;
+  final VoidCallback onTap;
+
+  const VerseNotesSummaryTile({
+    super.key,
+    required this.notes,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    dense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+    leading: const Icon(Icons.sticky_note_2_outlined),
+    title: Text('我的筆記 · ${notes.length} 則'),
+    subtitle: Text(
+      '最新：${verseNoteSummary(notes.first)}',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    ),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onTap,
+  );
+}
+
 /// 開同節筆記清單。[onChanged] 在任何寫入嘗試後呼叫（讓讀經頁重抓標記）。
 Future<void> showVerseNotesSheet(
   BuildContext context, {

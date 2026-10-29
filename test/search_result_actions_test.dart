@@ -42,6 +42,16 @@ class _SearchDatabaseService extends DatabaseService {
   Future<Map<int, Note>> getChapterNotes(int bookId, int chapter) async => {};
 
   @override
+  Future<Map<int, List<Note>>> getChapterNoteLists(
+    int bookId,
+    int chapter,
+  ) async => {};
+
+  @override
+  Future<List<Note>> getVerseNotes(int bookId, int chapter, int verse) async =>
+      [];
+
+  @override
   Future<Set<int>> getLaterVerses(int bookId, int chapter) async => {};
 
   @override
@@ -104,7 +114,7 @@ void main() {
 
     await tester.tap(find.text('筆記'));
     await tester.pumpAndSettle();
-    expect(find.text('約翰福音 1:1 筆記'), findsOneWidget);
+    expect(find.text('約翰福音 1:1 新增筆記'), findsOneWidget);
     expect(find.text('儲存'), findsOneWidget);
   });
 

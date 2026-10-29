@@ -1,158 +1,16 @@
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/providers/providers.dart';
 import 'package:bible_app/screens/chapter_screen.dart';
-import 'package:bible_app/services/database_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/fake_notes_db.dart';
+
 /// 讀經頁「同一節多則經文筆記」的真實使用流程（375px）。
 ///
-/// 不碰真 DB：記憶體筆記清單，模擬 DB 層語意（saveNoteFull：id 為 null＝新增一則、
-/// 有 id＝只改那一則；softDeleteNoteById：移到最近刪除）。`failOnCalls` 指定第幾次
-/// 寫入丟例外——DB 層這些操作都是單一陳述或交易，失敗＝資料完全沒變。
-class _NotesDb extends DatabaseService {
-  _NotesDb(this.rows);
-  final List<Note> rows;
-  int calls = 0;
-  int clock = 1000;
-  final failOnCalls = <int>{};
-  final log = <String>[];
-
-  void _maybeFail() {
-    calls++;
-    if (failOnCalls.contains(calls)) throw StateError('write failed');
-  }
-
-  List<Note> _live(int b, int c) {
-    final out =
-        rows
-            .where((r) => r.bookId == b && r.chapter == c && !r.isDeleted)
-            .toList()
-          ..sort((a, z) => z.updatedAt.compareTo(a.updatedAt));
-    return out;
-  }
-
-  @override
-  Future<Map<int, List<Note>>> getChapterNoteLists(int b, int c) async {
-    final out = <int, List<Note>>{};
-    for (final n in _live(b, c)) {
-      out.putIfAbsent(n.verse, () => []).add(n);
-    }
-    return out;
-  }
-
-  @override
-  Future<List<Note>> getVerseNotes(int b, int c, int v) async =>
-      _live(b, c).where((n) => n.verse == v).toList();
-
-  @override
-  Future<int> saveNoteFull(Note note) async {
-    _maybeFail();
-    final now = ++clock;
-    if (note.id == null) {
-      final id = rows.fold<int>(0, (m, r) => r.id! > m ? r.id! : m) + 1;
-      log.add('insert $id');
-      rows.add(
-        Note(
-          id: id,
-          bookId: note.bookId,
-          chapter: note.chapter,
-          verse: note.verse,
-          title: note.title,
-          content: note.content,
-          tags: note.tags,
-          refs: note.refs,
-          createdAt: now,
-          updatedAt: now,
-        ),
-      );
-      return id;
-    }
-    log.add('update ${note.id}');
-    final i = rows.indexWhere((r) => r.id == note.id);
-    rows[i] = Note(
-      id: note.id,
-      bookId: note.bookId,
-      chapter: note.chapter,
-      verse: note.verse,
-      title: note.title,
-      content: note.content,
-      tags: note.tags,
-      refs: note.refs,
-      createdAt: rows[i].createdAt,
-      updatedAt: now,
-    );
-    return note.id!;
-  }
-
-  @override
-  Future<void> softDeleteNoteById(int id) async {
-    _maybeFail();
-    log.add('soft $id');
-    final i = rows.indexWhere((r) => r.id == id);
-    final n = rows[i];
-    rows[i] = Note(
-      id: n.id,
-      bookId: n.bookId,
-      chapter: n.chapter,
-      verse: n.verse,
-      title: n.title,
-      content: n.content,
-      tags: n.tags,
-      refs: n.refs,
-      deletedAt: ++clock,
-      createdAt: n.createdAt,
-      updatedAt: clock,
-    );
-  }
-
-  // 舊的整節 API 不應再被讀經頁用來寫筆記（會改到／刪到同節別則）。
-  @override
-  Future<void> saveNote(
-    int b,
-    int c,
-    int v,
-    String content, {
-    String tags = '',
-  }) async {
-    log.add('legacy saveNote');
-  }
-
-  @override
-  Future<void> deleteNote(int b, int c, int v) async {
-    log.add('legacy deleteNote');
-  }
-
-  @override
-  Future<Set<int>> getBookmarkedVerses(int b, int c) async => {};
-
-  @override
-  Future<Map<int, HighlightColor>> getChapterHighlights(int b, int c) async =>
-      {};
-
-  @override
-  Future<Set<int>> getLaterVerses(int b, int c) async => {};
-
-  @override
-  Future<void> markChapterRead(int b, int c) async {}
-
-  @override
-  Future<bool> isChapterComplete(int b, int c) async => false;
-
-  @override
-  Future<List<Bookmark>> getAllBookmarks() async => [];
-
-  @override
-  Future<List<Highlight>> getAllHighlights() async => [];
-
-  @override
-  Future<List<Note>> getAllNotes() async =>
-      rows.where((r) => !r.isDeleted).toList();
-}
-
 const _books = [
   Book(
     id: 1,
@@ -192,7 +50,7 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-Future<void> _pump(WidgetTester tester, _NotesDb db) async {
+Future<void> _pump(WidgetTester tester, FakeNotesDb db) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -223,7 +81,7 @@ void main() {
   testWidgets('375px 經節顯示筆記數量與最新摘要，點入列出同節全部筆記', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
-    final db = _NotesDb([
+    final db = FakeNotesDb([
       _n(1, 1, '較早的筆記', at: 10),
       _n(2, 1, '最新的觀察\n第二行', at: 20),
       _n(3, 2, '另一節的筆記', at: 30),
@@ -264,7 +122,7 @@ void main() {
 
   testWidgets('375px 選擇既有筆記編輯：只改那一則、保留標題與引用，不影響同節其他筆記', (tester) async {
     _phone(tester);
-    final db = _NotesDb([
+    final db = FakeNotesDb([
       _n(1, 1, '第一則', title: '標題一', refs: ['b43_c3_v16'], at: 10),
       _n(2, 1, '第二則', at: 20),
     ]);
@@ -297,7 +155,7 @@ void main() {
 
   testWidgets('375px 新增不覆蓋既有筆記：從清單新增＝第三則，原本兩則不變', (tester) async {
     _phone(tester);
-    final db = _NotesDb([_n(1, 1, '甲', at: 10), _n(2, 1, '乙', at: 20)]);
+    final db = FakeNotesDb([_n(1, 1, '甲', at: 10), _n(2, 1, '乙', at: 20)]);
     await _pump(tester, db);
 
     await _openVerse(tester, '起初神創造天地');
@@ -336,7 +194,7 @@ void main() {
   testWidgets('375px 沒有筆記的節：直接開新增；中文輸入法組字中按儲存、失敗保留內容、重試只新增一則', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
-    final db = _NotesDb([_n(1, 1, '別節的筆記', at: 10)])..failOnCalls.add(1);
+    final db = FakeNotesDb([_n(1, 1, '別節的筆記', at: 10)])..failOnCalls.add(1);
     await _pump(tester, db);
 
     await _openVerse(tester, '地是空虛混沌');
@@ -400,7 +258,7 @@ void main() {
 
   testWidgets('375px 編輯失敗：保留修改中的內容，同節其他筆記不受影響，重試成功', (tester) async {
     _phone(tester);
-    final db = _NotesDb([_n(1, 1, '原文一', at: 10), _n(2, 1, '原文二', at: 20)])
+    final db = FakeNotesDb([_n(1, 1, '原文一', at: 10), _n(2, 1, '原文二', at: 20)])
       ..failOnCalls.add(1);
     await _pump(tester, db);
 
@@ -427,7 +285,7 @@ void main() {
   testWidgets('375px 清單刪除失敗：筆記仍在、顯示可重試；重試只刪那一則，數量即時更新', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
-    final db = _NotesDb([_n(1, 1, '要刪的', at: 10), _n(2, 1, '要留的', at: 20)])
+    final db = FakeNotesDb([_n(1, 1, '要刪的', at: 10), _n(2, 1, '要留的', at: 20)])
       ..failOnCalls.add(1);
     await _pump(tester, db);
 
@@ -480,7 +338,7 @@ void main() {
 
   testWidgets('375px 編輯器內刪除失敗：留在編輯器、內容仍在，重試成功關閉', (tester) async {
     _phone(tester);
-    final db = _NotesDb([_n(1, 1, '唯一一則', at: 10)])..failOnCalls.add(1);
+    final db = FakeNotesDb([_n(1, 1, '唯一一則', at: 10)])..failOnCalls.add(1);
     await _pump(tester, db);
 
     await _openVerse(tester, '起初神創造天地');
@@ -510,7 +368,7 @@ void main() {
     _phone(tester);
     tester.platformDispatcher.textScaleFactorTestValue = 1.5;
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
-    final db = _NotesDb([
+    final db = FakeNotesDb([
       for (var i = 1; i <= 6; i++)
         _n(
           i,
