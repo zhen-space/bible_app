@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/download_stub.dart'
     if (dart.library.js_interop) '../services/download_web.dart';
 import '../theme/app_theme.dart';
+import '../utils/marker_list_presentation.dart';
 import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'faith_map_screen.dart';
@@ -89,7 +91,9 @@ class _BookmarkTab extends ConsumerStatefulWidget {
 }
 
 class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
+  static const _sortPreferenceKey = 'bookmarks_sort_order';
   final SelectionController<String> selection = SelectionController<String>();
+  MarkerSortOrder sortOrder = MarkerSortOrder.recent;
 
   String keyOf(Bookmark b) => '${b.bookId}:${b.chapter}:${b.verse}';
 
@@ -97,6 +101,23 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
   void initState() {
     super.initState();
     selection.addListener(_refreshState);
+    _restoreSortOrder();
+  }
+
+  Future<void> _restoreSortOrder() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      sortOrder = decodeMarkerSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+    });
+  }
+
+  Future<void> _changeSortOrder(MarkerSortOrder value) async {
+    setState(() => sortOrder = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, value.name);
   }
 
   void _refreshState() {
@@ -111,14 +132,76 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
     super.dispose();
   }
 
+  /// 移除與復原都用 idempotent 的 setBookmark：重試不會把已移除的書籤又加回來。
   Future<void> remove(Iterable<Bookmark> items) async {
+    final list = items.toList();
+    if (list.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in items) {
-      await db.toggleBookmark(item.bookId, item.chapter, item.verse);
+    var removed = 0;
+    var failed = false;
+    try {
+      for (final item in list) {
+        await db.setBookmark(item.bookId, item.chapter, item.verse, false);
+        removed++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：移除到一半失敗時，畫面要反映實際還在的書籤，
+    // 不能假裝全部移除（也不把例外丟回滑動手勢）。
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      selection.cancel();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已移除 ${list.length} 個書籤'),
+          action: SnackBarAction(label: '復原', onPressed: () => _restore(list)),
+        ),
+      );
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未移除的項目；已移除的移出選取，計數才與畫面一致。
+    final remaining = list.skip(removed).toList();
+    if (selection.active) selection.selectAll(remaining.map(keyOf));
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          removed == 0
+              ? '移除失敗，書籤仍保留。'
+              : '只移除了 $removed / ${list.length} 個，其餘仍保留。',
+        ),
+        action: SnackBarAction(label: '重試', onPressed: () => remove(remaining)),
+      ),
+    );
+  }
+
+  Future<void> _restore(List<Bookmark> items) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final item in items) {
+        await db.setBookmark(item.bookId, item.chapter, item.verse, true);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    ref.invalidate(allBookmarksProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
+          // 已加回的再加一次不會變動，重試整批是安全的。
+          action: SnackBarAction(label: '重試', onPressed: () => _restore(items)),
+        ),
+      );
   }
 
   @override
@@ -138,8 +221,9 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
       return const StudentEmptyState(
           title: '還沒有書籤', subtitle: '在 Reader 選取經文即可加入書籤。', icon: Icons.bookmark_outline);
     }
-    final chosen = items.where((b) => selection.contains(keyOf(b))).toList();
-    final keys = items.map(keyOf).toList();
+    final sorted = sortBookmarksForList(items, sortOrder);
+    final chosen = sorted.where((b) => selection.contains(keyOf(b))).toList();
+    final keys = sorted.map(keyOf).toList();
     return Column(children: [
       _SelectionHeader(
         active: selection.active,
@@ -148,13 +232,15 @@ class _BookmarkTabState extends ConsumerState<_BookmarkTab> {
         onSelect: selection.start,
         onCancel: selection.cancel,
         onAll: () => selection.selectAll(keys),
+        sortOrder: sortOrder,
+        onSortChanged: _changeSortOrder,
       ),
       Expanded(
         child: ListView.separated(
-          itemCount: items.length,
+          itemCount: sorted.length,
           separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
           itemBuilder: (context, i) {
-            final b = items[i];
+            final b = sorted[i];
             final book = books[b.bookId - 1];
             final key = keyOf(b);
             final row = ListTile(
@@ -212,13 +298,32 @@ class _HighlightTab extends ConsumerStatefulWidget {
 }
 
 class _HighlightTabState extends ConsumerState<_HighlightTab> {
+  static const _sortPreferenceKey = 'highlights_sort_order';
   final SelectionController<String> selection = SelectionController<String>();
+  MarkerSortOrder sortOrder = MarkerSortOrder.recent;
   String keyOf(Highlight h) => '${h.bookId}:${h.chapter}:${h.verse}';
 
   @override
   void initState() {
     super.initState();
     selection.addListener(_refreshState);
+    _restoreSortOrder();
+  }
+
+  Future<void> _restoreSortOrder() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      sortOrder = decodeMarkerSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+    });
+  }
+
+  Future<void> _changeSortOrder(MarkerSortOrder value) async {
+    setState(() => sortOrder = value);
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, value.name);
   }
 
   void _refreshState() {
@@ -233,14 +338,77 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
     super.dispose();
   }
 
+  /// 移除與復原都是 idempotent 的 setHighlight：重試已移除的不會再記墓碑，
+  /// 復原已加回的只會覆寫同色。
   Future<void> remove(Iterable<Highlight> items) async {
+    final list = items.toList();
+    if (list.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final item in items) {
-      await db.setHighlight(item.bookId, item.chapter, item.verse, null);
+    var removed = 0;
+    var failed = false;
+    try {
+      for (final item in list) {
+        await db.setHighlight(item.bookId, item.chapter, item.verse, null);
+        removed++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：移除到一半失敗時，畫面要反映實際還在的螢光筆，
+    // 不能假裝全部移除（也不把例外丟回滑動手勢）。
     ref.invalidate(allHighlightsProvider);
     ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      selection.cancel();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已移除 ${list.length} 個螢光筆標記'),
+          action: SnackBarAction(label: '復原', onPressed: () => _restore(list)),
+        ),
+      );
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未移除的項目；已移除的移出選取，計數才與畫面一致。
+    final remaining = list.skip(removed).toList();
+    if (selection.active) selection.selectAll(remaining.map(keyOf));
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          removed == 0
+              ? '移除失敗，螢光筆仍保留。'
+              : '只移除了 $removed / ${list.length} 個，其餘仍保留。',
+        ),
+        action: SnackBarAction(label: '重試', onPressed: () => remove(remaining)),
+      ),
+    );
+  }
+
+  Future<void> _restore(List<Highlight> items) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final item in items) {
+        await db.setHighlight(item.bookId, item.chapter, item.verse, item.color);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    ref.invalidate(allHighlightsProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
+          // 已加回的再設一次只是覆寫同色，重試整批是安全的。
+          action: SnackBarAction(label: '重試', onPressed: () => _restore(items)),
+        ),
+      );
   }
 
   @override
@@ -261,7 +429,8 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
       return const StudentEmptyState(
           title: '還沒有螢光筆', subtitle: '在 Reader 選取經文即可標記。', icon: Icons.brush_outlined);
     }
-    final chosen = items.where((h) => selection.contains(keyOf(h))).toList();
+    final sorted = sortHighlightsForList(items, sortOrder);
+    final chosen = sorted.where((h) => selection.contains(keyOf(h))).toList();
     return Column(children: [
       _SelectionHeader(
         active: selection.active,
@@ -269,14 +438,16 @@ class _HighlightTabState extends ConsumerState<_HighlightTab> {
         total: items.length,
         onSelect: selection.start,
         onCancel: selection.cancel,
-        onAll: () => selection.selectAll(items.map(keyOf)),
+        onAll: () => selection.selectAll(sorted.map(keyOf)),
+        sortOrder: sortOrder,
+        onSortChanged: _changeSortOrder,
       ),
       Expanded(
         child: ListView.separated(
-          itemCount: items.length,
+          itemCount: sorted.length,
           separatorBuilder: (_, __) => const Divider(height: 1, indent: 20),
           itemBuilder: (context, i) {
-            final h = items[i];
+            final h = sorted[i];
             final book = books[h.bookId - 1];
             final key = keyOf(h);
             final label = labels[h.color];
@@ -349,6 +520,8 @@ class _SelectionHeader extends StatelessWidget {
     required this.onSelect,
     required this.onCancel,
     required this.onAll,
+    this.sortOrder,
+    this.onSortChanged,
   });
   final bool active;
   final int count;
@@ -356,6 +529,8 @@ class _SelectionHeader extends StatelessWidget {
   final VoidCallback onSelect;
   final VoidCallback onCancel;
   final VoidCallback onAll;
+  final MarkerSortOrder? sortOrder;
+  final ValueChanged<MarkerSortOrder>? onSortChanged;
 
   @override
   Widget build(BuildContext context) => Padding(
@@ -369,7 +544,27 @@ class _SelectionHeader extends StatelessWidget {
             TextButton(onPressed: onAll, child: const Text('全選')),
             TextButton(onPressed: onCancel, child: const Text('取消')),
           ] else
-            TextButton(onPressed: onSelect, child: const Text('選取')),
+            ...[
+              if (sortOrder != null && onSortChanged != null)
+                PopupMenuButton<MarkerSortOrder>(
+                  tooltip: '排序',
+                  icon: const Icon(Icons.sort),
+                  onSelected: onSortChanged,
+                  itemBuilder: (_) => [
+                    CheckedPopupMenuItem(
+                      value: MarkerSortOrder.recent,
+                      checked: sortOrder == MarkerSortOrder.recent,
+                      child: const Text('最近加入'),
+                    ),
+                    CheckedPopupMenuItem(
+                      value: MarkerSortOrder.scripture,
+                      checked: sortOrder == MarkerSortOrder.scripture,
+                      child: const Text('經文位置'),
+                    ),
+                  ],
+                ),
+              TextButton(onPressed: onSelect, child: const Text('選取')),
+            ],
         ]),
       );
 }

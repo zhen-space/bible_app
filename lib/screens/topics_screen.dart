@@ -5,6 +5,7 @@ import '../data/topics.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
 import '../services/verse_locator.dart';
+import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'reading_plans_screen.dart';
 
@@ -89,7 +90,10 @@ class TopicDetailScreen extends ConsumerWidget {
       appBar: AppBar(title: Text('${topic.emoji} ${topic.name}')),
       body: booksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (_, _) => StudentErrorState(
+          message: '${topic.name}的相關經文暫時載入失敗。',
+          onRetry: () => ref.invalidate(booksProvider),
+        ),
         data: (books) {
           final verses = <VerseRef>[];
           for (final r in topic.refs) {

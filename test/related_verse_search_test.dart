@@ -22,6 +22,11 @@ void main() {
           '神愛世人，甚至將他的獨生子賜給他們。',
           '智慧必入你心；你的靈要以知識為美。',
           '無關的測試文字。',
+          '你當剛強壯膽！不要懼怕，也不要驚惶。',
+          '我必安然躺下睡覺，因為獨有你使我安然居住。',
+          '復活在我，生命也在我；信我的人雖然死了，也必復活。',
+          '你們作丈夫的，要愛你們的妻子。',
+          '教養孩童，使他走當行的道。',
         ],
       ],
     ),
@@ -61,6 +66,43 @@ void main() {
     final hits = RelatedVerseSearch.search(books, '我很迷惘，做決定沒有方向');
 
     expect(hits.any((hit) => hit.verse.verse == 5), isTrue);
+  });
+
+  test('需要勇氣的自然語句能找到剛強壯膽經文', () {
+    final hits = RelatedVerseSearch.search(books, '我現在需要勇氣');
+
+    expect(hits.any((hit) => hit.verse.verse == 7), isTrue);
+  });
+
+  test('生活處境語句能找到睡眠、哀傷、婚姻與教養經文', () {
+    expect(
+      RelatedVerseSearch.search(
+        books,
+        '最近一直睡不著',
+      ).any((hit) => hit.verse.verse == 8),
+      isTrue,
+    );
+    expect(
+      RelatedVerseSearch.search(
+        books,
+        '失去親人很哀傷',
+      ).any((hit) => hit.verse.verse == 9),
+      isTrue,
+    );
+    expect(
+      RelatedVerseSearch.search(
+        books,
+        '婚姻中要如何相愛',
+      ).any((hit) => hit.verse.verse == 10),
+      isTrue,
+    );
+    expect(
+      RelatedVerseSearch.search(
+        books,
+        '如何教養孩子',
+      ).any((hit) => hit.verse.verse == 11),
+      isTrue,
+    );
   });
 
   test('實際和合本中，焦慮口語句能找到腓立比書 4:6-7', () async {

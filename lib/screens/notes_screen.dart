@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../utils/note_list_presentation.dart';
 import '../widgets/scripture_reference_field.dart';
 import '../widgets/student_ux.dart';
 
@@ -16,12 +18,34 @@ class NotesScreen extends ConsumerStatefulWidget {
 }
 
 class _NotesScreenState extends ConsumerState<NotesScreen> {
+  static const _sortPreferenceKey = 'notes_sort_order';
+  static const _groupPreferenceKey = 'notes_group_by_date';
   final SelectionController<int> _selection = SelectionController<int>();
+  NoteSortOrder _sortOrder = NoteSortOrder.updated;
+  bool _groupByDate = true;
 
   @override
   void initState() {
     super.initState();
     _selection.addListener(_changed);
+    _restoreListPreferences();
+  }
+
+  Future<void> _restoreListPreferences() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _sortOrder = decodeNoteSortOrder(
+        preferences.getString(_sortPreferenceKey),
+      );
+      _groupByDate = preferences.getBool(_groupPreferenceKey) ?? true;
+    });
+  }
+
+  Future<void> _saveListPreferences() async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setString(_sortPreferenceKey, _sortOrder.name);
+    await preferences.setBool(_groupPreferenceKey, _groupByDate);
   }
 
   void _changed() {
@@ -51,13 +75,53 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
       ),
     );
     if (ok != true) return;
+    await _performDelete(selected);
+  }
+
+  /// 已確認後移到最近刪除；重試走這裡，不再重複詢問。
+  /// softDeleteNoteById 對已刪的筆記是 no-op，所以重試不會重寫刪除時間。
+  Future<void> _performDelete(List<Note> notes) async {
     final db = ref.read(databaseServiceProvider);
-    for (final note in selected) {
-      await db.softDeleteNoteById(note.id!);
+    var deleted = 0;
+    var failed = false;
+    try {
+      for (final note in notes) {
+        await db.softDeleteNoteById(note.id!);
+        deleted++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    _selection.cancel();
+    // 不論成敗都重新讀取：刪到一半失敗時，畫面要反映實際還在的筆記，
+    // 不能假裝全部刪除（也不把例外丟回滑動手勢）。
     ref.invalidate(allNotesProvider);
     ref.invalidate(deletedNotesProvider);
+    if (!mounted) return;
+    if (!failed) {
+      if (_selection.active) _selection.cancel();
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未刪除的筆記；已刪的移出選取，計數才與畫面一致。
+    final remaining = notes.skip(deleted).toList();
+    if (_selection.active) {
+      _selection.selectAll(remaining.map((n) => n.id!));
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            deleted == 0
+                ? '刪除失敗，筆記仍保留。'
+                : '只刪除了 $deleted / ${notes.length} 則，其餘仍保留。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _performDelete(remaining),
+          ),
+        ),
+      );
   }
 
   String _noteCopy(Note note, List<Book>? books) {
@@ -113,10 +177,41 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
                       if (value == 'deleted') {
                         Navigator.push(context,
                             MaterialPageRoute(builder: (_) => const _DeletedNotesScreen()));
+                      } else if (value == 'group') {
+                        setState(() => _groupByDate = !_groupByDate);
+                        _saveListPreferences();
+                      } else if (value.startsWith('sort_')) {
+                        final name = value.substring(5);
+                        setState(() {
+                          _sortOrder = NoteSortOrder.values.firstWhere(
+                            (order) => order.name == name,
+                          );
+                        });
+                        _saveListPreferences();
                       }
                     },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'deleted', child: Text('最近刪除')),
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        enabled: false,
+                        child: Text('排序方式'),
+                      ),
+                      for (final order in NoteSortOrder.values)
+                        CheckedPopupMenuItem(
+                          value: 'sort_${order.name}',
+                          checked: _sortOrder == order,
+                          child: Text(order.label),
+                        ),
+                      const PopupMenuDivider(),
+                      CheckedPopupMenuItem(
+                        value: 'group',
+                        checked: _groupByDate,
+                        child: const Text('依日期分組'),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'deleted',
+                        child: Text('最近刪除'),
+                      ),
                     ],
                   ),
                 ],
@@ -161,7 +256,14 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
         body: TabBarView(
           physics: _selection.active ? const NeverScrollableScrollPhysics() : null,
           children: [
-            _RecentView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
+            _RecentView(
+              selection: _selection,
+              onOpen: _openEditor,
+              onDelete: _deleteOne,
+              onCopy: _copyOne,
+              sortOrder: _sortOrder,
+              groupByDate: _groupByDate,
+            ),
             _ByBookView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
             _ByTagView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
             _SearchView(selection: _selection, onOpen: _openEditor, onDelete: _deleteOne, onCopy: _copyOne),
@@ -190,9 +292,7 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
       ),
     );
     if (ok != true) return;
-    await ref.read(databaseServiceProvider).softDeleteNoteById(note.id!);
-    ref.invalidate(allNotesProvider);
-    ref.invalidate(deletedNotesProvider);
+    await _performDelete([note]);
   }
 
   Future<void> _copyOne(BuildContext context, Note note) async {
@@ -202,6 +302,14 @@ class _NotesScreenState extends ConsumerState<NotesScreen> {
 
 typedef NoteOpen = void Function(BuildContext context, Note note);
 typedef NoteAction = Future<void> Function(BuildContext context, Note note);
+
+Widget _notesLoadError(WidgetRef ref, {bool retryBooks = false}) =>
+    StudentErrorState(
+      onRetry: () {
+        ref.invalidate(allNotesProvider);
+        if (retryBooks) ref.invalidate(booksProvider);
+      },
+    );
 
 class _NoteRow extends StatelessWidget {
   const _NoteRow({
@@ -225,6 +333,8 @@ class _NoteRow extends StatelessWidget {
           ? '${note.bookId}:${note.chapter}:${note.verse}'
           : '${books[note.bookId - 1].name} ${note.chapter}:${note.verse}';
       final id = note.id;
+      final updated = compactNoteDate(noteListTimestamp(note), DateTime.now());
+      final preview = note.content.isEmpty ? anchor : note.content;
       final row = ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
         leading: selection.active && id != null
@@ -232,7 +342,7 @@ class _NoteRow extends StatelessWidget {
             : null,
         title: Text(note.title.isNotEmpty ? note.title : anchor,
             maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text(note.content.isEmpty ? anchor : note.content,
+        subtitle: Text('$updated · $preview',
             maxLines: 2, overflow: TextOverflow.ellipsis),
         trailing: selection.active ? null : const Icon(Icons.chevron_right),
         onLongPress: id == null ? null : () => selection.start(id),
@@ -274,19 +384,76 @@ Widget _noteList({
     );
 
 class _RecentView extends ConsumerWidget {
-  const _RecentView({required this.selection, required this.onOpen, required this.onDelete, required this.onCopy});
+  const _RecentView({
+    required this.selection,
+    required this.onOpen,
+    required this.onDelete,
+    required this.onCopy,
+    required this.sortOrder,
+    required this.groupByDate,
+  });
   final SelectionController<int> selection;
   final NoteOpen onOpen;
   final NoteAction onDelete;
   final NoteAction onCopy;
+  final NoteSortOrder sortOrder;
+  final bool groupByDate;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) => ref.watch(allNotesProvider).when(
         loading: () => const StudentCompactLoading(),
         error: (_, _) => StudentErrorState(onRetry: () => ref.invalidate(allNotesProvider)),
-        data: (notes) => notes.isEmpty
-            ? const StudentEmptyState(title: '還沒有經文筆記', subtitle: '閱讀時選取經文，或從這裡新增筆記。', icon: Icons.edit_note_outlined)
-            : _noteList(notes: notes, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+        data: (notes) {
+          if (notes.isEmpty) {
+            return const StudentEmptyState(
+              title: '還沒有經文筆記',
+              subtitle: '閱讀時選取經文，或從這裡新增筆記。',
+              icon: Icons.edit_note_outlined,
+            );
+          }
+          final sorted = sortNotesForList(notes, sortOrder);
+          if (!groupByDate) {
+            return _noteList(
+              notes: sorted,
+              selection: selection,
+              onOpen: onOpen,
+              onDelete: onDelete,
+              onCopy: onCopy,
+            );
+          }
+          final groups = <String, List<Note>>{};
+          final now = DateTime.now();
+          final newest = sortNotesForList(notes, NoteSortOrder.updated);
+          for (final note in newest) {
+            final timestamp = noteListTimestamp(note);
+            (groups[noteDateSection(timestamp, now)] ??= []).add(note);
+          }
+          return ListView(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            children: [
+              for (final group in groups.entries) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 5),
+                  child: Text(
+                    group.key,
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.outline,
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+                for (final note in sortNotesForList(group.value, sortOrder))
+                  _NoteRow(
+                    note: note,
+                    selection: selection,
+                    onOpen: onOpen,
+                    onDelete: onDelete,
+                    onCopy: onCopy,
+                  ),
+              ],
+            ],
+          );
+        },
       );
 }
 
@@ -299,26 +466,40 @@ class _ByBookView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    final books = ref.watch(booksProvider).value;
-    if (books == null) return const StudentCompactLoading();
-    if (notes.isEmpty) return const StudentEmptyState(title: '還沒有經文筆記');
-    final byBook = <int, List<Note>>{};
-    for (final n in notes) {
-      (byBook[n.bookId] ??= []).add(n);
-    }
-    final ids = byBook.keys.toList()..sort();
-    return ListView(children: [
-      for (final id in ids)
-        ExpansionTile(
-          title: Text(books[id - 1].name),
-          subtitle: Text('${byBook[id]!.length} 則'),
-          children: [
-            for (final n in byBook[id]!)
-              _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
-          ],
-        ),
-    ]);
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref, retryBooks: true),
+      data: (notes) {
+        if (notes.isEmpty) {
+          return const StudentEmptyState(title: '還沒有經文筆記');
+        }
+        return ref.watch(booksProvider).when(
+          loading: () => const StudentCompactLoading(),
+          error: (_, _) => _notesLoadError(ref, retryBooks: true),
+          data: (books) {
+            final byBook = <int, List<Note>>{};
+            for (final n in notes) {
+              (byBook[n.bookId] ??= []).add(n);
+            }
+            final ids = byBook.keys.toList()..sort();
+            return ListView(children: [
+              for (final id in ids)
+                ExpansionTile(
+                  title: Text(books[id - 1].name),
+                  subtitle: Text('${byBook[id]!.length} 則'),
+                  children: [
+                    for (final n in sortNotesForList(
+                      byBook[id]!,
+                      NoteSortOrder.scripture,
+                    ))
+                      _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+                  ],
+                ),
+            ]);
+          },
+        );
+      },
+    );
   }
 }
 
@@ -331,27 +512,42 @@ class _ByTagView extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    if (notes.isEmpty) return const StudentEmptyState(title: '還沒有經文筆記');
-    final byTag = <String, List<Note>>{};
-    for (final n in notes) {
-      for (final t in n.tagList) {
-        (byTag[t] ??= []).add(n);
-      }
-    }
-    final tags = byTag.keys.toList()..sort();
-    if (tags.isEmpty) return const StudentEmptyState(title: '目前沒有標籤', subtitle: '編輯筆記時可以加入標籤。');
-    return ListView(children: [
-      for (final tag in tags)
-        ExpansionTile(
-          title: Text('#$tag'),
-          subtitle: Text('${byTag[tag]!.length} 則'),
-          children: [
-            for (final n in byTag[tag]!)
-              _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
-          ],
-        ),
-    ]);
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref),
+      data: (notes) {
+        if (notes.isEmpty) {
+          return const StudentEmptyState(title: '還沒有經文筆記');
+        }
+        final byTag = <String, List<Note>>{};
+        for (final n in notes) {
+          for (final t in n.tagList) {
+            (byTag[t] ??= []).add(n);
+          }
+        }
+        final tags = byTag.keys.toList()..sort();
+        if (tags.isEmpty) {
+          return const StudentEmptyState(
+            title: '目前沒有標籤',
+            subtitle: '編輯筆記時可以加入標籤。',
+          );
+        }
+        return ListView(children: [
+          for (final tag in tags)
+            ExpansionTile(
+              title: Text('#$tag'),
+              subtitle: Text('${byTag[tag]!.length} 則'),
+              children: [
+                for (final n in sortNotesForList(
+                  byTag[tag]!,
+                  NoteSortOrder.updated,
+                ))
+                  _NoteRow(note: n, selection: selection, onOpen: onOpen, onDelete: onDelete, onCopy: onCopy),
+              ],
+            ),
+        ]);
+      },
+    );
   }
 }
 
@@ -367,23 +563,73 @@ class _SearchView extends ConsumerStatefulWidget {
 }
 
 class _SearchViewState extends ConsumerState<_SearchView> {
+  final _controller = TextEditingController();
   String query = '';
 
   @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _clearQuery() {
+    _controller.clear();
+    setState(() => query = '');
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final notes = ref.watch(allNotesProvider).value ?? const <Note>[];
-    final q = query.trim();
-    final matches = q.isEmpty
-        ? const <Note>[]
-        : notes.where((n) => n.title.contains(q) || n.content.contains(q) || n.tags.contains(q)).toList();
-    return Column(children: [
+    return ref.watch(allNotesProvider).when(
+      loading: () => const StudentCompactLoading(),
+      error: (_, _) => _notesLoadError(ref),
+      data: (notes) {
+        final books = ref.watch(booksProvider).value;
+        final q = query.trim();
+        final matches = searchNotesForList(
+          notes,
+          q,
+          extraText: (note) {
+            final fallback = '${note.bookId} ${note.chapter}:${note.verse}';
+            if (books == null || note.bookId < 1 || note.bookId > books.length) {
+              return fallback;
+            }
+            final book = books[note.bookId - 1];
+            return '${book.name} ${book.abbr} $fallback';
+          },
+        );
+        return Column(children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         child: TextField(
-          decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: '搜尋標題、內文或標籤'),
+          controller: _controller,
+          textInputAction: TextInputAction.search,
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: '搜尋標題、內文、標籤或經文位置',
+            suffixIcon: q.isEmpty
+                ? null
+                : IconButton(
+                    tooltip: '清除搜尋',
+                    onPressed: _clearQuery,
+                    icon: const Icon(Icons.clear),
+                  ),
+          ),
           onChanged: (value) => setState(() => query = value),
         ),
       ),
+      if (q.isNotEmpty && matches.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 4),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              '${matches.length} 則結果',
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+            ),
+          ),
+        ),
       Expanded(
         child: q.isEmpty
             ? const StudentEmptyState(title: '搜尋你的筆記')
@@ -391,20 +637,56 @@ class _SearchViewState extends ConsumerState<_SearchView> {
                 ? StudentEmptyState(title: '找不到符合「$q」的筆記')
                 : _noteList(notes: matches, selection: widget.selection, onOpen: widget.onOpen, onDelete: widget.onDelete, onCopy: widget.onCopy),
       ),
-    ]);
+        ]);
+      },
+    );
   }
 }
 
-class _DeletedNotesScreen extends ConsumerWidget {
+class _DeletedNotesScreen extends ConsumerStatefulWidget {
   const _DeletedNotesScreen();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final deleted = ref.watch(deletedNotesProvider);
-    void refresh() {
-      ref.invalidate(deletedNotesProvider);
-      ref.invalidate(allNotesProvider);
+  ConsumerState<_DeletedNotesScreen> createState() => _DeletedNotesScreenState();
+}
+
+class _DeletedNotesScreenState extends ConsumerState<_DeletedNotesScreen> {
+  /// 還原／永久刪除。兩者在 DB 層都可安全重試（已完成就 no-op；永久刪除與墓碑
+  /// 同一交易），所以失敗時一律重新讀取、顯示實際狀態，並提供只針對這則的重試。
+  Future<void> _run(Note n, {required bool restore}) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      if (restore) {
+        await db.restoreNote(n.id!);
+      } else {
+        await db.purgeNote(n.id!);
+      }
+    } catch (_) {
+      failed = true;
     }
+    ref.invalidate(deletedNotesProvider);
+    ref.invalidate(allNotesProvider);
+    if (!mounted || !failed) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(restore
+              ? '還原失敗，筆記仍在最近刪除。'
+              : '永久刪除失敗，筆記仍在最近刪除。'),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _run(n, restore: restore),
+          ),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final deleted = ref.watch(deletedNotesProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('最近刪除')),
       body: deleted.when(
@@ -421,10 +703,9 @@ class _DeletedNotesScreen extends ConsumerWidget {
                     title: Text(n.title.isNotEmpty ? n.title : '經文筆記'),
                     subtitle: Text(n.content, maxLines: 1, overflow: TextOverflow.ellipsis),
                     trailing: PopupMenuButton<String>(
-                      onSelected: (value) async {
-                        if (value == 'restore') await ref.read(databaseServiceProvider).restoreNote(n.id!);
-                        if (value == 'delete') await ref.read(databaseServiceProvider).purgeNote(n.id!);
-                        refresh();
+                      onSelected: (value) {
+                        if (value == 'restore') _run(n, restore: true);
+                        if (value == 'delete') _run(n, restore: false);
                       },
                       itemBuilder: (_) => const [
                         PopupMenuItem(value: 'restore', child: Text('還原')),
@@ -457,7 +738,10 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   int? _anchorChapter;
   int? _anchorVerse;
   Timer? _debounce;
+  Future<void> _saveQueue = Future.value();
+  int _saveRevision = 0;
   String saved = '';
+  bool _discardOnDispose = false;
 
   @override
   void initState() {
@@ -479,7 +763,7 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _save(silent: true);
+    if (!_discardOnDispose) _save(silent: true);
     _title.dispose();
     _body.dispose();
     _tags.dispose();
@@ -528,27 +812,54 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
     _scheduleSave();
   }
 
-  Future<void> _save({bool silent = false}) async {
+  Future<void> _save({bool silent = false}) {
+    if (_discardOnDispose) return Future.value();
     final has = _title.text.trim().isNotEmpty || _body.text.trim().isNotEmpty || _anchorBook != null || _extraRefs.isNotEmpty;
-    if (!has) return;
+    if (!has) return Future.value();
     _anchorBook ??= 1;
     _anchorChapter ??= 1;
     _anchorVerse ??= 1;
-    final note = Note(
-      id: _id,
-      bookId: _anchorBook!,
-      chapter: _anchorChapter!,
-      verse: _anchorVerse!,
-      title: _title.text.trim(),
-      content: _body.text.trim(),
-      tags: _tags.text.trim(),
-      refs: _extraRefs,
-      createdAt: widget.existing?.createdAt ?? 0,
-      updatedAt: 0,
-    );
-    _id = await ref.read(databaseServiceProvider).saveNoteFull(note);
-    ref.invalidate(allNotesProvider);
-    if (!silent && mounted) setState(() => saved = '已儲存');
+    final bookId = _anchorBook!;
+    final chapter = _anchorChapter!;
+    final verse = _anchorVerse!;
+    final title = _title.text.trim();
+    final content = _body.text.trim();
+    final tags = _tags.text.trim();
+    final refs = List<String>.of(_extraRefs);
+    final createdAt = widget.existing?.createdAt ?? 0;
+    final database = ref.read(databaseServiceProvider);
+    final revision = ++_saveRevision;
+    if (!silent && mounted) setState(() => saved = '儲存中…');
+
+    _saveQueue = _saveQueue.then((_) async {
+      if (_discardOnDispose) return;
+      try {
+        final note = Note(
+          id: _id,
+          bookId: bookId,
+          chapter: chapter,
+          verse: verse,
+          title: title,
+          content: content,
+          tags: tags,
+          refs: refs,
+          createdAt: createdAt,
+          updatedAt: 0,
+        );
+        _id = await database.saveNoteFull(note);
+        if (mounted) {
+          ref.invalidate(allNotesProvider);
+          if (!silent && revision == _saveRevision) {
+            setState(() => saved = '已儲存');
+          }
+        }
+      } catch (_) {
+        if (!silent && mounted && revision == _saveRevision) {
+          setState(() => saved = '儲存失敗');
+        }
+      }
+    });
+    return _saveQueue;
   }
 
   @override
@@ -562,10 +873,42 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
             PopupMenuButton<String>(
               onSelected: (value) async {
                 if (value != 'delete') return;
-                await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
-                ref.invalidate(allNotesProvider);
-                ref.invalidate(deletedNotesProvider);
-                if (context.mounted) Navigator.pop(context);
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: const Text('移到最近刪除？'),
+                    content: const Text('之後仍可從「最近刪除」還原這則筆記。'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        child: const Text('刪除'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !mounted) return;
+                _debounce?.cancel();
+                await _save(silent: true);
+                if (!mounted) return;
+                _discardOnDispose = true;
+                try {
+                  await ref.read(databaseServiceProvider).softDeleteNoteById(_id!);
+                  ref.invalidate(allNotesProvider);
+                  ref.invalidate(deletedNotesProvider);
+                  if (mounted) Navigator.pop(this.context);
+                } catch (_) {
+                  _discardOnDispose = false;
+                  if (mounted) {
+                    setState(() => saved = '刪除失敗');
+                    ScaffoldMessenger.of(this.context).showSnackBar(
+                      const SnackBar(content: Text('無法刪除筆記，請再試一次')),
+                    );
+                  }
+                }
               },
               itemBuilder: (_) => const [PopupMenuItem(value: 'delete', child: Text('移到最近刪除'))],
             ),
@@ -587,7 +930,26 @@ class _NoteEditorScreenState extends ConsumerState<NoteEditorScreen> {
           const SizedBox(height: 18),
           TextField(controller: _tags, decoration: const InputDecoration(labelText: '標籤', prefixIcon: Icon(Icons.tag))),
           const SizedBox(height: 12),
-          Text(saved, style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.outline)),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  saved,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: saved == '儲存失敗'
+                            ? Theme.of(context).colorScheme.error
+                            : Theme.of(context).colorScheme.outline,
+                      ),
+                ),
+              ),
+              if (saved == '儲存失敗')
+                TextButton.icon(
+                  onPressed: _save,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('重新儲存'),
+                ),
+            ],
+          ),
         ],
       ),
     );

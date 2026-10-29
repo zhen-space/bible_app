@@ -23,41 +23,72 @@ class SettingsScreen extends ConsumerWidget {
         children: [
           const _AccountSection(),
           const _SectionHeader('外觀'),
-          RadioListTile<ThemeMode>(
-            title: const Text('跟隨系統'),
-            value: ThemeMode.system,
+          RadioGroup<ThemeMode>(
             groupValue: themeMode,
-            onChanged: (v) =>
-                ref.read(themeModeProvider.notifier).set(v!),
-          ),
-          RadioListTile<ThemeMode>(
-            title: const Text('淺色'),
-            value: ThemeMode.light,
-            groupValue: themeMode,
-            onChanged: (v) =>
-                ref.read(themeModeProvider.notifier).set(v!),
-          ),
-          RadioListTile<ThemeMode>(
-            title: const Text('深色'),
-            value: ThemeMode.dark,
-            groupValue: themeMode,
-            onChanged: (v) =>
-                ref.read(themeModeProvider.notifier).set(v!),
+            onChanged: (value) {
+              if (value != null) {
+                ref.read(themeModeProvider.notifier).set(value);
+              }
+            },
+            child: const Column(
+              children: [
+                RadioListTile<ThemeMode>(
+                  title: Text('跟隨系統'),
+                  value: ThemeMode.system,
+                ),
+                RadioListTile<ThemeMode>(
+                  title: Text('淺色'),
+                  value: ThemeMode.light,
+                ),
+                RadioListTile<ThemeMode>(
+                  title: Text('深色'),
+                  value: ThemeMode.dark,
+                ),
+              ],
+            ),
           ),
           const Divider(),
           const _SectionHeader('閱讀'),
           ListTile(
             title: const Text('內文字級'),
-            subtitle: Slider(
-              value: fontSize,
-              min: FontSizeNotifier.min,
-              max: FontSizeNotifier.max,
-              divisions: 14,
-              label: fontSize.toStringAsFixed(0),
-              onChanged: (v) =>
-                  ref.read(fontSizeProvider.notifier).set(v),
+            subtitle: Row(
+              children: [
+                IconButton(
+                  tooltip: '縮小字級',
+                  onPressed: fontSize <= FontSizeNotifier.min
+                      ? null
+                      : () => ref
+                            .read(fontSizeProvider.notifier)
+                            .set(fontSize - 1),
+                  icon: const Icon(Icons.text_decrease),
+                ),
+                Expanded(
+                  child: Slider(
+                    value: fontSize,
+                    min: FontSizeNotifier.min,
+                    max: FontSizeNotifier.max,
+                    divisions: 18,
+                    label: fontSize.toStringAsFixed(0),
+                    onChanged: (v) =>
+                        ref.read(fontSizeProvider.notifier).set(v),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '放大字級',
+                  onPressed: fontSize >= FontSizeNotifier.max
+                      ? null
+                      : () => ref
+                            .read(fontSizeProvider.notifier)
+                            .set(fontSize + 1),
+                  icon: const Icon(Icons.text_increase),
+                ),
+              ],
             ),
-            trailing: Text('${fontSize.toStringAsFixed(0)}pt'),
+            trailing: Semantics(
+              label: '目前字級',
+              value: '${fontSize.toStringAsFixed(0)}pt',
+              child: Text('${fontSize.toStringAsFixed(0)}pt'),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.all(16),
@@ -70,15 +101,13 @@ class SettingsScreen extends ConsumerWidget {
             title: const Text('段落分段閱讀'),
             subtitle: const Text('依自然斷句分段呈現；關閉為逐節分行。讀經畫面右上角也能切換'),
             value: readingMode == ReadingMode.paragraph,
-            onChanged: (_) =>
-                ref.read(readingModeProvider.notifier).toggle(),
+            onChanged: (_) => ref.read(readingModeProvider.notifier).toggle(),
           ),
           SwitchListTile(
             title: const Text('中英對照'),
             subtitle: const Text('每節中文下方顯示英文（KJV）；讀經畫面右上角也能切換'),
             value: ref.watch(bilingualProvider),
-            onChanged: (_) =>
-                ref.read(bilingualProvider.notifier).toggle(),
+            onChanged: (_) => ref.read(bilingualProvider.notifier).toggle(),
           ),
           const Divider(),
           const _SectionHeader('首頁'),
@@ -88,15 +117,12 @@ class SettingsScreen extends ConsumerWidget {
               padding: const EdgeInsets.only(top: 8),
               child: SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(
-                      value: 'top', label: Text('繼續閱讀下面')),
-                  ButtonSegment(
-                      value: 'bottom', label: Text('整頁下面')),
+                  ButtonSegment(value: 'top', label: Text('繼續閱讀下面')),
+                  ButtonSegment(value: 'bottom', label: Text('整頁下面')),
                 ],
                 selected: {ref.watch(prayerPositionProvider)},
-                onSelectionChanged: (s) => ref
-                    .read(prayerPositionProvider.notifier)
-                    .set(s.first),
+                onSelectionChanged: (s) =>
+                    ref.read(prayerPositionProvider.notifier).set(s.first),
               ),
             ),
           ),
@@ -104,9 +130,11 @@ class SettingsScreen extends ConsumerWidget {
           const _SectionHeader('螢光筆命名'),
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
-            child: Text('給每個顏色一個意義（例：黃＝應許、綠＝命令），'
-                '劃記時就會顯示這個標籤。',
-                style: TextStyle(fontSize: 13)),
+            child: Text(
+              '給每個顏色一個意義（例：黃＝應許、綠＝命令），'
+              '劃記時就會顯示這個標籤。',
+              style: TextStyle(fontSize: 13),
+            ),
           ),
           const _HighlightLabelsSection(),
           const Divider(),
@@ -114,9 +142,7 @@ class SettingsScreen extends ConsumerWidget {
             icon: Icon(Icons.info_outline),
             applicationName: '聖經 App',
             applicationVersion: '1.0.0',
-            aboutBoxChildren: [
-              Text('經文：和合本（繁體），公有領域。'),
-            ],
+            aboutBoxChildren: [Text('經文：和合本（繁體），公有領域。')],
           ),
         ],
       ),
@@ -159,12 +185,17 @@ class _AccountSection extends ConsumerWidget {
               builder: (context, err, _) => err == null
                   ? const SizedBox.shrink()
                   : Padding(
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      child: Text(err,
-                          style: TextStyle(
-                              color: Theme.of(context).colorScheme.error,
-                              fontSize: 13)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Text(
+                        err,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                          fontSize: 13,
+                        ),
+                      ),
                     ),
             ),
             // 備用：signInWithPopup（官方按鈕視窗打不開/空白時用這個）
@@ -181,8 +212,7 @@ class _AccountSection extends ConsumerWidget {
               title: const Text('使用 Google 登入'),
               onTap: notifier.signIn,
             ),
-        ]
-        else ...[
+        ] else ...[
           ListTile(
             leading: const Icon(Icons.account_circle),
             title: Text(user.displayName ?? '已登入'),
@@ -208,11 +238,12 @@ class _AccountSection extends ConsumerWidget {
         if (status != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Text(status,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: Theme.of(context).colorScheme.primary)),
+            child: Text(
+              status,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
           ),
         const Divider(),
       ],
@@ -235,7 +266,9 @@ class _HighlightLabelsSection extends ConsumerWidget {
             child: Row(
               children: [
                 CircleAvatar(
-                    radius: 12, backgroundColor: AppTheme.highlightSwatch(c)),
+                  radius: 12,
+                  backgroundColor: AppTheme.highlightSwatch(c),
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: TextFormField(

@@ -11,9 +11,22 @@ import '../services/qa_service.dart';
 import '../services/related_verse_search.dart';
 import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
+import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 import 'qa_screen.dart' show QuestionDetailScreen;
 import 'study_content_screen.dart';
+import 'verse_action_sheet.dart';
+
+const _searchSuggestions = ['焦慮時如何得平安', '感到孤單', '需要勇氣', '感恩'];
+
+String _resultSubtitle({
+  required String metadata,
+  required String body,
+  required String query,
+}) {
+  final preview = queryMatchSentence(query, body);
+  return preview == null || preview.isEmpty ? metadata : '$metadata\n$preview';
+}
 
 /// 全文搜尋 + 節位快速跳轉（約3:16）+ 搜尋歷史。
 class SearchScreen extends ConsumerStatefulWidget {
@@ -25,6 +38,7 @@ class SearchScreen extends ConsumerStatefulWidget {
 
 class _SearchScreenState extends ConsumerState<SearchScreen> {
   final _controller = TextEditingController();
+  final _focusNode = FocusNode();
   List<VerseSearchHit> _results = [];
   // 「內容」＝授權後的 Study Content + Q&A。
   // Teacher Books/Chapters 已不再是 Student product surface；Study Content 本體仍照常可搜尋。
@@ -42,7 +56,21 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _debounce?.cancel();
     _controller.dispose();
+    _focusNode.dispose();
     super.dispose();
+  }
+
+  void _resetAndFocusSearch() {
+    _controller.clear();
+    _clearSearch();
+    _focusNode.requestFocus();
+  }
+
+  void _applySuggestedSearch(String query) {
+    _controller
+      ..text = query
+      ..selection = TextSelection.collapsed(offset: query.length);
+    _search(query);
   }
 
   void _onQueryChanged(String q) {
@@ -77,21 +105,24 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       final universe = await ref.read(authorizedStudyContentProvider.future);
       final questions = await ref.read(publishedQuestionsProvider('').future);
       if (!mounted || currentRequest != _searchRequest) return;
-      bool hit(String s) => s.contains(term);
       setState(() {
         _jump = VerseLocator.parse(q, books);
         _entities = searchEntities(q);
         _content = universe
             .where(
-              (i) =>
-                  hit(i.title) ||
-                  hit(i.body) ||
-                  i.tags.any(hit) ||
-                  i.scriptureRefs.any(hit),
+              (i) => matchesAllQueryTerms(term, [
+                i.title,
+                i.body,
+                ...i.tags,
+                ...i.scriptureRefs,
+              ]),
             )
             .toList();
         _qa = questions
-            .where((question) => hit(question.title) || hit(question.body))
+            .where(
+              (question) =>
+                  matchesAllQueryTerms(term, [question.title, question.body]),
+            )
             .toList();
         _results = ref
             .read(bibleRepositoryProvider)
@@ -126,8 +157,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _openChapter(int bookId, int chapter, {int? verse}) {
-    // 有實際打開結果才記進搜尋歷史
-    ref.read(searchHistoryProvider.notifier).add(_controller.text);
+    _rememberSearch();
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -142,29 +172,96 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
+  void _rememberSearch() {
+    // 有實際打開結果才記進搜尋歷史，避免只輸入一半的字詞污染紀錄。
+    ref.read(searchHistoryProvider.notifier).add(_controller.text);
+  }
+
+  Future<void> _copyVerse(Book book, VerseRef verse) => copyHumanReadable(
+    context,
+    '${verse.text}\n${book.name} ${verse.chapter}:${verse.verse}',
+    success: '已複製 ${book.name} ${verse.chapter}:${verse.verse}',
+  );
+
+  /// 書籤寫入中的經節（`book:chapter:verse`）：滑動動畫中或連續滑動不會重複寫入。
+  final _bookmarkWrites = <String>{};
+
+  static String _verseKey(VerseRef v) => '${v.bookId}:${v.chapter}:${v.verse}';
+
+  /// 左滑書籤：依列上顯示的狀態決定**目標狀態**（已加入 → 移除；未加入 → 加入）。
+  Future<void> _swipeBookmark(VerseRef verse, bool bookmarked) =>
+      _writeBookmark(verse, !bookmarked);
+
+  /// 寫書籤目標狀態（`setBookmark`，idempotent、本體＋墓碑同一交易）。
+  /// 同一節寫入中就略過；不論成敗都重讀書籤，列上顯示實際儲存的狀態；
+  /// 失敗時 SnackBar（螢幕閱讀器會念）＋「重試」寫同一個目標，不會把狀態翻回去。
+  Future<void> _writeBookmark(VerseRef verse, bool target) async {
+    // 列的滑動設定在寫入中不變（避免動畫進行中改 Dismissible 方向），
+    // 重複滑動由這個 guard 擋下：直接回彈、不寫。
+    final key = _verseKey(verse);
+    if (!_bookmarkWrites.add(key)) return;
+    var failed = false;
+    try {
+      await ref
+          .read(databaseServiceProvider)
+          .setBookmark(verse.bookId, verse.chapter, verse.verse, target);
+    } catch (_) {
+      failed = true;
+    } finally {
+      _bookmarkWrites.remove(key);
+      if (mounted) {
+        ref.invalidate(allBookmarksProvider);
+        ref.invalidate(chapterMarksProvider);
+      }
+    }
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(target ? '已加入書籤' : '已移除書籤')),
+      );
+      return;
+    }
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(target ? '加入書籤失敗，這節沒有加入書籤。' : '移除書籤失敗，書籤仍保留。'),
+        action: SnackBarAction(
+          label: '重試',
+          onPressed: () => _writeBookmark(verse, target),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final booksAsync = ref.watch(booksProvider);
+    final bookmarksAsync = ref.watch(allBookmarksProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: TextField(
           controller: _controller,
+          focusNode: _focusNode,
           autofocus: true,
+          textInputAction: TextInputAction.search,
           decoration: const InputDecoration(
             hintText: '搜尋經文，或輸入「約3:16」直接跳轉',
             border: InputBorder.none,
           ),
           onChanged: _onQueryChanged,
+          onSubmitted: (value) {
+            _debounce?.cancel();
+            _search(value);
+          },
         ),
         actions: [
           if (_controller.text.isNotEmpty)
             IconButton(
+              tooltip: '清除搜尋',
               icon: const Icon(Icons.clear),
-              onPressed: () {
-                _controller.clear();
-                _clearSearch();
-              },
+              onPressed: _resetAndFocusSearch,
             ),
         ],
         bottom: _searching
@@ -181,6 +278,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           onRetry: () => ref.invalidate(booksProvider),
         ),
         data: (books) {
+          final bookmarkKeys = {
+            for (final bookmark in bookmarksAsync.value ?? const <Bookmark>[])
+              '${bookmark.bookId}:${bookmark.chapter}:${bookmark.verse}',
+          };
+          final bookmarkStateKnown = bookmarksAsync.hasValue;
           if (_searchError != null) {
             return _SearchError(
               label: _searchError!,
@@ -200,10 +302,23 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               _content.isEmpty &&
               _qa.isEmpty &&
               _entities.isEmpty) {
-            return const Center(child: Text('沒有找到符合的結果'));
+            return _SearchEmptyState(
+              query: _controller.text.trim(),
+              onReset: _resetAndFocusSearch,
+              onSuggestedSearch: _applySuggestedSearch,
+            );
           }
           return ListView(
             children: [
+              if (!bookmarkStateKnown && bookmarksAsync.hasError)
+                _BookmarkLoadError(
+                  onRetry: () => ref.invalidate(allBookmarksProvider),
+                )
+              else if (!bookmarkStateKnown && bookmarksAsync.isLoading)
+                const LinearProgressIndicator(
+                  minHeight: 2,
+                  semanticsLabel: '正在載入書籤狀態',
+                ),
               if (_jump != null)
                 _JumpTile(
                   jump: _jump!,
@@ -215,42 +330,62 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                 ),
               if (_content.isNotEmpty) ...[
-                const _SectionLabel('內容'),
+                _SectionLabel('內容（${_content.length}）'),
                 for (final i in _content)
                   ListTile(
                     leading: const Icon(Icons.auto_stories_outlined),
                     title: Text(i.title.isEmpty ? '(未命名)' : i.title),
                     subtitle: Text(
-                      [
-                        studyTypeLabel(i.contentType),
-                        if (i.audience == Audience.church) '教會專屬',
-                      ].join('・'),
-                    ),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => StudentStudyContentDetail(item: i),
+                      _resultSubtitle(
+                        metadata: [
+                          studyTypeLabel(i.contentType),
+                          if (i.audience == Audience.church) '教會專屬',
+                        ].join('・'),
+                        body: i.body,
+                        query: _controller.text,
                       ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    onTap: () {
+                      _rememberSearch();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => StudentStudyContentDetail(item: i),
+                        ),
+                      );
+                    },
                   ),
               ],
               if (_qa.isNotEmpty) ...[
-                const _SectionLabel('問答'),
+                _SectionLabel('問答（${_qa.length}）'),
                 for (final question in _qa)
                   ListTile(
                     leading: const Icon(Icons.forum_outlined),
                     title: Text(question.title),
-                    subtitle: const Text('聖經／信仰問答'),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => QuestionDetailScreen(id: question.id),
+                    subtitle: Text(
+                      _resultSubtitle(
+                        metadata: '聖經／信仰問答',
+                        body: question.body,
+                        query: _controller.text,
                       ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    onTap: () {
+                      _rememberSearch();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => QuestionDetailScreen(id: question.id),
+                        ),
+                      );
+                    },
                   ),
               ],
               if (_entities.isNotEmpty) ...[
-                const _SectionLabel('人物・地點・事件'),
+                _SectionLabel('人物・地點・事件（${_entities.length}）'),
                 for (final e in _entities)
                   ListTile(
                     leading: Icon(_entityIcon(e.type)),
@@ -262,29 +397,66 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     },
                   ),
               ],
-              if (_results.any((hit) => hit.isExact)) const _SectionLabel('經文'),
+              if (_results.any((hit) => hit.isExact))
+                _SectionLabel(
+                  '經文（${_results.where((hit) => hit.isExact).length}）',
+                ),
               for (final hit in _results.where((hit) => hit.isExact))
                 _VerseResultTile(
                   hit: hit,
                   books: books,
                   query: _controller.text.trim(),
+                  bookmarked: bookmarkKeys.contains(
+                    '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
+                  ),
+                  bookmarkStateKnown: bookmarkStateKnown,
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
                     verse: hit.verse.verse,
                   ),
+                  onCopy: () =>
+                      _copyVerse(books[hit.verse.bookId - 1], hit.verse),
+                  onBookmark: (bookmarked) =>
+                      _swipeBookmark(hit.verse, bookmarked),
+                  onMore: (_) => showVerseActionSheet(
+                    context,
+                    ref,
+                    book: books[hit.verse.bookId - 1],
+                    chapter: hit.verse.chapter,
+                    verse: hit.verse.verse,
+                    text: hit.verse.text,
+                  ),
                 ),
               if (_results.any((hit) => !hit.isExact))
-                const _SectionLabel('相關經文'),
+                _SectionLabel(
+                  '相關經文（${_results.where((hit) => !hit.isExact).length}）',
+                ),
               for (final hit in _results.where((hit) => !hit.isExact))
                 _VerseResultTile(
                   hit: hit,
                   books: books,
                   query: _controller.text.trim(),
+                  bookmarked: bookmarkKeys.contains(
+                    '${hit.verse.bookId}:${hit.verse.chapter}:${hit.verse.verse}',
+                  ),
+                  bookmarkStateKnown: bookmarkStateKnown,
                   onTap: () => _openChapter(
                     hit.verse.bookId,
                     hit.verse.chapter,
                     verse: hit.verse.verse,
+                  ),
+                  onCopy: () =>
+                      _copyVerse(books[hit.verse.bookId - 1], hit.verse),
+                  onBookmark: (bookmarked) =>
+                      _swipeBookmark(hit.verse, bookmarked),
+                  onMore: (_) => showVerseActionSheet(
+                    context,
+                    ref,
+                    book: books[hit.verse.bookId - 1],
+                    chapter: hit.verse.chapter,
+                    verse: hit.verse.verse,
+                    text: hit.verse.text,
                   ),
                 ),
             ],
@@ -295,18 +467,76 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 }
 
+class _SearchEmptyState extends StatelessWidget {
+  const _SearchEmptyState({
+    required this.query,
+    required this.onReset,
+    required this.onSuggestedSearch,
+  });
+
+  final String query;
+  final VoidCallback onReset;
+  final ValueChanged<String> onSuggestedSearch;
+
+  @override
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
+    children: [
+      StudentEmptyState(
+        title: '找不到「$query」',
+        subtitle: '試試較短的關鍵詞、經文人物，或用一句自然語句描述你的需要。',
+        icon: Icons.search_off,
+        actionLabel: '重新輸入',
+        onAction: onReset,
+      ),
+      const SizedBox(height: 20),
+      Text(
+        '也可以試試',
+        textAlign: TextAlign.center,
+        style: Theme.of(context).textTheme.titleSmall,
+      ),
+      const SizedBox(height: 10),
+      Center(
+        child: Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final suggestion in _searchSuggestions)
+              ActionChip(
+                avatar: const Icon(Icons.search, size: 16),
+                label: Text(suggestion),
+                onPressed: () => onSuggestedSearch(suggestion),
+              ),
+          ],
+        ),
+      ),
+    ],
+  );
+}
+
 class _VerseResultTile extends StatelessWidget {
   const _VerseResultTile({
     required this.hit,
     required this.books,
     required this.query,
+    required this.bookmarked,
+    required this.bookmarkStateKnown,
     required this.onTap,
+    required this.onCopy,
+    required this.onBookmark,
+    required this.onMore,
   });
 
   final VerseSearchHit hit;
   final List<Book> books;
   final String query;
+  final bool bookmarked;
+  final bool bookmarkStateKnown;
   final VoidCallback onTap;
+  final Future<void> Function() onCopy;
+  final Future<void> Function(bool bookmarked) onBookmark;
+  final void Function(bool bookmarked) onMore;
 
   @override
   Widget build(BuildContext context) {
@@ -320,20 +550,86 @@ class _VerseResultTile extends StatelessWidget {
     final citation =
         '${books[verse.bookId - 1].name} ${verse.chapter}:${verse.verse}';
     final related = hit.matchedTerms.take(3).join('、');
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ListTile(
-          title: Text(sentenceWithMatch(verse.text, previewTerm)),
-          subtitle: Text(
-            hit.isExact || related.isEmpty
-                ? citation
-                : '$citation · 相關：$related',
+    return StudentSwipeRow(
+      dismissKey: ValueKey(
+        'search_${verse.bookId}_${verse.chapter}_${verse.verse}',
+      ),
+      startLabel: '複製',
+      startIcon: Icons.copy_outlined,
+      endLabel: bookmarked ? '移除書籤' : '加入書籤',
+      endIcon: bookmarked ? Icons.bookmark_remove : Icons.bookmark_add_outlined,
+      endDestructive: false,
+      onSwipeStartToEnd: onCopy,
+      onSwipeEndToStart: bookmarkStateKnown
+          ? () => onBookmark(bookmarked)
+          : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ListTile(
+            title: Text(sentenceWithMatch(verse.text, previewTerm)),
+            subtitle: Text(
+              hit.isExact || related.isEmpty
+                  ? citation
+                  : '$citation · 相關：$related',
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (bookmarked)
+                  const Icon(Icons.bookmark, size: 20, semanticLabel: '已加入書籤'),
+                Semantics(
+                  container: true,
+                  button: true,
+                  label: '更多經文操作',
+                  onTap: () => onMore(bookmarked),
+                  child: ExcludeSemantics(
+                    child: IconButton(
+                      tooltip: '更多經文操作',
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(Icons.more_horiz),
+                      onPressed: () => onMore(bookmarked),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            onTap: onTap,
+            onLongPress: () => onMore(bookmarked),
           ),
-          onTap: onTap,
+          const Divider(height: 1),
+        ],
+      ),
+    );
+  }
+}
+
+class _BookmarkLoadError extends StatelessWidget {
+  const _BookmarkLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.bookmark_border, color: scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '書籤狀態暫時無法載入',
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            TextButton(onPressed: onRetry, child: const Text('重試')),
+          ],
         ),
-        const Divider(height: 1),
-      ],
+      ),
     );
   }
 }
@@ -435,28 +731,61 @@ class _HistoryView extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final history = ref.watch(searchHistoryProvider);
-    if (history.isEmpty) {
-      return const Center(child: Text('輸入關鍵字搜尋，或輸入節位（例：約3:16）'));
-    }
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
-            TextButton(
-              onPressed: () => ref.read(searchHistoryProvider.notifier).clear(),
-              child: const Text('清除'),
+        if (history.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Column(
+              children: [
+                Icon(Icons.manage_search, size: 42),
+                SizedBox(height: 12),
+                Text('輸入關鍵字搜尋，或輸入節位（例：約3:16）'),
+              ],
             ),
-          ],
-        ),
+          )
+        else ...[
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('搜尋歷史', style: Theme.of(context).textTheme.titleSmall),
+              TextButton(
+                onPressed: () =>
+                    ref.read(searchHistoryProvider.notifier).clear(),
+                child: const Text('清除'),
+              ),
+            ],
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final q in history)
+                InputChip(
+                  label: Text(q),
+                  tooltip: '再次搜尋「$q」',
+                  onPressed: () => onTap(q),
+                  onDeleted: () =>
+                      ref.read(searchHistoryProvider.notifier).remove(q),
+                  deleteButtonTooltipMessage: '移除「$q」',
+                ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 24),
+        Text('試著問一句話', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            for (final q in history)
-              ActionChip(label: Text(q), onPressed: () => onTap(q)),
+            for (final suggestion in _searchSuggestions)
+              ActionChip(
+                avatar: const Icon(Icons.search, size: 16),
+                label: Text(suggestion),
+                onPressed: () => onTap(suggestion),
+              ),
           ],
         ),
       ],
