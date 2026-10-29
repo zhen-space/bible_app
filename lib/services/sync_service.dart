@@ -14,9 +14,12 @@ import 'database_service.dart';
 class SyncService {
   final DatabaseService db;
 
-  SyncService(this.db);
+  /// [firestore] 可注入（測試用 DI）；預設 `FirebaseFirestore.instance`，行為不變。
+  SyncService(this.db, {FirebaseFirestore? firestore}) : _injectedFs = firestore;
 
-  FirebaseFirestore get _fs => FirebaseFirestore.instance;
+  final FirebaseFirestore? _injectedFs;
+
+  FirebaseFirestore get _fs => _injectedFs ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> _col(String uid, String name) =>
       _fs.collection('users').doc(uid).collection(name);
@@ -47,6 +50,8 @@ class SyncService {
     final tombT = await db.getTombstoneMap('todo');
     final tombC = await db.getTombstoneMap('completion');
     final tombL = await db.getTombstoneMap('later');
+    final tombPI = await db.getTombstoneMap('plan_item');
+    final tombPD = await db.getTombstoneMap('plan_day');
     String rref(Map<String, dynamic> m) =>
         'b${m['book_id']}_c${m['chapter']}_v${m['verse']}';
 
@@ -106,6 +111,9 @@ class SyncService {
     final cloudPlans = await _col(uid, 'plan_progress').get();
     for (final d in cloudPlans.docs) {
       final m = d.data();
+      final t = tombPD[DatabaseService.planDayRef(
+          m['plan_id'] as String, m['day'] as int)];
+      if (t != null && t >= (m['done_at'] as int)) continue;
       await db.upsertPlanProgress(
           m['plan_id'] as String, m['day'] as int, m['done_at'] as int);
       downloaded++;
@@ -113,6 +121,9 @@ class SyncService {
     final cloudPlanItems = await _col(uid, 'plan_item_progress').get();
     for (final d in cloudPlanItems.docs) {
       final m = d.data();
+      final t = tombPI[DatabaseService.planItemRef(
+          m['plan_id'] as String, m['book_id'] as int, m['chapter'] as int)];
+      if (t != null && t >= (m['done_at'] as int)) continue;
       await db.upsertPlanItemProgress(
           m['plan_id'] as String,
           m['book_id'] as int,
@@ -199,6 +210,8 @@ class SyncService {
       await db.applyTombstone(tomb['kind'] as String, tomb['ref'] as String,
           tomb['deleted_at'] as int);
     }
+    // 計畫進度：活資料比墓碑新（他處重新勾選）→ 清墓碑，免得上傳時誤刪雲端活資料。
+    await db.reconcilePlanTombstones();
 
     onStep?.call('同步中…上傳到雲端');
     // ---- 上傳（本地 → 雲端，batch 寫入）----
@@ -330,6 +343,9 @@ class SyncService {
       'prayer': 'prayers',
       'todo': 'todos',
       'completion': 'chapter_completions',
+      // ref ＝ 雲端 doc id（{planId}_b{book}_c{chapter}／{planId}_d{day}）
+      'plan_item': 'plan_item_progress',
+      'plan_day': 'plan_progress',
     };
     for (final t in await db.getAllTombstones()) {
       final kind = t['kind'] as String;

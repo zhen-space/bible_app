@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../data/reading_plans.dart';
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/database_service.dart' show PlanItemTarget;
 import '../services/reading_plan_today.dart';
 import 'chapter_screen.dart';
 
@@ -131,6 +132,7 @@ class _ReadingPlanDetailScreenState
   static const _showCompletedPreferenceKey = 'reading_plan_show_completed_days';
   bool _seeded = false;
   bool _showCompletedDays = false;
+  bool _writing = false;
 
   ReadingPlan get plan => widget.plan;
 
@@ -174,17 +176,60 @@ class _ReadingPlanDetailScreenState
     }
   }
 
-  Future<void> _setItem(int day, ChapterRef c, bool done) async {
-    await ref
-        .read(databaseServiceProvider)
-        .setPlanItemDone(plan.id, day, c.bookId, c.chapter, done);
-    ref.invalidate(planItemProgressProvider(plan.id));
-    ref.invalidate(planItemDoneCountsProvider);
+  /// 把 [chapters] 寫成目標狀態 [done]（非 toggle；同一個 transaction 連同墓碑寫入）。
+  /// 寫入中停用勾選；失敗時進度不變、提示並可用**同一目標狀態**重試。
+  /// 回傳是否成功。
+  Future<bool> _setItems(int day, List<ChapterRef> chapters, bool done) async {
+    if (_writing || chapters.isEmpty) return false;
+    setState(() => _writing = true);
+    var ok = false;
+    try {
+      await _writeItems(day, chapters, done);
+      ok = true;
+    } catch (_) {
+      ok = false;
+    } finally {
+      if (mounted) setState(() => _writing = false);
+    }
+    if (!ok && mounted) _showWriteFailure(day, chapters, done);
+    return ok;
   }
 
+  /// 直接寫入（失敗會丟出）；Reader 內「完成計畫本章」用它自行處理失敗。
+  Future<void> _writeItems(
+    int day,
+    List<ChapterRef> chapters,
+    bool done,
+  ) async {
+    try {
+      await ref.read(databaseServiceProvider).setPlanItemsDone(plan.id, [
+        for (final c in chapters) PlanItemTarget(day, c.bookId, c.chapter),
+      ], done);
+    } finally {
+      ref.invalidate(planItemProgressProvider(plan.id));
+      ref.invalidate(planItemDoneCountsProvider);
+    }
+  }
+
+  void _showWriteFailure(int day, List<ChapterRef> chapters, bool done) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(done ? '標記完成失敗，進度未變更。' : '取消勾選失敗，進度未變更。'),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _setItems(day, chapters, done),
+          ),
+        ),
+      );
+  }
+
+  Future<void> _setItem(int day, ChapterRef c, bool done) =>
+      _setItems(day, [c], done);
+
   Future<void> _completeNextChapter(int day, ChapterRef chapter) async {
-    await _setItem(day, chapter, true);
-    if (!mounted) return;
+    if (!await _setItems(day, [chapter], true) || !mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -203,8 +248,7 @@ class _ReadingPlanDetailScreenState
     List<ChapterRef> incompleteChapters,
   ) async {
     if (incompleteChapters.isEmpty) return;
-    await _setDay(day, incompleteChapters, true);
-    if (!mounted) return;
+    if (!await _setItems(day, incompleteChapters, true) || !mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
@@ -212,19 +256,10 @@ class _ReadingPlanDetailScreenState
           content: Text('已完成今日 ${incompleteChapters.length} 章'),
           action: SnackBarAction(
             label: '復原',
-            onPressed: () => _setDay(day, incompleteChapters, false),
+            onPressed: () => _setItems(day, incompleteChapters, false),
           ),
         ),
       );
-  }
-
-  Future<void> _setDay(int day, List<ChapterRef> chapters, bool done) async {
-    final db = ref.read(databaseServiceProvider);
-    for (final c in chapters) {
-      await db.setPlanItemDone(plan.id, day, c.bookId, c.chapter, done);
-    }
-    ref.invalidate(planItemProgressProvider(plan.id));
-    ref.invalidate(planItemDoneCountsProvider);
   }
 
   @override
@@ -314,11 +349,12 @@ class _ReadingPlanDetailScreenState
                     planDay: todayIdx + 1,
                     planDone: itemDone(c),
                   ),
-                  onComplete: nextChapter == null
+                  onComplete: nextChapter == null || _writing
                       ? null
                       : () => _completeNextChapter(todayIdx + 1, nextChapter),
                   remainingToday: todayIncompleteChapters.length,
-                  onCompleteToday: todayIncompleteChapters.length <= 1
+                  onCompleteToday:
+                      todayIncompleteChapters.length <= 1 || _writing
                       ? null
                       : () => _completeToday(
                           todayIdx + 1,
@@ -337,7 +373,9 @@ class _ReadingPlanDetailScreenState
                 leading: Checkbox(
                   value: dayDone(chapters),
                   tristate: true,
-                  onChanged: (_) => _setDay(day, chapters, !dayDone(chapters)),
+                  onChanged: _writing
+                      ? null
+                      : (_) => _setItems(day, chapters, !dayDone(chapters)),
                 ),
                 title: Row(
                   children: [
@@ -372,7 +410,9 @@ class _ReadingPlanDetailScreenState
                       dense: true,
                       contentPadding: const EdgeInsets.only(left: 52, right: 8),
                       value: itemDone(c),
-                      onChanged: (v) => _setItem(day, c, v ?? false),
+                      onChanged: _writing
+                          ? null
+                          : (v) => _setItem(day, c, v ?? false),
                       title: Text(
                         '${books[c.bookId - 1].name} 第 ${c.chapter} 章',
                       ),
@@ -404,7 +444,7 @@ class _ReadingPlanDetailScreenState
         bookId: c.bookId,
         chapter: c.chapter,
         updateReadingPosition: false,
-        onPlanComplete: planDone ? null : () => _setItem(planDay, c, true),
+        onPlanComplete: planDone ? null : () => _writeItems(planDay, [c], true),
       ),
     ),
   );

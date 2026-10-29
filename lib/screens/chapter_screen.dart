@@ -262,7 +262,20 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     if (callback == null || _planItemCompleted || !_isOriginalPlanChapter) {
       return;
     }
-    await callback();
+    try {
+      await callback();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: const Text('完成計畫本章失敗，請再試一次。'),
+            action: SnackBarAction(label: '重試', onPressed: _completePlanItem),
+          ),
+        );
+      return;
+    }
     if (!mounted) return;
     setState(() => _planItemCompleted = true);
     ScaffoldMessenger.of(context).showSnackBar(

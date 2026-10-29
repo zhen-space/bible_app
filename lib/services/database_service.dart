@@ -1181,34 +1181,99 @@ class DatabaseService {
     return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
   }
 
-  /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
+  /// 勾選/取消單一讀經項目（章）。見 [setPlanItemsDone]。
   Future<void> setPlanItemDone(
       String planId, int day, int bookId, int chapter, bool done,
-      {String itemId = '', int planVersion = 1}) async {
+      {String itemId = '', int planVersion = 1}) =>
+      setPlanItemsDone(
+          planId, [PlanItemTarget(day, bookId, chapter, itemId: itemId)], done,
+          planVersion: planVersion);
+
+  /// 把多個讀經項目設為 [done]（目標狀態，idempotent；整天勾選也走這裡）。
+  ///
+  /// 進度本體（plan_item_progress）與刪除紀錄（`plan_item` 墓碑）在**同一個
+  /// transaction** 寫入，所有項目同成同敗：失敗時全部不動、不觸發 [onMutate]，
+  /// 可用同一個目標狀態安全重試。
+  /// - 取消：本來就沒勾 → 不動、不記新墓碑（避免新墓碑蓋掉別台裝置尚未同步的勾選）。
+  /// - 勾選：已勾且無墓碑 → 不動、不改 done_at；舊資料「勾選＋墓碑」並存 → 清墓碑並把
+  ///   done_at 更新為現在（雲端墓碑套用條件是 done_at <= deleted_at）。
+  /// 回傳實際變動的項目數。
+  Future<int> setPlanItemsDone(
+      String planId, List<PlanItemTarget> items, bool done,
+      {int planVersion = 1}) async {
     final db = await database;
-    if (done) {
-      await db.insert(
-        'plan_item_progress',
-        {
+    const where = 'plan_id = ? AND book_id = ? AND chapter = ?';
+    final changed = await db.transaction((txn) async {
+      var n = 0;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final it in items) {
+        final args = [planId, it.bookId, it.chapter];
+        final ref = planItemRef(planId, it.bookId, it.chapter);
+        if (!done) {
+          final deleted = await txn.delete('plan_item_progress',
+              where: where, whereArgs: args);
+          if (deleted == 0) continue;
+          await _tombstone(txn, 'plan_item', ref);
+          n++;
+          continue;
+        }
+        final existing = await txn.query('plan_item_progress',
+            columns: ['plan_id'], where: where, whereArgs: args);
+        if (existing.isNotEmpty) {
+          final cleared = await txn.delete('tombstones',
+              where: 'kind = ? AND ref = ?', whereArgs: ['plan_item', ref]);
+          if (cleared == 0) continue;
+          await txn.update('plan_item_progress', {'done_at': now},
+              where: where, whereArgs: args);
+          n++;
+          continue;
+        }
+        await txn.insert('plan_item_progress', {
           'plan_id': planId,
           'plan_version': planVersion,
-          'book_id': bookId,
-          'chapter': chapter,
-          'day': day,
-          'item_id': itemId,
-          'done_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    } else {
-      await db.delete(
-        'plan_item_progress',
-        where: 'plan_id = ? AND book_id = ? AND chapter = ?',
-        whereArgs: [planId, bookId, chapter],
-      );
-    }
-    _mutated();
+          'book_id': it.bookId,
+          'chapter': it.chapter,
+          'day': it.day,
+          'item_id': it.itemId,
+          'done_at': now,
+        });
+        await _untomb(txn, 'plan_item', ref);
+        n++;
+      }
+      return n;
+    });
+    if (changed > 0) _mutated();
+    return changed;
   }
+
+  /// 同步合併後收斂讀經計畫的墓碑不變量：活資料比墓碑新（別台裝置取消後又重新勾選）
+  /// 就清掉該墓碑——否則上傳時墓碑會把雲端的活資料刪掉。單一 transaction。
+  Future<int> reconcilePlanTombstones() async {
+    final db = await database;
+    final removed = await db.transaction((txn) async {
+      final a = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'plan_item' AND EXISTS (
+          SELECT 1 FROM plan_item_progress p
+          WHERE p.plan_id || '_b' || p.book_id || '_c' || p.chapter = tombstones.ref
+            AND p.done_at > tombstones.deleted_at)
+      ''');
+      final b = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'plan_day' AND EXISTS (
+          SELECT 1 FROM plan_progress p
+          WHERE p.plan_id || '_d' || p.day = tombstones.ref
+            AND p.done_at > tombstones.deleted_at)
+      ''');
+      return a + b;
+    });
+    return removed;
+  }
+
+  /// 計畫項目的墓碑 ref（＝雲端 `plan_item_progress` doc id，與 sync_service 一致）。
+  static String planItemRef(String planId, int bookId, int chapter) =>
+      '${planId}_b${bookId}_c$chapter';
+
+  /// 舊版整天進度的墓碑 ref（＝雲端 `plan_progress` doc id）。
+  static String planDayRef(String planId, int day) => '${planId}_d$day';
 
   Future<List<Map<String, dynamic>>> getAllPlanItemProgress() async {
     final db = await database;
@@ -1225,6 +1290,12 @@ class DatabaseService {
     final already = await db.query('plan_item_progress',
         where: 'plan_id = ?', whereArgs: [planId], limit: 1);
     if (already.isNotEmpty) return 0; // 已有 v2 進度，不覆蓋
+    // 曾在 v2 取消過項目（有 plan_item 墓碑）＝使用者已在用 v2：
+    // 全部取消後不可再從舊版整天進度種回來（否則取消的進度會復活）。
+    final itemTombs = await getTombstoneMap('plan_item');
+    if (itemTombs.keys.any((r) => parsePlanItemRef(r)?.planId == planId)) {
+      return 0;
+    }
     final doneDays = await getPlanProgress(planId);
     if (doneDays.isEmpty) return 0;
     var seeded = 0;
@@ -1279,27 +1350,38 @@ class DatabaseService {
     );
   }
 
-  /// 勾選/取消某一天（整天為單位；v1 相容保留）。
+  /// 勾選/取消某一天（整天為單位；v1 相容保留）。目標狀態、idempotent；
+  /// 本體與 `plan_day` 墓碑同一個 transaction（語意同 [setPlanItemsDone]）。
   Future<void> setPlanDayDone(String planId, int day, bool done) async {
     final db = await database;
-    if (done) {
-      await db.insert(
-        'plan_progress',
-        {
-          'plan_id': planId,
-          'day': day,
-          'done_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    } else {
-      await db.delete(
-        'plan_progress',
-        where: 'plan_id = ? AND day = ?',
-        whereArgs: [planId, day],
-      );
-    }
-    _mutated();
+    const where = 'plan_id = ? AND day = ?';
+    final args = [planId, day];
+    final ref = planDayRef(planId, day);
+    final changed = await db.transaction((txn) async {
+      if (!done) {
+        final deleted =
+            await txn.delete('plan_progress', where: where, whereArgs: args);
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'plan_day', ref);
+        return true;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final existing = await txn.query('plan_progress',
+          columns: ['day'], where: where, whereArgs: args);
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete('tombstones',
+            where: 'kind = ? AND ref = ?', whereArgs: ['plan_day', ref]);
+        if (cleared == 0) return false;
+        await txn.update('plan_progress', {'done_at': now},
+            where: where, whereArgs: args);
+        return true;
+      }
+      await txn.insert(
+          'plan_progress', {'plan_id': planId, 'day': day, 'done_at': now});
+      await _untomb(txn, 'plan_day', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   // ---- 禱告事項 ----
@@ -1491,6 +1573,22 @@ class DatabaseService {
             deletedAt,
           ],
         );
+      case 'plan_item':
+        final pi = parsePlanItemRef(ref);
+        if (pi == null) return 0;
+        removed = await db.delete(
+          'plan_item_progress',
+          where: 'plan_id = ? AND book_id = ? AND chapter = ? AND done_at <= ?',
+          whereArgs: [pi.planId, pi.bookId, pi.chapter, deletedAt],
+        );
+      case 'plan_day':
+        final pd = RegExp(r'^(.+)_d(\d+)$').firstMatch(ref);
+        if (pd == null) return 0;
+        removed = await db.delete(
+          'plan_progress',
+          where: 'plan_id = ? AND day = ? AND done_at <= ?',
+          whereArgs: [pd.group(1)!, int.parse(pd.group(2)!), deletedAt],
+        );
     }
     return removed;
   }
@@ -1513,4 +1611,24 @@ class DatabaseService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+}
+
+/// 要設定完成狀態的讀經計畫項目（章）。
+class PlanItemTarget {
+  final int day;
+  final int bookId;
+  final int chapter;
+  final String itemId;
+  const PlanItemTarget(this.day, this.bookId, this.chapter, {this.itemId = ''});
+}
+
+/// 解析 `plan_item` 墓碑 ref（`{planId}_b{book}_c{chapter}`；planId 可含底線）。
+({String planId, int bookId, int chapter})? parsePlanItemRef(String ref) {
+  final m = RegExp(r'^(.+)_b(\d+)_c(\d+)$').firstMatch(ref);
+  if (m == null) return null;
+  return (
+    planId: m.group(1)!,
+    bookId: int.parse(m.group(2)!),
+    chapter: int.parse(m.group(3)!),
+  );
 }
