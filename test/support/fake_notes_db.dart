@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bible_app/models/models.dart';
 import 'package:bible_app/services/database_service.dart';
 
@@ -126,33 +128,85 @@ class FakeNotesDb extends DatabaseService {
     if (failMarks) throw StateError('read failed');
   }
 
+  /// 已存的書籤／螢光筆／稍後讀（key＝`book:chapter:verse`）。
+  final bookmarks = <String>{};
+  final highlights = <String, HighlightColor>{};
+  final later = <String>{};
+
+  /// 標記寫入（setBookmark／setHighlight／setLater）的第幾次丟例外（與筆記分開計數）。
+  int markCalls = 0;
+  final failMarkCalls = <int>{};
+
+  /// 設了就讓標記寫入卡在這裡，直到測試 complete（模擬寫入進行中）。
+  Completer<void>? markGate;
+
+  static String _k(int b, int c, int v) => '$b:$c:$v';
+
+  Future<void> _markWrite(String entry, void Function() apply) async {
+    markCalls++;
+    log.add(entry);
+    final gate = markGate;
+    if (gate != null) await gate.future;
+    if (failMarkCalls.contains(markCalls)) throw StateError('write failed');
+    apply();
+  }
+
+  Map<String, Object> _pick(String key) {
+    final p = key.split(':').map(int.parse).toList();
+    return {'b': p[0], 'c': p[1], 'v': p[2]};
+  }
+
   @override
   Future<Set<int>> getBookmarkedVerses(int b, int c) async {
     _maybeFailRead();
-    return {};
+    return {
+      for (final k in bookmarks)
+        if (k.startsWith('$b:$c:')) int.parse(k.split(':')[2]),
+    };
   }
 
   @override
   Future<Map<int, HighlightColor>> getChapterHighlights(int b, int c) async {
     _maybeFailRead();
-    return {};
+    return {
+      for (final e in highlights.entries)
+        if (e.key.startsWith('$b:$c:')) int.parse(e.key.split(':')[2]): e.value,
+    };
   }
 
   @override
   Future<Set<int>> getLaterVerses(int b, int c) async {
     _maybeFailRead();
-    return {};
+    return {
+      for (final k in later)
+        if (k.startsWith('$b:$c:')) int.parse(k.split(':')[2]),
+    };
   }
 
   @override
   Future<void> toggleBookmark(int b, int c, int v) async {
-    log.add('bookmark');
+    log.add('legacy toggleBookmark');
   }
 
   @override
-  Future<void> setLater(int b, int c, int v, bool later) async {
-    log.add('later');
-  }
+  Future<void> setBookmark(int b, int c, int v, bool bookmarked) =>
+      _markWrite('bookmark $bookmarked', () {
+        bookmarked ? bookmarks.add(_k(b, c, v)) : bookmarks.remove(_k(b, c, v));
+      });
+
+  @override
+  Future<void> setHighlight(int b, int c, int v, HighlightColor? color) =>
+      _markWrite('highlight ${color?.name}', () {
+        color == null
+            ? highlights.remove(_k(b, c, v))
+            : highlights[_k(b, c, v)] = color;
+      });
+
+  @override
+  Future<void> setLater(int b, int c, int v, bool value) =>
+      _markWrite('later $value', () {
+        value ? later.add(_k(b, c, v)) : later.remove(_k(b, c, v));
+      });
 
   @override
   Future<List<Bookmark>> getAllLater() async => [];
@@ -164,10 +218,27 @@ class FakeNotesDb extends DatabaseService {
   Future<bool> isChapterComplete(int b, int c) async => false;
 
   @override
-  Future<List<Bookmark>> getAllBookmarks() async => [];
+  Future<List<Bookmark>> getAllBookmarks() async => [
+    for (final k in bookmarks)
+      Bookmark(
+        bookId: _pick(k)['b'] as int,
+        chapter: _pick(k)['c'] as int,
+        verse: _pick(k)['v'] as int,
+        createdAt: 0,
+      ),
+  ];
 
   @override
-  Future<List<Highlight>> getAllHighlights() async => [];
+  Future<List<Highlight>> getAllHighlights() async => [
+    for (final e in highlights.entries)
+      Highlight(
+        bookId: _pick(e.key)['b'] as int,
+        chapter: _pick(e.key)['c'] as int,
+        verse: _pick(e.key)['v'] as int,
+        color: e.value,
+        createdAt: 0,
+      ),
+  ];
 
   @override
   Future<List<Note>> getAllNotes() async =>

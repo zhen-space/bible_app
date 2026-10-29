@@ -9,6 +9,60 @@ import '../utils/share_utils.dart';
 import 'chapter_screen.dart';
 import 'verse_notes_sheet.dart';
 
+/// 螢光筆顏色的預設唸法（使用者沒命名時給螢幕閱讀器用）。
+const _colorNames = {
+  HighlightColor.yellow: '黃色',
+  HighlightColor.green: '綠色',
+  HighlightColor.blue: '藍色',
+  HighlightColor.pink: '粉紅色',
+  HighlightColor.orange: '橘色',
+};
+
+/// 正在讀取個人標記、還沒開出來的面板（同一節只讀一次，避免連點開出兩層）。
+/// 只在讀取期間佔用；面板開著時入口已被遮罩擋住，不靠這個旗標。
+final _opening = <String>{};
+
+/// 寫入中的標記（`kind:book:chapter:verse`），擋掉同一筆的重複寫入。
+final _inFlight = <String>{};
+
+/// 寫一個標記的目標狀態：同一 [key] 寫入中就略過；失敗顯示 [failMessage] 與「重試」；
+/// 不論成敗都 [refresh]，讓畫面顯示實際儲存的狀態。
+Future<void> _writeMark({
+  required String key,
+  required ScaffoldMessengerState? messenger,
+  required Future<void> Function() write,
+  required String failMessage,
+  required VoidCallback refresh,
+}) async {
+  if (!_inFlight.add(key)) return;
+  var failed = false;
+  try {
+    await write();
+  } catch (_) {
+    failed = true;
+  } finally {
+    _inFlight.remove(key);
+    refresh();
+  }
+  if (!failed) return;
+  messenger
+    ?..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(
+      duration: const Duration(seconds: 8),
+      content: Text(failMessage),
+      action: SnackBarAction(
+        label: '重試',
+        onPressed: () => _writeMark(
+          key: key,
+          messenger: messenger,
+          write: write,
+          failMessage: failMessage,
+          refresh: refresh,
+        ),
+      ),
+    ));
+}
+
 /// 共用的「單節動作」面板（每日經文、書籤列表等非讀經頁的入口用）。
 ///
 /// 提供螢光筆（可改色/移除）、書籤、筆記、複製（純經文／經文＋出處）、
@@ -19,6 +73,11 @@ import 'verse_notes_sheet.dart';
 /// 點入看同節全部筆記、選一則編輯／刪除、或新增；一律以筆記 id 寫，不會整節覆蓋或刪除。
 /// 個人標記讀取失敗時面板照常開（複製／分享／在經文中閱讀可用），依狀態才能決定的
 /// 書籤／稍後讀／筆記先停用並提供重試，避免以「未知」當「沒有」去切換或覆蓋。
+///
+/// 螢光筆／書籤／稍後讀都寫「目標狀態」（`setHighlight`／`setBookmark`／`setLater`，
+/// 皆 idempotent、本體＋墓碑同一交易），失敗時重新整理成實際儲存的狀態、以 SnackBar
+/// 告知並提供「重試」（重試寫同一個目標狀態，不會翻回去）。同一節同一種標記寫入
+/// 進行中時不會再寫第二次（面板裡該按鈕停用、重試也略過）；面板讀取中連點入口只開一個。
 Future<void> showVerseActionSheet(
   BuildContext context,
   WidgetRef ref, {
@@ -29,11 +88,16 @@ Future<void> showVerseActionSheet(
 }) async {
   final db = ref.read(databaseServiceProvider);
   final bookId = book.id;
+  final openKey = '$bookId:$chapter:$verse';
+  final hlKey = 'highlight:$bookId:$chapter:$verse';
+  final bmKey = 'bookmark:$bookId:$chapter:$verse';
+  final laterKey = 'later:$bookId:$chapter:$verse';
   HighlightColor? currentColor;
   var isBookmarked = false;
   var isLater = false;
   var notes = const <Note>[];
   var marksKnown = true;
+  if (!_opening.add(openKey)) return;
   try {
     final highlights = await db.getChapterHighlights(bookId, chapter);
     final bookmarks = await db.getBookmarkedVerses(bookId, chapter);
@@ -44,12 +108,16 @@ Future<void> showVerseActionSheet(
     isLater = later.contains(verse);
   } catch (_) {
     marksKnown = false;
+  } finally {
+    _opening.remove(openKey);
   }
   if (!context.mounted) return;
   final citation = verseCitation(book, chapter, verse);
   final labels = ref.read(highlightLabelsProvider);
 
   void refresh() {
+    // 寫入完成時入口頁可能已離開（ref 已失效）；畫面已不在就不必重新整理。
+    if (!context.mounted) return;
     ref.invalidate(chapterMarksProvider((bookId: bookId, chapter: chapter)));
     ref.invalidate(allBookmarksProvider);
     ref.invalidate(allHighlightsProvider);
@@ -57,15 +125,39 @@ Future<void> showVerseActionSheet(
     ref.invalidate(allLaterProvider);
   }
 
+  // 每次開面板只處理第一個動作：關面板中的連點不會寫兩次，也不會多 pop 一層。
+  // （放在 builder 外，面板重建也不會重置。）
+  var acted = false;
   await showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
     builder: (ctx) {
       final scheme = Theme.of(ctx).colorScheme;
-      void openNotes() {
+      bool claim() {
+        if (acted) return false;
+        acted = true;
         Navigator.pop(ctx);
-        if (!context.mounted) return;
+        return context.mounted;
+      }
+
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      void writeMark(String key, Future<void> Function() write, String fail) {
+        if (!claim()) return;
+        _writeMark(
+          key: key,
+          messenger: messenger,
+          write: write,
+          failMessage: fail,
+          refresh: refresh,
+        );
+      }
+
+      final hlBusy = _inFlight.contains(hlKey);
+      final bmBusy = _inFlight.contains(bmKey);
+      final laterBusy = _inFlight.contains(laterKey);
+      void openNotes() {
+        if (!claim()) return;
         openVerseNotes(
           context,
           bookName: book.name,
@@ -116,8 +208,7 @@ Future<void> showVerseActionSheet(
                     ),
                     TextButton(
                       onPressed: () {
-                        Navigator.pop(ctx);
-                        if (!context.mounted) return;
+                        if (!claim()) return;
                         showVerseActionSheet(context, ref,
                             book: book,
                             chapter: chapter,
@@ -134,13 +225,22 @@ Future<void> showVerseActionSheet(
                 children: [
                   for (final c in HighlightColor.values)
                     Column(mainAxisSize: MainAxisSize.min, children: [
-                      InkWell(
+                      Semantics(
+                        button: true,
+                        selected: currentColor == c,
+                        label: '螢光筆 ${labels[c] ?? _colorNames[c]}',
+                        child: InkWell(
                         customBorder: const CircleBorder(),
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          await db.setHighlight(bookId, chapter, verse, c);
-                          refresh();
-                        },
+                        onTap: hlBusy
+                            ? null
+                            : () => writeMark(
+                                  hlKey,
+                                  () => db.setHighlight(
+                                      bookId, chapter, verse, c),
+                                  currentColor == null
+                                      ? '加上螢光筆失敗，經文沒有標記。'
+                                      : '更換螢光筆失敗，顏色沒有變更。',
+                                ),
                         child: CircleAvatar(
                           radius: 16,
                           backgroundColor: AppTheme.highlightSwatch(c),
@@ -148,7 +248,7 @@ Future<void> showVerseActionSheet(
                               ? const Icon(Icons.check, size: 16)
                               : null,
                         ),
-                      ),
+                      )),
                       if (labels[c] != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
@@ -160,11 +260,14 @@ Future<void> showVerseActionSheet(
                     IconButton(
                       icon: const Icon(Icons.format_color_reset),
                       tooltip: '移除螢光筆',
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        await db.setHighlight(bookId, chapter, verse, null);
-                        refresh();
-                      },
+                      onPressed: hlBusy
+                          ? null
+                          : () => writeMark(
+                                hlKey,
+                                () => db.setHighlight(
+                                    bookId, chapter, verse, null),
+                                '移除螢光筆失敗，螢光筆仍保留。',
+                              ),
                     ),
                 ],
               ),
@@ -178,48 +281,40 @@ Future<void> showVerseActionSheet(
                       isBookmarked
                           ? Icons.bookmark_remove
                           : Icons.bookmark_add_outlined,
-                      isBookmarked ? '移除書籤' : '書籤', !marksKnown ? null : () async {
-                    Navigator.pop(ctx);
-                    await db.toggleBookmark(bookId, chapter, verse);
-                    refresh();
-                  }),
+                      isBookmarked ? '移除書籤' : '書籤',
+                      !marksKnown || bmBusy
+                          ? null
+                          : () => writeMark(
+                                bmKey,
+                                // 目標狀態（非切換）：重試不會把狀態翻回去。
+                                () => db.setBookmark(
+                                    bookId, chapter, verse, !isBookmarked),
+                                isBookmarked
+                                    ? '移除書籤失敗，書籤仍保留。'
+                                    : '加入書籤失敗，這節沒有加入書籤。',
+                              )),
                   _act(ctx, Icons.edit_note,
                       notes.isEmpty ? '筆記' : '筆記 ${notes.length}',
                       !marksKnown ? null : openNotes),
                   _act(
                       ctx,
                       isLater ? Icons.watch_later : Icons.watch_later_outlined,
-                      isLater ? '移除待讀' : '稍後讀', !marksKnown ? null : () async {
-                    Navigator.pop(ctx);
-                    // 設定目標狀態（非切換）：失敗後重試不會把狀態翻回去。
-                    final messenger = ScaffoldMessenger.maybeOf(context);
-                    Future<void> apply() async {
-                      try {
-                        await db.setLater(bookId, chapter, verse, !isLater);
-                      } catch (_) {
-                        messenger
-                          ?..hideCurrentSnackBar()
-                          ..showSnackBar(SnackBar(
-                            duration: const Duration(seconds: 8),
-                            content: Text(isLater
-                                ? '移除待讀失敗，仍在稍後閱讀。'
-                                : '加入稍後閱讀失敗。'),
-                            action: SnackBarAction(
-                                label: '重試', onPressed: apply),
-                          ));
-                      } finally {
-                        refresh();
-                      }
-                    }
-
-                    await apply();
-                  }),
+                      isLater ? '移除待讀' : '稍後讀',
+                      !marksKnown || laterBusy
+                          ? null
+                          : () => writeMark(
+                                laterKey,
+                                // 設定目標狀態（非切換）：失敗後重試不會把狀態翻回去。
+                                () => db.setLater(
+                                    bookId, chapter, verse, !isLater),
+                                isLater ? '移除待讀失敗，仍在稍後閱讀。' : '加入稍後閱讀失敗。',
+                              )),
                   _act(ctx, Icons.copy, '複製', () {
-                    Navigator.pop(ctx);
+                    if (!claim()) return;
                     _copyOrShareMenu(context, text, citation, share: false);
                   }),
                   _act(ctx, Icons.ios_share, '分享', () {
-                    Navigator.pop(ctx);
+                    if (!claim()) return;
                     _copyOrShareMenu(context, text, citation, share: true);
                   }),
                 ],
@@ -233,7 +328,7 @@ Future<void> showVerseActionSheet(
                 icon: const Icon(Icons.menu_book_outlined),
                 label: const Text('在經文中閱讀'),
                 onPressed: () {
-                  Navigator.pop(ctx);
+                  if (!claim()) return;
                   Navigator.push(
                     context,
                     MaterialPageRoute(
