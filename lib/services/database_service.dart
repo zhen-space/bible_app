@@ -455,55 +455,81 @@ class DatabaseService {
   // ---- 稍後閱讀（Later）----
 
   /// 加入 / 移除「稍後閱讀」（切換）。
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [toggleBookmark]）。
+  /// 移除時墓碑寫入失敗→刪除回滾，待讀保留，不會在下次同步從雲端復活；
+  /// 加入時清墓碑失敗→插入回滾，不會留下「有待讀又有墓碑」被同步刪掉。
   Future<void> toggleLater(int bookId, int chapter, int verse) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    final deleted = await db.delete(
-      'later',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (deleted == 0) {
-      await db.insert('later', {
+    await db.transaction((txn) async {
+      final deleted = await txn.delete(
+        'later',
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (deleted == 0) {
+        await txn.insert('later', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        await _untomb(txn, 'later', ref);
+      } else {
+        await _tombstone(txn, 'later', ref);
+      }
+    });
+    _mutated();
+  }
+
+  /// 設定「稍後閱讀」為指定狀態（idempotent，重試安全；同 [setBookmark]）。
+  /// 已是該狀態就不動：移除不存在的節不記新墓碑（避免蓋掉別台裝置尚未同步的待讀）；
+  /// 加入已存在的節不改 created_at。加回時 created_at 用現在，才會比雲端墓碑新、
+  /// 不被同步刪掉。若舊資料殘留「有待讀又有墓碑」，加入時順手清掉墓碑修復不變量。
+  Future<void> setLater(int bookId, int chapter, int verse, bool later) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final changed = await db.transaction((txn) async {
+      if (!later) {
+        final deleted = await txn.delete(
+          'later',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'later', ref);
+        return true;
+      }
+      final existing = await txn.query(
+        'later',
+        columns: ['id'],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete('tombstones',
+            where: 'kind = ? AND ref = ?', whereArgs: ['later', ref]);
+        return cleared > 0;
+      }
+      await txn.insert('later', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
-      await _untomb(db, 'later', ref);
-    } else {
-      await _tombstone(db, 'later', ref);
-    }
-    _mutated();
+      await _untomb(txn, 'later', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
-  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。
-  Future<void> addLater(int bookId, int chapter, int verse) async {
-    final db = await database;
-    await db.insert(
-      'later',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-    await _untomb(db, 'later', _rowRef(bookId, chapter, verse));
-    _mutated();
-  }
+  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。見 [setLater]。
+  Future<void> addLater(int bookId, int chapter, int verse) =>
+      setLater(bookId, chapter, verse, true);
 
-  Future<void> removeLater(int bookId, int chapter, int verse) async {
-    final db = await database;
-    await db.delete(
-      'later',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    await _tombstone(db, 'later', _rowRef(bookId, chapter, verse));
-    _mutated();
-  }
+  /// 移除「稍後閱讀」（不存在則不動、不記墓碑）。見 [setLater]。
+  Future<void> removeLater(int bookId, int chapter, int verse) =>
+      setLater(bookId, chapter, verse, false);
 
   Future<List<Bookmark>> getAllLater() async {
     final db = await database;

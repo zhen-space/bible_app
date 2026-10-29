@@ -298,18 +298,49 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _clearSelection();
   }
 
-  /// 多選批次：加入稍後閱讀。
-  Future<void> _bulkLater() async {
+  /// 多選批次：加入稍後閱讀。addLater 是 idempotent（已存在不動），
+  /// 失敗時保留尚未加入的節為選取，重試只補剩下的。
+  Future<void> _bulkLater([List<int>? only]) async {
     final db = ref.read(databaseServiceProvider);
+    final verses = only ?? _selectedSorted;
+    if (verses.isEmpty) return;
+    var added = 0;
+    var failed = false;
     try {
-      for (final v in _selectedSorted) {
+      for (final v in verses) {
         await db.addLater(_bookId, _chapter, v);
+        added++;
       }
-    } finally {
-      ref.invalidate(allLaterProvider);
-      _refreshMarks();
+    } catch (_) {
+      failed = true;
     }
-    _clearSelection();
+    ref.invalidate(allLaterProvider);
+    _refreshMarks();
+    if (!mounted) return;
+    if (!failed) {
+      _clearSelection();
+      return;
+    }
+    final remaining = verses.skip(added).toList();
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(remaining);
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            added == 0
+                ? '加入稍後閱讀失敗，請再試一次。'
+                : '只加入了 $added / ${verses.length} 節，其餘尚未加入。',
+          ),
+          action: SnackBarAction(
+              label: '重試', onPressed: () => _bulkLater(remaining)),
+        ),
+      );
   }
 
   /// 多選批次：複製／分享（純經文 / 經文＋出處）。
@@ -815,7 +846,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           IconButton(
             icon: const Icon(Icons.watch_later_outlined),
             tooltip: '稍後讀',
-            onPressed: _bulkLater,
+            onPressed: () => _bulkLater(),
           ),
           IconButton(
             icon: const Icon(Icons.copy),

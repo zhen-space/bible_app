@@ -142,8 +142,28 @@ Future<void> showVerseActionSheet(
                       isLater ? Icons.watch_later : Icons.watch_later_outlined,
                       isLater ? '移除待讀' : '稍後讀', () async {
                     Navigator.pop(ctx);
-                    await db.toggleLater(bookId, chapter, verse);
-                    refresh();
+                    // 設定目標狀態（非切換）：失敗後重試不會把狀態翻回去。
+                    final messenger = ScaffoldMessenger.maybeOf(context);
+                    Future<void> apply() async {
+                      try {
+                        await db.setLater(bookId, chapter, verse, !isLater);
+                      } catch (_) {
+                        messenger
+                          ?..hideCurrentSnackBar()
+                          ..showSnackBar(SnackBar(
+                            duration: const Duration(seconds: 8),
+                            content: Text(isLater
+                                ? '移除待讀失敗，仍在稍後閱讀。'
+                                : '加入稍後閱讀失敗。'),
+                            action: SnackBarAction(
+                                label: '重試', onPressed: apply),
+                          ));
+                      } finally {
+                        refresh();
+                      }
+                    }
+
+                    await apply();
                   }),
                   _act(ctx, Icons.copy, '複製', () {
                     Navigator.pop(ctx);
