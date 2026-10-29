@@ -548,21 +548,10 @@ class DatabaseService {
     return rows.map((r) => r['verse'] as int).toSet();
   }
 
-  /// 雲端同步 upsert（已存在略過）。
+  /// 雲端同步 upsert（已存在則保留較新的 created_at，理由同 [upsertBookmark]）。
   Future<void> upsertLater(
-      int bookId, int chapter, int verse, int createdAt) async {
-    final db = await database;
-    await db.insert(
-      'later',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': createdAt,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-  }
+          int bookId, int chapter, int verse, int createdAt) =>
+      _upsertVerseRowKeepNewer('later', bookId, chapter, verse, createdAt);
 
   // ---- Highlights ----
 
@@ -966,20 +955,37 @@ class DatabaseService {
 
   // ---- 雲端同步用 upsert（last-write-wins 合併）----
 
-  /// 書籤：已存在就略過（書籤沒有內容可比新舊）。
+  /// 書籤：已存在就保留較新的 created_at（書籤沒有內容可比，時間即 LWW 依據）。
+  /// 不可沿用本機較舊的時間：否則較舊的雲端墓碑會刪掉它，上傳時再把雲端
+  /// 較新的重新加入一併刪掉。
   Future<void> upsertBookmark(
-      int bookId, int chapter, int verse, int createdAt) async {
+          int bookId, int chapter, int verse, int createdAt) =>
+      _upsertVerseRowKeepNewer('bookmarks', bookId, chapter, verse, createdAt);
+
+  /// 書籤／稍後閱讀共用：新增或把 created_at 推進到較新的值（單一 transaction）。
+  Future<void> _upsertVerseRowKeepNewer(
+      String table, int bookId, int chapter, int verse, int createdAt) async {
     final db = await database;
-    await db.insert(
-      'bookmarks',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': createdAt,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.transaction((txn) async {
+      final inserted = await txn.insert(
+        table,
+        {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': createdAt,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      if (inserted > 0) return;
+      await txn.update(
+        table,
+        {'created_at': createdAt},
+        where:
+            'book_id = ? AND chapter = ? AND verse = ? AND created_at < ?',
+        whereArgs: [bookId, chapter, verse, createdAt],
+      );
+    });
   }
 
   /// 螢光筆：以 created_at 較新者為準。
@@ -1266,6 +1272,38 @@ class DatabaseService {
       return a + b;
     });
     return removed;
+  }
+
+  /// 同 [reconcilePlanTombstones]，用於個人經文標記：書籤（`bookmark`）、
+  /// 稍後閱讀（`later`）、章節完成（`completion`）。同步下載＋套用墓碑後，
+  /// 本機活資料若比墓碑新（別台裝置刪除後，這台或另一台又重新加入），清掉該墓碑——
+  /// 否則上傳時墓碑會把雲端較新的活資料刪掉，活資料與墓碑也不再互斥。
+  /// 較舊或同時間的活資料已由 [applyTombstone] 刪掉，不受影響。單一 transaction。
+  Future<int> reconcileMarkTombstones() async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final a = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'bookmark' AND EXISTS (
+          SELECT 1 FROM bookmarks x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      final b = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'later' AND EXISTS (
+          SELECT 1 FROM later x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      final c = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'completion' AND EXISTS (
+          SELECT 1 FROM chapter_completions x
+          WHERE 'b' || x.book_id || '_c' || x.chapter = tombstones.ref
+            AND x.completed_at > tombstones.deleted_at)
+      ''');
+      return a + b + c;
+    });
   }
 
   /// 計畫項目的墓碑 ref（＝雲端 `plan_item_progress` doc id，與 sync_service 一致）。

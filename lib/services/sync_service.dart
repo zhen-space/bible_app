@@ -212,6 +212,8 @@ class SyncService {
     }
     // 計畫進度：活資料比墓碑新（他處重新勾選）→ 清墓碑，免得上傳時誤刪雲端活資料。
     await db.reconcilePlanTombstones();
+    // 書籤／稍後閱讀／章節完成：同理（較舊墓碑＋較新重新加入 → 清墓碑）。
+    await db.reconcileMarkTombstones();
 
     onStep?.call('同步中…上傳到雲端');
     // ---- 上傳（本地 → 雲端，batch 寫入）----
