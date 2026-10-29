@@ -827,33 +827,74 @@ class DatabaseService {
 
   // ---- 章節完成（Chapter Completion，使用者主動確認）----
 
-  /// 標記某章為「已完成」（主動確認）。
-  Future<void> markChapterComplete(int bookId, int chapter) async {
+  /// 設定某章「已完成」為 [complete]（主動確認；idempotent）。
+  ///
+  /// 本體（chapter_completions）與刪除紀錄（`completion` 墓碑）在**同一個 transaction**
+  /// 寫入，同成同敗：失敗時兩邊都不動、不觸發 [onMutate]，可安全重試。
+  /// - 取消：本來就沒完成 → 不動、不記新墓碑（避免新墓碑蓋掉別台裝置尚未同步的完成）。
+  /// - 完成：已完成且無墓碑 → 不動、不改 completed_at；舊資料「完成＋墓碑」並存 →
+  ///   清墓碑並把 completed_at 更新為現在（雲端墓碑套用條件是 completed_at <= deleted_at，
+  ///   不更新的話下次同步會把剛確認的完成刪掉）。
+  Future<void> setChapterComplete(
+    int bookId,
+    int chapter,
+    bool complete,
+  ) async {
     final db = await database;
-    await db.insert(
-      'chapter_completions',
-      {
+    final ref = _completionRef(bookId, chapter);
+    const where = 'book_id = ? AND chapter = ?';
+    final args = [bookId, chapter];
+    final changed = await db.transaction((txn) async {
+      if (!complete) {
+        final deleted = await txn.delete(
+          'chapter_completions',
+          where: where,
+          whereArgs: args,
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'completion', ref);
+        return true;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final existing = await txn.query(
+        'chapter_completions',
+        columns: ['book_id'],
+        where: where,
+        whereArgs: args,
+      );
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete(
+          'tombstones',
+          where: 'kind = ? AND ref = ?',
+          whereArgs: ['completion', ref],
+        );
+        if (cleared == 0) return false;
+        await txn.update(
+          'chapter_completions',
+          {'completed_at': now},
+          where: where,
+          whereArgs: args,
+        );
+        return true;
+      }
+      await txn.insert('chapter_completions', {
         'book_id': bookId,
         'chapter': chapter,
-        'completed_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    await _untomb(db, 'completion', _completionRef(bookId, chapter));
-    _mutated();
+        'completed_at': now,
+      });
+      await _untomb(txn, 'completion', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
-  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。
-  Future<void> unmarkChapterComplete(int bookId, int chapter) async {
-    final db = await database;
-    await db.delete(
-      'chapter_completions',
-      where: 'book_id = ? AND chapter = ?',
-      whereArgs: [bookId, chapter],
-    );
-    await _tombstone(db, 'completion', _completionRef(bookId, chapter));
-    _mutated();
-  }
+  /// 標記某章為「已完成」。見 [setChapterComplete]。
+  Future<void> markChapterComplete(int bookId, int chapter) =>
+      setChapterComplete(bookId, chapter, true);
+
+  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。見 [setChapterComplete]。
+  Future<void> unmarkChapterComplete(int bookId, int chapter) =>
+      setChapterComplete(bookId, chapter, false);
 
   String _completionRef(int bookId, int chapter) => 'b${bookId}_c$chapter';
 

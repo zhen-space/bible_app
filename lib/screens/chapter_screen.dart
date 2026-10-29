@@ -100,6 +100,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   bool _focusPending = false; // 還沒捲到定位
   Timer? _flashTimer;
   bool _planItemCompleted = false;
+  bool _completeBusy = false; // 「完成本章」寫入中
 
   bool get _isOriginalPlanChapter =>
       _bookId == widget.bookId && _chapter == widget.chapter;
@@ -207,24 +208,24 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
   }
 
   /// 記錄「造訪」到 Reading History（reading_log）。**不等於完成**——
-  /// 完成是使用者主動按「完成本章」（見 _toggleComplete）。
+  /// 完成是使用者主動按「完成本章」（見 _setComplete）。
   Future<void> _logRead() async {
     await ref.read(databaseServiceProvider).markChapterRead(_bookId, _chapter);
   }
 
   /// 使用者主動確認「完成／取消完成」本章。只在正常閱讀（非臨時瀏覽）出現。
-  Future<void> _toggleComplete(
-    int bookId,
-    int chapter,
-    bool currentlyDone,
-  ) async {
+  ///
+  /// 寫入的是**目標狀態**（setChapterComplete 為 idempotent），不是 toggle：
+  /// 失敗後重試不會把狀態翻回去；寫入中按鈕停用，避免連點重複寫。
+  Future<void> _setComplete(int bookId, int chapter, bool complete) async {
+    if (_completeBusy) return;
+    setState(() => _completeBusy = true);
     final db = ref.read(databaseServiceProvider);
+    var failed = false;
     try {
-      if (currentlyDone) {
-        await db.unmarkChapterComplete(bookId, chapter);
-      } else {
-        await db.markChapterComplete(bookId, chapter);
-      }
+      await db.setChapterComplete(bookId, chapter, complete);
+    } catch (_) {
+      failed = true;
     } finally {
       ref.invalidate(
         chapterCompleteProvider((bookId: bookId, chapter: chapter)),
@@ -232,15 +233,28 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       ref.invalidate(readChapterCountProvider);
       ref.invalidate(faithMapProvider);
       ref.invalidate(statsProvider);
+      if (mounted) setState(() => _completeBusy = false);
     }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(currentlyDone ? '已取消本章完成標記' : '已標記本章完成'),
-          duration: const Duration(seconds: 1),
-        ),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        failed
+            ? SnackBar(
+                duration: const Duration(seconds: 8),
+                content: Text(
+                  complete ? '標記本章完成失敗，請再試一次。' : '取消完成標記失敗，本章仍為已完成。',
+                ),
+                action: SnackBarAction(
+                  label: '重試',
+                  onPressed: () => _setComplete(bookId, chapter, complete),
+                ),
+              )
+            : SnackBar(
+                content: Text(complete ? '已標記本章完成' : '已取消本章完成標記'),
+                duration: const Duration(seconds: 1),
+              ),
       );
-    }
   }
 
   Future<void> _completePlanItem() async {
@@ -591,8 +605,10 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                             ? Theme.of(context).colorScheme.secondary
                             : null,
                         tooltip: isComplete ? '已完成本章（點擊取消）' : '標記本章完成',
-                        onPressed: () =>
-                            _toggleComplete(_bookId, _chapter, isComplete),
+                        onPressed: _completeBusy
+                            ? null
+                            : () =>
+                                  _setComplete(_bookId, _chapter, !isComplete),
                       ),
                     IconButton(
                       icon: const Icon(Icons.list),
