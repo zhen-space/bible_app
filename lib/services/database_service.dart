@@ -615,6 +615,29 @@ class DatabaseService {
 
   // ---- Notes ----
 
+  /// 單則筆記的墓碑 ref（kind `note_item`）。筆記的跨裝置身分＝created_at
+  /// （同證道筆記／禱告／代辦）：同一節可有多則筆記、共用同一個雲端 doc
+  /// （`b{book}_c{ch}_v{v}`），刪一則不能用整節墓碑，否則會誤刪同節其他筆記。
+  static String noteItemRef(int createdAt) => 'n$createdAt';
+
+  /// 新筆記的 created_at：本機唯一（同一毫秒連續新增時往後推），因為它是身分。
+  Future<int> _uniqueNoteCreatedAt(DatabaseExecutor txn, int now) async {
+    var t = now;
+    while ((await txn.query('notes',
+            columns: ['id'], where: 'created_at = ?', whereArgs: [t], limit: 1))
+        .isNotEmpty) {
+      t++;
+    }
+    return t;
+  }
+
+  /// 存檔時清掉這則筆記可能的墓碑（整節舊墓碑＋單則墓碑），維持互斥不變量。
+  Future<void> _untombNote(DatabaseExecutor txn, int bookId, int chapter,
+      int verse, int createdAt) async {
+    await _untomb(txn, 'note', _rowRef(bookId, chapter, verse));
+    await _untomb(txn, 'note_item', noteItemRef(createdAt));
+  }
+
   /// 逐節快速筆記（Reader/單節面板用）：以錨點 (book,chapter,verse) upsert。
   /// **不動** title/refs（保留 v2 欄位不被簡易編輯清掉）；會清軟刪除旗標。
   /// 寫入與清墓碑在同一個交易：不會留下「活資料＋墓碑」並存（下次同步會被刪掉）。
@@ -628,17 +651,20 @@ class DatabaseService {
         where: 'book_id = ? AND chapter = ? AND verse = ?',
         whereArgs: [bookId, chapter, verse],
       );
+      final int createdAt;
       if (existing.isEmpty) {
+        createdAt = await _uniqueNoteCreatedAt(txn, now);
         await txn.insert('notes', {
           'book_id': bookId,
           'chapter': chapter,
           'verse': verse,
           'content': content,
           'tags': tags,
-          'created_at': now,
+          'created_at': createdAt,
           'updated_at': now,
         });
       } else {
+        createdAt = existing.first['created_at'] as int;
         await txn.update(
           'notes',
           {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
@@ -646,7 +672,7 @@ class DatabaseService {
           whereArgs: [existing.first['id']],
         );
       }
-      await _untomb(txn, 'note', _rowRef(bookId, chapter, verse));
+      await _untombNote(txn, bookId, chapter, verse, createdAt);
     });
     _mutated();
   }
@@ -659,6 +685,7 @@ class DatabaseService {
     final ref = _rowRef(note.bookId, note.chapter, note.verse);
     final id = await db.transaction((txn) async {
       if (note.id == null) {
+        final createdAt = await _uniqueNoteCreatedAt(txn, now);
         final id = await txn.insert('notes', {
           'book_id': note.bookId,
           'chapter': note.chapter,
@@ -668,12 +695,15 @@ class DatabaseService {
           'tags': note.tags,
           'refs': note.refs.join(','),
           'deleted_at': 0,
-          'created_at': now,
+          'created_at': createdAt,
           'updated_at': now,
         });
-        await _untomb(txn, 'note', ref);
+        await _untombNote(
+            txn, note.bookId, note.chapter, note.verse, createdAt);
         return id;
       }
+      final cur = await txn.query('notes',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [note.id]);
       await txn.update(
         'notes',
         {
@@ -691,6 +721,10 @@ class DatabaseService {
         whereArgs: [note.id],
       );
       await _untomb(txn, 'note', ref);
+      if (cur.isNotEmpty) {
+        await _untomb(
+            txn, 'note_item', noteItemRef(cur.first['created_at'] as int));
+      }
       return note.id!;
     });
     _mutated();
@@ -735,25 +769,18 @@ class DatabaseService {
   ///
   /// 查詢、刪除、寫墓碑在同一個交易：墓碑寫入失敗時整筆回滾、筆記仍在最近刪除，
   /// 不會出現「本機已刪但沒墓碑 → 下次同步從雲端下載回來」。已不存在就什麼都不做
-  /// （重試安全）。同一節若還有其他筆記（雲端 doc 以節位為 id），不寫墓碑，
-  /// 否則同步會把那則仍在的筆記一起刪掉。
+  /// （重試安全）。墓碑是**單則**（`note_item`，ref＝`n{created_at}`），不是整節：
+  /// 同一節的其他筆記（含別台裝置尚未同步過來、這台沒見過的）不受影響。
+  /// 雲端整節 doc 在同步上傳時改寫成剩下的筆記，或在這節已無筆記時刪掉。
   Future<void> purgeNote(int id) async {
     final db = await database;
     final removed = await db.transaction((txn) async {
       final rows = await txn.query('notes',
-          columns: ['book_id', 'chapter', 'verse'],
-          where: 'id = ?',
-          whereArgs: [id]);
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
       if (rows.isEmpty) return false;
-      final r = rows.first;
-      final b = r['book_id'] as int, c = r['chapter'] as int, v = r['verse'] as int;
       await txn.delete('notes', where: 'id = ?', whereArgs: [id]);
-      final others = await txn.query('notes',
-          columns: ['id'],
-          where: 'book_id = ? AND chapter = ? AND verse = ?',
-          whereArgs: [b, c, v],
-          limit: 1);
-      if (others.isEmpty) await _tombstone(txn, 'note', _rowRef(b, c, v));
+      await _tombstone(
+          txn, 'note_item', noteItemRef(rows.first['created_at'] as int));
       return true;
     });
     if (removed) _mutated();
@@ -1014,18 +1041,72 @@ class DatabaseService {
     );
   }
 
-  /// 筆記：以 updated_at 較新者為準。
+  /// 筆記（雲端 → 本地合併）：以 **created_at 為身分**、updated_at 較新者為準。
+  ///
+  /// 同一節可有多則筆記（共用雲端 doc），所以不能像舊版那樣「同節第一則」就覆蓋——
+  /// 那會把別則筆記的內容蓋掉。對不到身分時：同節若有標題／內容／標籤／引用完全相同的
+  /// 筆記（舊版同步把兩台各自的筆記合併成同一份內容、但 created_at 不同），視為同一則，
+  /// 兩邊都收斂到較早的 created_at，避免升級後重複；否則新增為另一則。
+  /// 對到身分且雲端較新 → 更新內容與錨點（錨點可能在別台被改）；不動本機軟刪除狀態。
+  /// 單一 transaction。
   Future<void> upsertNote(int bookId, int chapter, int verse, String content,
       int createdAt, int updatedAt,
       {String tags = '', String title = '', String refs = ''}) async {
     final db = await database;
-    final existing = await db.query(
-      'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (existing.isEmpty) {
-      await db.insert('notes', {
+    await db.transaction((txn) async {
+      final byId = await txn.query('notes',
+          where: 'created_at = ?', whereArgs: [createdAt]);
+      if (byId.isNotEmpty) {
+        final row = byId.firstWhere(
+            (r) =>
+                r['book_id'] == bookId &&
+                r['chapter'] == chapter &&
+                r['verse'] == verse,
+            orElse: () => byId.first);
+        if ((row['updated_at'] as int) < updatedAt) {
+          await txn.update(
+            'notes',
+            {
+              'book_id': bookId,
+              'chapter': chapter,
+              'verse': verse,
+              'title': title,
+              'content': content,
+              'tags': tags,
+              'refs': refs,
+              'updated_at': updatedAt,
+            },
+            where: 'id = ?',
+            whereArgs: [row['id']],
+          );
+        }
+        return;
+      }
+      final same = await txn.query(
+        'notes',
+        where: 'book_id = ? AND chapter = ? AND verse = ? AND title = ? '
+            'AND content = ? AND tags = ? AND refs = ?',
+        whereArgs: [bookId, chapter, verse, title, content, tags, refs],
+        orderBy: 'created_at',
+        limit: 1,
+      );
+      if (same.isNotEmpty) {
+        final row = same.first;
+        final localCreated = row['created_at'] as int;
+        await txn.update(
+          'notes',
+          {
+            if (createdAt < localCreated) 'created_at': createdAt,
+            'updated_at': updatedAt > (row['updated_at'] as int)
+                ? updatedAt
+                : row['updated_at'],
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        return;
+      }
+      await txn.insert('notes', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
@@ -1036,20 +1117,7 @@ class DatabaseService {
         'created_at': createdAt,
         'updated_at': updatedAt,
       });
-    } else if ((existing.first['updated_at'] as int) < updatedAt) {
-      await db.update(
-        'notes',
-        {
-          'title': title,
-          'content': content,
-          'tags': tags,
-          'refs': refs,
-          'updated_at': updatedAt
-        },
-        where: 'id = ?',
-        whereArgs: [existing.first['id']],
-      );
-    }
+    });
   }
 
   // ---- 主日／證道筆記 ----
@@ -1275,7 +1343,8 @@ class DatabaseService {
   }
 
   /// 同 [reconcilePlanTombstones]，用於個人經文標記：書籤（`bookmark`）、
-  /// 稍後閱讀（`later`）、章節完成（`completion`）。同步下載＋套用墓碑後，
+  /// 稍後閱讀（`later`）、章節完成（`completion`）、螢光筆（`highlight`）、
+  /// 經文筆記（舊版整節 `note`／單則 `note_item`）。同步下載＋套用墓碑後，
   /// 本機活資料若比墓碑新（別台裝置刪除後，這台或另一台又重新加入），清掉該墓碑——
   /// 否則上傳時墓碑會把雲端較新的活資料刪掉，活資料與墓碑也不再互斥。
   /// 較舊或同時間的活資料已由 [applyTombstone] 刪掉，不受影響。單一 transaction。
@@ -1302,7 +1371,29 @@ class DatabaseService {
           WHERE 'b' || x.book_id || '_c' || x.chapter = tombstones.ref
             AND x.completed_at > tombstones.deleted_at)
       ''');
-      return a + b + c;
+      final h = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'highlight' AND EXISTS (
+          SELECT 1 FROM highlights x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      // 筆記：舊版整節墓碑（同節任一則較新）與單則墓碑（同身分較新）。
+      // 含最近刪除中的筆記：它們仍是本機資料，比墓碑新就表示墓碑已過時。
+      final n = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'note' AND EXISTS (
+          SELECT 1 FROM notes x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.updated_at > tombstones.deleted_at)
+      ''');
+      final ni = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'note_item' AND EXISTS (
+          SELECT 1 FROM notes x
+          WHERE 'n' || x.created_at = tombstones.ref
+            AND x.updated_at > tombstones.deleted_at)
+      ''');
+      return a + b + c + h + n + ni;
     });
   }
 
@@ -1596,6 +1687,14 @@ class DatabaseService {
         if (createdAt == null) return 0;
         removed = await db.delete(
           'todos',
+          where: 'created_at = ? AND updated_at <= ?',
+          whereArgs: [createdAt, deletedAt],
+        );
+      case 'note_item':
+        final createdAt = int.tryParse(ref.replaceFirst('n', ''));
+        if (createdAt == null) return 0;
+        removed = await db.delete(
+          'notes',
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
         );

@@ -10,6 +10,10 @@ import 'package:bible_app/services/database_service.dart';
 /// - 永久刪除（purgeNote）＝刪本體＋寫墓碑，必須同成同敗；
 /// - 存檔（saveNote / saveNoteFull）＝寫本體＋清墓碑，也必須同成同敗。
 ///
+/// 永久刪除寫的是**單則**墓碑（kind `note_item`，ref `n{created_at}`）：同一節可有多則
+/// 筆記共用同一個雲端 doc，整節墓碑會誤刪同節其他筆記。舊版 App 留下的整節墓碑
+/// （kind `note`，ref `b{book}_c{ch}_v{v}`）存檔時仍要清掉。
+///
 /// 失敗注入用真正的 SQLite trigger（RAISE ABORT）讓墓碑的 INSERT 或 DELETE 失敗。
 /// 舊實作（兩步、無 transaction）會留下「本機已刪、沒有墓碑」（下次同步雲端那則
 /// 被下載回來＝復活），或「活資料＋墓碑」並存（下次同步把剛存的筆記刪掉）。
@@ -46,13 +50,20 @@ void main() {
     BEGIN SELECT RAISE(ABORT, 'injected tombstone delete failure'); END
   ''');
 
-  Future<List<Map<String, Object?>>> noteTombstones() =>
-      db.query('tombstones', where: 'kind = ?', whereArgs: ['note']);
+  Future<List<Map<String, Object?>>> noteTombstones() => db.query('tombstones',
+      where: "kind IN ('note', 'note_item')", orderBy: 'kind, ref');
+
+  // 舊版 App 永久刪除時寫的整節墓碑。
+  Future<void> legacyVerseTombstone() =>
+      svc.upsertTombstone('note', 'b43_c3_v16', 1);
 
   Future<Map<String, Object?>?> row(int id) async {
     final rows = await db.query('notes', where: 'id = ?', whereArgs: [id]);
     return rows.isEmpty ? null : rows.first;
   }
+
+  Future<int> createdAtOf(int id) async =>
+      (await row(id))!['created_at'] as int;
 
   Future<int> trashedNote(int b, int c, int v, String content) async {
     final id = await svc.saveNoteFull(
@@ -63,6 +74,7 @@ void main() {
 
   test('永久刪除：墓碑寫入失敗時整筆回滾，筆記仍在最近刪除；重試同成', () async {
     final id = await trashedNote(43, 3, 16, '神愛世人');
+    final created = await createdAtOf(id);
     mutations = 0;
     await failTombstoneInsert();
 
@@ -75,12 +87,12 @@ void main() {
     expect(mutations, 0);
     expect((await svc.getDeletedNotes()).map((n) => n.id), [id]);
 
-    // 修復後重試：同成——本體刪除、墓碑 b43_c3_v16（同步會刪雲端、擋下載）。
+    // 修復後重試：同成——本體刪除、單則墓碑 n{created_at}（同步擋下載、改寫雲端 doc）。
     await db.execute('DROP TRIGGER fail_tomb_insert');
     await svc.purgeNote(id);
     expect(await row(id), isNull);
     final tombs = await noteTombstones();
-    expect(tombs.map((t) => t['ref']), ['b43_c3_v16']);
+    expect(tombs.map((t) => '${t['kind']}:${t['ref']}'), ['note_item:n$created']);
     expect(mutations, 1);
 
     // 再重試一次：已不存在 → no-op，不重寫墓碑時間、不觸發同步。
@@ -91,30 +103,36 @@ void main() {
     expect(mutations, 1);
   });
 
-  test('永久刪除：同一節還有別則筆記時不寫墓碑（避免同步誤刪那則）', () async {
+  test('永久刪除：只寫該則的單則墓碑，從不寫整節墓碑（同節其他筆記不受影響）', () async {
     final keep = await svc.saveNoteFull(
         const Note(bookId: 43, chapter: 3, verse: 16, content: '保留', createdAt: 0, updatedAt: 0));
     final gone = await trashedNote(43, 3, 16, '要永久刪除');
     final other = await trashedNote(1, 1, 1, '別節');
+    final keepCreated = await createdAtOf(keep);
+    final goneCreated = await createdAtOf(gone);
+    // 同一毫秒連續新增也不共用 created_at（它是跨裝置身分）。
+    expect(keepCreated, isNot(goneCreated));
 
     await svc.purgeNote(gone);
 
     expect(await row(gone), isNull);
     expect(await row(keep), isNotNull);
     expect(await row(other), isNotNull);
-    expect(await noteTombstones(), isEmpty);
+    expect((await noteTombstones()).map((t) => '${t['kind']}:${t['ref']}'),
+        ['note_item:n$goneCreated']);
 
-    // 同節最後一則也刪掉時才寫墓碑。
+    // 同節最後一則也刪掉：仍是單則墓碑。
     await svc.softDeleteNoteById(keep);
     await svc.purgeNote(keep);
-    expect((await noteTombstones()).map((t) => t['ref']), ['b43_c3_v16']);
+    expect((await noteTombstones()).map((t) => t['kind']).toSet(), {'note_item'});
+    expect((await noteTombstones()).map((t) => t['ref']).toSet(),
+        {'n$goneCreated', 'n$keepCreated'});
     expect(await row(other), isNotNull);
   });
 
   test('saveNote：清墓碑失敗時本體也不寫入，不會留下活資料＋墓碑並存', () async {
-    // 先有一則已永久刪除的筆記（留下墓碑）。
-    final id = await trashedNote(43, 3, 16, '舊');
-    await svc.purgeNote(id);
+    // 舊版 App 永久刪除過這節（留下整節墓碑）。
+    await legacyVerseTombstone();
     mutations = 0;
     await failTombstoneDelete();
 
@@ -133,8 +151,7 @@ void main() {
   });
 
   test('saveNoteFull：清墓碑失敗時新增與更新都回滾', () async {
-    final id = await trashedNote(43, 3, 16, '舊');
-    await svc.purgeNote(id);
+    await legacyVerseTombstone();
     await failTombstoneDelete();
 
     await expectLater(
@@ -188,6 +205,7 @@ void main() {
 
   test('正常永久刪除：只刪該則，其他筆記不受影響', () async {
     final a = await trashedNote(43, 3, 16, 'A');
+    final aCreated = await createdAtOf(a);
     final b = await svc.saveNoteFull(
         const Note(bookId: 19, chapter: 23, verse: 1, content: 'B', createdAt: 0, updatedAt: 0));
 
@@ -195,6 +213,6 @@ void main() {
 
     expect(await row(a), isNull);
     expect(await row(b), isNotNull);
-    expect((await noteTombstones()).map((t) => t['ref']), ['b43_c3_v16']);
+    expect((await noteTombstones()).map((t) => t['ref']), ['n$aCreated']);
   });
 }

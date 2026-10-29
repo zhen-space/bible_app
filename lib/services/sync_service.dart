@@ -27,6 +27,18 @@ class SyncService {
   String _refId(Map<String, dynamic> m) =>
       'b${m['book_id']}_c${m['chapter']}_v${m['verse'] ?? 0}';
 
+  /// 一個雲端筆記 doc 裡的各則筆記：新版 `notes` 陣列，或舊版頂層單則。
+  static List<Map<String, dynamic>> _noteEntries(Map<String, dynamic> doc) {
+    final list = doc['notes'];
+    if (list is List) {
+      return [
+        for (final e in list)
+          if (e is Map) Map<String, dynamic>.from(e),
+      ];
+    }
+    return [doc];
+  }
+
   /// 完整雙向同步，回傳訊息（顯示在 UI）。
   /// [onStep] 回報目前進行到哪一步（顯示在狀態列，方便診斷卡在哪）。
   Future<String> syncAll(String uid, {void Function(String step)? onStep}) async {
@@ -45,6 +57,7 @@ class SyncService {
     final tombB = await db.getTombstoneMap('bookmark');
     final tombH = await db.getTombstoneMap('highlight');
     final tombN = await db.getTombstoneMap('note');
+    final tombNI = await db.getTombstoneMap('note_item');
     final tombS = await db.getTombstoneMap('sermon');
     final tombP = await db.getTombstoneMap('prayer');
     final tombT = await db.getTombstoneMap('todo');
@@ -84,22 +97,30 @@ class SyncService {
           m['verse'] as int, m['color'] as int, m['created_at'] as int);
       downloaded++;
     }
+    // 經文筆記：雲端 doc 以節位為 id，同一節可有多則 → 新版 doc 帶 `notes` 陣列
+    // （每則一筆，以 created_at 為身分）；舊版 doc 只有頂層單則欄位。
     final cloudNotes = await _col(uid, 'notes').get();
+    final cloudNoteDocIds = <String>{};
     for (final d in cloudNotes.docs) {
-      final m = d.data();
-      final t = tombN[rref(m)];
-      if (t != null && t >= (m['updated_at'] as int)) continue;
-      await db.upsertNote(
-          m['book_id'] as int,
-          m['chapter'] as int,
-          m['verse'] as int,
-          m['content'] as String,
-          m['created_at'] as int,
-          m['updated_at'] as int,
-          tags: (m['tags'] as String?) ?? '',
-          title: (m['title'] as String?) ?? '',
-          refs: (m['refs'] as String?) ?? '');
-      downloaded++;
+      cloudNoteDocIds.add(d.id);
+      for (final m in _noteEntries(d.data())) {
+        final updatedAt = m['updated_at'] as int;
+        final t = tombN[rref(m)];
+        if (t != null && t >= updatedAt) continue;
+        final ti = tombNI[DatabaseService.noteItemRef(m['created_at'] as int)];
+        if (ti != null && ti >= updatedAt) continue;
+        await db.upsertNote(
+            m['book_id'] as int,
+            m['chapter'] as int,
+            m['verse'] as int,
+            m['content'] as String,
+            m['created_at'] as int,
+            updatedAt,
+            tags: (m['tags'] as String?) ?? '',
+            title: (m['title'] as String?) ?? '',
+            refs: (m['refs'] as String?) ?? '');
+        downloaded++;
+      }
     }
     final cloudLog = await _col(uid, 'reading_log').get();
     for (final d in cloudLog.docs) {
@@ -212,7 +233,7 @@ class SyncService {
     }
     // 計畫進度：活資料比墓碑新（他處重新勾選）→ 清墓碑，免得上傳時誤刪雲端活資料。
     await db.reconcilePlanTombstones();
-    // 書籤／稍後閱讀／章節完成：同理（較舊墓碑＋較新重新加入 → 清墓碑）。
+    // 書籤／稍後閱讀／章節完成／螢光筆／筆記：同理（較舊墓碑＋較新重新加入 → 清墓碑）。
     await db.reconcileMarkTombstones();
 
     onStep?.call('同步中…上傳到雲端');
@@ -249,11 +270,34 @@ class SyncService {
       uploaded++;
       await commitIfFull();
     }
+    // 經文筆記：同一節的所有筆記寫進同一個 doc 的 `notes` 陣列（不再互相覆蓋）；
+    // 頂層保留最新一則的欄位，讓舊版 App 照舊讀得到。
+    final notesByDoc = <String, List<Map<String, dynamic>>>{};
     for (final n in await db.getAllNotes()) {
       final m = n.toMap()..remove('id');
-      batch.set(_col(uid, 'notes').doc(_refId(m)), m);
+      (notesByDoc[_refId(m)] ??= []).add(m);
+    }
+    for (final e in notesByDoc.entries) {
+      final entries = e.value
+        ..sort((a, b) => (a['created_at'] as int).compareTo(b['created_at'] as int));
+      final newest = entries.reduce((a, b) =>
+          (b['updated_at'] as int) > (a['updated_at'] as int) ? b : a);
+      batch.set(_col(uid, 'notes').doc(e.key), {...newest, 'notes': entries});
       pending++;
       uploaded++;
+      await commitIfFull();
+    }
+    // 雲端有、本機這節已一則都沒有（下載時沒被墓碑擋下的都已合併進本機，
+    // 所以剩下的都是已刪除的）→ 刪掉整節 doc。只在最近刪除裡還有的節不動
+    // （最近刪除是本機 trash，不同步）。
+    final localNoteDocs = {
+      for (final n in await db.getDeletedNotes())
+        _refId(n.toMap()),
+      ...notesByDoc.keys,
+    };
+    for (final id in cloudNoteDocIds.difference(localNoteDocs)) {
+      batch.delete(_col(uid, 'notes').doc(id));
+      pending++;
       await commitIfFull();
     }
     for (final m in await db.getReadingLog()) {
@@ -340,6 +384,8 @@ class SyncService {
       'bookmark': 'bookmarks',
       'later': 'later',
       'highlight': 'highlights',
+      // 舊版整節墓碑：協調後仍留著＝這節沒有比它新的筆記 → 刪整節 doc。
+      // 單則墓碑 `note_item` 不在這裡：同節其他筆記仍在，doc 由上面改寫/刪除。
       'note': 'notes',
       'sermon': 'sermon_notes',
       'prayer': 'prayers',

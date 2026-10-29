@@ -183,7 +183,7 @@ void main() {
   }
 
   group('DB 層（真 SQLite）', () {
-    test('reconcileMarkTombstones：只清比活資料舊的墓碑；同時間或較新保留；不碰其他 kind',
+    test('reconcileMarkTombstones：只清比活資料舊的墓碑；同時間或較新保留；不碰非標記 kind',
         () async {
       final (d, s) = await openDevice();
       await d.insert('bookmarks',
@@ -206,15 +206,16 @@ void main() {
       await s.upsertTombstone('bookmark', 'b9_c9_v9', 2000); // 無活資料 → 留
       await s.upsertTombstone('later', 'b2_c1_v1', 4000); // 較新 → 留
       await s.upsertTombstone('completion', 'b3_c4', 1000); // 舊 → 清
-      await s.upsertTombstone('highlight', 'b1_c1_v1', 2000); // 非本輪 kind
+      await s.upsertTombstone('highlight', 'b1_c1_v1', 2000); // 舊 → 清
+      await s.upsertTombstone('todo', 't1', 1); // 不屬於標記 → 不碰
 
-      expect(await s.reconcileMarkTombstones(), 2);
+      expect(await s.reconcileMarkTombstones(), 3);
       final left = await d.query('tombstones', orderBy: 'kind, ref');
       expect(left.map((t) => '${t['kind']}:${t['ref']}'), [
         'bookmark:b1_c1_v2',
         'bookmark:b9_c9_v9',
-        'highlight:b1_c1_v1',
         'later:b2_c1_v1',
+        'todo:t1',
       ]);
       // 冪等
       expect(await s.reconcileMarkTombstones(), 0);
