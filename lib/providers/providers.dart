@@ -286,7 +286,7 @@ final chapterMarksProvider = FutureProvider.family<ChapterMarks,
   final db = ref.watch(databaseServiceProvider);
   final bookmarks = await db.getBookmarkedVerses(args.bookId, args.chapter);
   final highlights = await db.getChapterHighlights(args.bookId, args.chapter);
-  final notes = await db.getChapterNotes(args.bookId, args.chapter);
+  final notes = await db.getChapterNoteLists(args.bookId, args.chapter);
   final later = await db.getLaterVerses(args.bookId, args.chapter);
   return ChapterMarks(
       bookmarks: bookmarks, highlights: highlights, notes: notes, later: later);
@@ -295,7 +295,9 @@ final chapterMarksProvider = FutureProvider.family<ChapterMarks,
 class ChapterMarks {
   final Set<int> bookmarks;
   final Map<int, HighlightColor> highlights;
-  final Map<int, Note> notes;
+
+  /// 每節的全部筆記（同一節可有多則），最新在前。
+  final Map<int, List<Note>> notes;
   final Set<int> later;
 
   const ChapterMarks({

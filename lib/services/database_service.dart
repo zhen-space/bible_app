@@ -812,6 +812,36 @@ class DatabaseService {
     return {for (final r in rows) r['verse'] as int: Note.fromMap(r)};
   }
 
+  /// 某章每節的**全部**正常筆記（同一節可有多則），每節內最新（updated_at）在前。
+  /// 讀經頁用：顯示筆記數量與最新摘要，不會像 [getChapterNotes] 只留一則。
+  Future<Map<int, List<Note>>> getChapterNoteLists(
+      int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'notes',
+      where: 'book_id = ? AND chapter = ? AND deleted_at = 0',
+      whereArgs: [bookId, chapter],
+      orderBy: 'updated_at DESC, created_at DESC',
+    );
+    final out = <int, List<Note>>{};
+    for (final r in rows) {
+      out.putIfAbsent(r['verse'] as int, () => []).add(Note.fromMap(r));
+    }
+    return out;
+  }
+
+  /// 某一節的全部正常筆記，最新在前。
+  Future<List<Note>> getVerseNotes(int bookId, int chapter, int verse) async {
+    final db = await database;
+    final rows = await db.query(
+      'notes',
+      where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
+      whereArgs: [bookId, chapter, verse],
+      orderBy: 'updated_at DESC, created_at DESC',
+    );
+    return rows.map(Note.fromMap).toList();
+  }
+
   // ---- Reading log（讀經紀錄）----
 
   Future<void> markChapterRead(int bookId, int chapter) async {

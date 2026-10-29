@@ -15,6 +15,7 @@ import '../utils/share_utils.dart';
 import '../theme/app_theme.dart';
 import '../widgets/student_ux.dart';
 import 'search_screen.dart';
+import 'verse_notes_sheet.dart';
 
 /// 節註解「區塊標題」（annotation 呈現用，純函式，可測）：
 /// public → 「公開註釋」；church → 「[目前教會名] · 教會專屬」（無名時退回「教會」）。
@@ -672,7 +673,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         fontSize: fontSize,
                         highlight: marks.highlights[verseNo],
                         bookmarked: marks.bookmarks.contains(verseNo),
-                        hasNote: marks.notes.containsKey(verseNo),
+                        noteCount: marks.notes[verseNo]?.length ?? 0,
                         hasAnnotation: verseAnns.containsKey(verseNo),
                         speaking: speakingVerse == verseNo,
                         flashing: _flashVerse == verseNo,
@@ -1109,7 +1110,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final db = ref.read(databaseServiceProvider);
     final highlightLabels = ref.read(highlightLabelsProvider);
     final isBookmarked = marks.bookmarks.contains(verseNo);
-    final note = marks.notes[verseNo];
+    final verseNotes = marks.notes[verseNo] ?? const <Note>[];
     // 點開一律附英文（不受對照開關影響，需要英文已載入）——先確保載入
     ref.read(bibleRepositoryProvider).loadEnglish();
     final english = ref
@@ -1331,11 +1332,11 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     ),
                     quickAction(
                       Icons.edit_note,
-                      note == null ? '筆記' : '編輯筆記',
+                      verseNotes.isEmpty ? '筆記' : '筆記 ${verseNotes.length}',
                       marksKnown
                           ? () {
                               Navigator.pop(ctx);
-                              _showNoteEditor(book, verseNo, note);
+                              _openVerseNotes(book, verseNo, verseNotes);
                             }
                           : null,
                     ),
@@ -1358,6 +1359,24 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                     }),
                   ],
                 ),
+                // 我的筆記：數量＋最新一則摘要，點開看同節全部筆記。
+                if (marksKnown && verseNotes.isNotEmpty)
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                    leading: const Icon(Icons.sticky_note_2_outlined),
+                    title: Text('我的筆記 · ${verseNotes.length} 則'),
+                    subtitle: Text(
+                      '最新：${verseNoteSummary(verseNotes.first)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _openVerseNotes(book, verseNo, verseNotes);
+                    },
+                  ),
                 const SizedBox(height: 4),
                 TabBar(
                   labelStyle: Theme.of(ctx).textTheme.titleSmall,
@@ -1659,113 +1678,27 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     );
   }
 
-  void _showNoteEditor(Book book, int verseNo, Note? existing) {
-    final controller = TextEditingController(text: existing?.content ?? '');
-    final tagsController = TextEditingController(text: existing?.tags ?? '');
-    final db = ref.read(databaseServiceProvider);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          left: 16,
-          right: 16,
-          top: 16,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${book.name} $_chapter:$verseNo 筆記',
-                    style: Theme.of(ctx).textTheme.titleMedium,
-                  ),
-                ),
-                TextButton.icon(
-                  icon: const Icon(Icons.view_column_outlined, size: 18),
-                  label: const Text('三欄模板'),
-                  onPressed: () {
-                    // 觀察 / 相信 / 行動 三欄整理模板
-                    final t = controller.text;
-                    controller.text =
-                        '${t.isEmpty ? '' : '$t\n'}【觀察】\n\n【相信】\n\n【行動】\n';
-                    controller.selection = TextSelection.collapsed(
-                      offset: controller.text.indexOf('\n【相信】'),
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              maxLines: 5,
-              autofocus: true,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: '寫下你的想法…',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: tagsController,
-              maxLines: 1,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.tag, size: 18),
-                hintText: '標籤（空格分隔，例：信心 禱告）',
-                isDense: true,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (existing != null)
-                  TextButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      try {
-                        await db.deleteNote(_bookId, _chapter, verseNo);
-                      } finally {
-                        _refreshMarks();
-                      }
-                    },
-                    child: const Text('刪除'),
-                  ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: () async {
-                    final content = controller.text.trim();
-                    final tags = tagsController.text.trim();
-                    Navigator.pop(ctx);
-                    if (content.isEmpty) return;
-                    try {
-                      await db.saveNote(
-                        _bookId,
-                        _chapter,
-                        verseNo,
-                        content,
-                        tags: tags,
-                      );
-                    } finally {
-                      _refreshMarks();
-                    }
-                  },
-                  child: const Text('儲存'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
+  /// 這一節沒有筆記 → 直接開新增；有 → 開同節筆記清單（看全部／選一則編輯／刪除／新增）。
+  void _openVerseNotes(Book book, int verseNo, List<Note> notes) {
+    if (notes.isEmpty) {
+      showVerseNoteEditor(
+        context,
+        bookName: book.name,
+        bookId: _bookId,
+        chapter: _chapter,
+        verse: verseNo,
+        onChanged: _refreshMarks,
+      );
+    } else {
+      showVerseNotesSheet(
+        context,
+        bookName: book.name,
+        bookId: _bookId,
+        chapter: _chapter,
+        verse: verseNo,
+        onChanged: _refreshMarks,
+      );
+    }
   }
 }
 
@@ -1777,7 +1710,7 @@ class _VerseTile extends StatelessWidget {
   final double fontSize;
   final HighlightColor? highlight;
   final bool bookmarked;
-  final bool hasNote;
+  final int noteCount; // 這一節的經文筆記則數（同一節可有多則）
   final bool hasAnnotation;
   final bool speaking; // 目前 TTS 正朗讀到這一節
   final bool flashing; // 從搜尋/引用跳進來，短暫閃一下提示位置
@@ -1793,7 +1726,7 @@ class _VerseTile extends StatelessWidget {
     required this.fontSize,
     required this.highlight,
     required this.bookmarked,
-    required this.hasNote,
+    required this.noteCount,
     required this.hasAnnotation,
     required this.speaking,
     this.flashing = false,
@@ -1872,11 +1805,33 @@ class _VerseTile extends StatelessWidget {
                         child: Icon(Icons.bookmark, size: 16),
                       ),
                     ),
-                  if (hasNote)
-                    const WidgetSpan(
-                      child: Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Icon(Icons.sticky_note_2_outlined, size: 16),
+                  if (noteCount > 0)
+                    WidgetSpan(
+                      child: Semantics(
+                        label: '$noteCount 則筆記',
+                        child: ExcludeSemantics(
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  Icons.sticky_note_2_outlined,
+                                  size: 16,
+                                ),
+                                if (noteCount > 1)
+                                  Text(
+                                    '$noteCount',
+                                    style: TextStyle(
+                                      fontSize: fontSize * 0.6,
+                                      color: scheme.secondary,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                 ],
