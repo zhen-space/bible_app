@@ -58,13 +58,52 @@ class _SermonNotesScreenState extends ConsumerState<SermonNotesScreen> {
       ),
     );
     if (ok != true) return;
+    await _performDelete(valid);
+  }
+
+  /// 已確認後的刪除；重試走這裡，不再重複詢問。
+  Future<void> _performDelete(List<SermonNote> notes) async {
     final db = ref.read(databaseServiceProvider);
-    for (final n in valid) {
-      await db.deleteSermonNote(n.id!);
+    var deleted = 0;
+    var failed = false;
+    try {
+      for (final n in notes) {
+        await db.deleteSermonNote(n.id!);
+        deleted++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：刪到一半失敗時，畫面要反映實際還在的筆記，
+    // 不能假裝全部刪除（也不把例外丟回滑動手勢）。
     ref.invalidate(allSermonNotesProvider);
     ref.invalidate(statsProvider);
+    if (!mounted) return;
+    if (!failed) {
+      selection.cancel();
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未刪除的筆記；已刪的移出選取，計數才與畫面一致。
+    final remaining = notes.skip(deleted).toList();
+    if (selection.active) {
+      selection.selectAll(remaining.map((n) => n.id!));
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(
+            deleted == 0
+                ? '刪除失敗，證道筆記仍保留。'
+                : '只刪除了 $deleted / ${notes.length} 則，其餘仍保留。',
+          ),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _performDelete(remaining),
+          ),
+        ),
+      );
   }
 
   @override
@@ -342,7 +381,22 @@ class _SermonNoteEditorState extends ConsumerState<SermonNoteEditor> {
 
   Future<void> _delete() async {
     if (widget.existing?.id == null) return;
-    await ref.read(databaseServiceProvider).deleteSermonNote(widget.existing!.id!);
+    try {
+      await ref.read(databaseServiceProvider).deleteSermonNote(widget.existing!.id!);
+    } catch (_) {
+      // 刪除整筆回滾：留在編輯頁（輸入中的內容不丟），提示並可重試。
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            duration: const Duration(seconds: 8),
+            content: const Text('刪除失敗，證道筆記仍保留。'),
+            action: SnackBarAction(label: '重試', onPressed: _delete),
+          ),
+        );
+      return;
+    }
     ref.invalidate(allSermonNotesProvider);
     ref.invalidate(statsProvider);
     if (mounted) Navigator.pop(context);

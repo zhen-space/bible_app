@@ -162,6 +162,43 @@ void main() {
     });
   });
 
+  group('搜尋歷史', () {
+    test('可移除單筆並保留其他紀錄', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final container = ProviderContainer();
+      final history = container.read(searchHistoryProvider.notifier);
+
+      await history.add('平安');
+      await history.add('約3:16');
+      await history.remove('平安');
+
+      expect(container.read(searchHistoryProvider), ['約3:16']);
+      expect(
+        (await SharedPreferences.getInstance()).getStringList('search_history'),
+        ['約3:16'],
+      );
+      container.dispose();
+    });
+
+    test('移除最後一筆時會清除持久化紀錄', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      SharedPreferences.setMockInitialValues({});
+      final container = ProviderContainer();
+      final history = container.read(searchHistoryProvider.notifier);
+
+      await history.add('盼望');
+      await history.remove('盼望');
+
+      expect(container.read(searchHistoryProvider), isEmpty);
+      expect(
+        (await SharedPreferences.getInstance()).containsKey('search_history'),
+        false,
+      );
+      container.dispose();
+    });
+  });
+
   group('KnowledgeBase 解析', () {
     test('空 JSON → 全空、不炸', () {
       final kb = KnowledgeBase.fromJson({});

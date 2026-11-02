@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:sqflite/sqflite.dart'
-    show Database, ConflictAlgorithm, OpenDatabaseOptions;
+    show Database, DatabaseExecutor, ConflictAlgorithm, OpenDatabaseOptions;
 
 import '../models/models.dart';
 import 'db_factory_native.dart' if (dart.library.js_interop) 'db_factory_web.dart';
@@ -33,6 +33,10 @@ class DatabaseService {
   /// 用來對「既有使用者舊 schema → 最新」做真實 migration 整合測試。不改任何 production 行為。
   @visibleForTesting
   int get debugDbVersion => _dbVersion;
+
+  /// 測試專用：讓寫入方法直接使用測試提供的 [Database]（用於失敗注入測試）。
+  @visibleForTesting
+  void debugUseDatabase(Database db) => _db = db;
 
   @visibleForTesting
   Future<void> debugCreateAllTables(Database db) => _createAllTables(db);
@@ -252,7 +256,7 @@ class DatabaseService {
   String _rowRef(int bookId, int chapter, int verse) =>
       'b${bookId}_c${chapter}_v$verse';
 
-  Future<void> _tombstone(Database db, String kind, String ref) async {
+  Future<void> _tombstone(DatabaseExecutor db, String kind, String ref) async {
     await db.insert(
       'tombstones',
       {
@@ -264,7 +268,7 @@ class DatabaseService {
     );
   }
 
-  Future<void> _untomb(Database db, String kind, String ref) async {
+  Future<void> _untomb(DatabaseExecutor db, String kind, String ref) async {
     await db.delete('tombstones',
         where: 'kind = ? AND ref = ?', whereArgs: [kind, ref]);
   }
@@ -367,26 +371,68 @@ class DatabaseService {
 
   // ---- Bookmarks ----
 
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [deletePrayer]）。
+  /// 刪除時墓碑寫入失敗→刪除回滾，書籤保留，不會在下次同步從雲端復活；
+  /// 加入時清墓碑失敗→插入回滾，不會留下「有書籤又有墓碑」被同步刪掉。
   Future<void> toggleBookmark(int bookId, int chapter, int verse) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    final deleted = await db.delete(
-      'bookmarks',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (deleted == 0) {
-      await db.insert('bookmarks', {
+    await db.transaction((txn) async {
+      final deleted = await txn.delete(
+        'bookmarks',
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (deleted == 0) {
+        await txn.insert('bookmarks', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        await _untomb(txn, 'bookmark', ref); // 重新加入：清掉舊墓碑
+      } else {
+        await _tombstone(txn, 'bookmark', ref); // 刪除：記墓碑
+      }
+    });
+    _mutated();
+  }
+
+  /// 設定書籤為指定狀態（idempotent，重試安全）：已是該狀態就不動、不記墓碑。
+  /// 與 [toggleBookmark] 不同，重複呼叫不會把剛移除的書籤又加回來。
+  /// 加回時 created_at 用現在（同 toggle），才會比雲端墓碑新、不被同步刪掉。
+  Future<void> setBookmark(
+      int bookId, int chapter, int verse, bool bookmarked) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final changed = await db.transaction((txn) async {
+      if (!bookmarked) {
+        final deleted = await txn.delete(
+          'bookmarks',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'bookmark', ref);
+        return true;
+      }
+      final existing = await txn.query(
+        'bookmarks',
+        columns: ['id'],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (existing.isNotEmpty) return false;
+      await txn.insert('bookmarks', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
-      await _untomb(db, 'bookmark', ref); // 重新加入：清掉舊墓碑
-    } else {
-      await _tombstone(db, 'bookmark', ref); // 刪除：記墓碑
-    }
-    _mutated();
+      await _untomb(txn, 'bookmark', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   Future<List<Bookmark>> getAllBookmarks() async {
@@ -409,55 +455,81 @@ class DatabaseService {
   // ---- 稍後閱讀（Later）----
 
   /// 加入 / 移除「稍後閱讀」（切換）。
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [toggleBookmark]）。
+  /// 移除時墓碑寫入失敗→刪除回滾，待讀保留，不會在下次同步從雲端復活；
+  /// 加入時清墓碑失敗→插入回滾，不會留下「有待讀又有墓碑」被同步刪掉。
   Future<void> toggleLater(int bookId, int chapter, int verse) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    final deleted = await db.delete(
-      'later',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (deleted == 0) {
-      await db.insert('later', {
+    await db.transaction((txn) async {
+      final deleted = await txn.delete(
+        'later',
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (deleted == 0) {
+        await txn.insert('later', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': DateTime.now().millisecondsSinceEpoch,
+        });
+        await _untomb(txn, 'later', ref);
+      } else {
+        await _tombstone(txn, 'later', ref);
+      }
+    });
+    _mutated();
+  }
+
+  /// 設定「稍後閱讀」為指定狀態（idempotent，重試安全；同 [setBookmark]）。
+  /// 已是該狀態就不動：移除不存在的節不記新墓碑（避免蓋掉別台裝置尚未同步的待讀）；
+  /// 加入已存在的節不改 created_at。加回時 created_at 用現在，才會比雲端墓碑新、
+  /// 不被同步刪掉。若舊資料殘留「有待讀又有墓碑」，加入時順手清掉墓碑修復不變量。
+  Future<void> setLater(int bookId, int chapter, int verse, bool later) async {
+    final db = await database;
+    final ref = _rowRef(bookId, chapter, verse);
+    final changed = await db.transaction((txn) async {
+      if (!later) {
+        final deleted = await txn.delete(
+          'later',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'later', ref);
+        return true;
+      }
+      final existing = await txn.query(
+        'later',
+        columns: ['id'],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
+      );
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete('tombstones',
+            where: 'kind = ? AND ref = ?', whereArgs: ['later', ref]);
+        return cleared > 0;
+      }
+      await txn.insert('later', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
         'created_at': DateTime.now().millisecondsSinceEpoch,
       });
-      await _untomb(db, 'later', ref);
-    } else {
-      await _tombstone(db, 'later', ref);
-    }
-    _mutated();
+      await _untomb(txn, 'later', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
-  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。
-  Future<void> addLater(int bookId, int chapter, int verse) async {
-    final db = await database;
-    await db.insert(
-      'later',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-    await _untomb(db, 'later', _rowRef(bookId, chapter, verse));
-    _mutated();
-  }
+  /// 設定「稍後閱讀」（多選批次用；已存在則保留）。見 [setLater]。
+  Future<void> addLater(int bookId, int chapter, int verse) =>
+      setLater(bookId, chapter, verse, true);
 
-  Future<void> removeLater(int bookId, int chapter, int verse) async {
-    final db = await database;
-    await db.delete(
-      'later',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    await _tombstone(db, 'later', _rowRef(bookId, chapter, verse));
-    _mutated();
-  }
+  /// 移除「稍後閱讀」（不存在則不動、不記墓碑）。見 [setLater]。
+  Future<void> removeLater(int bookId, int chapter, int verse) =>
+      setLater(bookId, chapter, verse, false);
 
   Future<List<Bookmark>> getAllLater() async {
     final db = await database;
@@ -476,38 +548,35 @@ class DatabaseService {
     return rows.map((r) => r['verse'] as int).toSet();
   }
 
-  /// 雲端同步 upsert（已存在略過）。
+  /// 雲端同步 upsert（已存在則保留較新的 created_at，理由同 [upsertBookmark]）。
   Future<void> upsertLater(
-      int bookId, int chapter, int verse, int createdAt) async {
-    final db = await database;
-    await db.insert(
-      'later',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': createdAt,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
-  }
+          int bookId, int chapter, int verse, int createdAt) =>
+      _upsertVerseRowKeepNewer('later', bookId, chapter, verse, createdAt);
 
   // ---- Highlights ----
 
   /// 設定螢光筆顏色；color 為 null 表示移除。
+  /// 本體與墓碑在同一個 transaction：同成同敗（同 [toggleBookmark]）。
+  /// 移除時墓碑寫入失敗→刪除回滾，螢光筆保留，不會在下次同步從雲端復活；
+  /// 設色時清墓碑失敗→寫入回滾，不會留下「有螢光筆又有墓碑」被同步刪掉。
+  /// Idempotent（重試安全）：該節本來就沒有螢光筆時移除是 no-op，不記墓碑、
+  /// 不觸發同步——否則多餘的墓碑會在同步時蓋掉別台裝置較舊、尚未同步過來的同節螢光筆。
   Future<void> setHighlight(
       int bookId, int chapter, int verse, HighlightColor? color) async {
     final db = await database;
     final ref = _rowRef(bookId, chapter, verse);
-    if (color == null) {
-      await db.delete(
-        'highlights',
-        where: 'book_id = ? AND chapter = ? AND verse = ?',
-        whereArgs: [bookId, chapter, verse],
-      );
-      await _tombstone(db, 'highlight', ref);
-    } else {
-      await db.insert(
+    final changed = await db.transaction((txn) async {
+      if (color == null) {
+        final deleted = await txn.delete(
+          'highlights',
+          where: 'book_id = ? AND chapter = ? AND verse = ?',
+          whereArgs: [bookId, chapter, verse],
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'highlight', ref);
+        return true;
+      }
+      await txn.insert(
         'highlights',
         {
           'book_id': bookId,
@@ -518,9 +587,10 @@ class DatabaseService {
         },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      await _untomb(db, 'highlight', ref);
-    }
-    _mutated();
+      await _untomb(txn, 'highlight', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   Future<List<Highlight>> getAllHighlights() async {
@@ -545,125 +615,175 @@ class DatabaseService {
 
   // ---- Notes ----
 
+  /// 單則筆記的墓碑 ref（kind `note_item`）。筆記的跨裝置身分＝created_at
+  /// （同證道筆記／禱告／代辦）：同一節可有多則筆記、共用同一個雲端 doc
+  /// （`b{book}_c{ch}_v{v}`），刪一則不能用整節墓碑，否則會誤刪同節其他筆記。
+  static String noteItemRef(int createdAt) => 'n$createdAt';
+
+  /// 新筆記的 created_at：本機唯一（同一毫秒連續新增時往後推），因為它是身分。
+  Future<int> _uniqueNoteCreatedAt(DatabaseExecutor txn, int now) async {
+    var t = now;
+    while ((await txn.query('notes',
+            columns: ['id'], where: 'created_at = ?', whereArgs: [t], limit: 1))
+        .isNotEmpty) {
+      t++;
+    }
+    return t;
+  }
+
+  /// 存檔時清掉這則筆記可能的墓碑（整節舊墓碑＋單則墓碑），維持互斥不變量。
+  Future<void> _untombNote(DatabaseExecutor txn, int bookId, int chapter,
+      int verse, int createdAt) async {
+    await _untomb(txn, 'note', _rowRef(bookId, chapter, verse));
+    await _untomb(txn, 'note_item', noteItemRef(createdAt));
+  }
+
   /// 逐節快速筆記（Reader/單節面板用）：以錨點 (book,chapter,verse) upsert。
   /// **不動** title/refs（保留 v2 欄位不被簡易編輯清掉）；會清軟刪除旗標。
+  /// 寫入與清墓碑在同一個交易：不會留下「活資料＋墓碑」並存（下次同步會被刪掉）。
   Future<void> saveNote(int bookId, int chapter, int verse, String content,
       {String tags = ''}) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final existing = await db.query(
-      'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (existing.isEmpty) {
-      await db.insert('notes', {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'content': content,
-        'tags': tags,
-        'created_at': now,
-        'updated_at': now,
-      });
-    } else {
-      await db.update(
+    await db.transaction((txn) async {
+      final existing = await txn.query(
         'notes',
-        {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
-        where: 'id = ?',
-        whereArgs: [existing.first['id']],
+        where: 'book_id = ? AND chapter = ? AND verse = ?',
+        whereArgs: [bookId, chapter, verse],
       );
-    }
-    await _untomb(db, 'note', _rowRef(bookId, chapter, verse));
+      final int createdAt;
+      if (existing.isEmpty) {
+        createdAt = await _uniqueNoteCreatedAt(txn, now);
+        await txn.insert('notes', {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'content': content,
+          'tags': tags,
+          'created_at': createdAt,
+          'updated_at': now,
+        });
+      } else {
+        createdAt = existing.first['created_at'] as int;
+        await txn.update(
+          'notes',
+          {'content': content, 'tags': tags, 'deleted_at': 0, 'updated_at': now},
+          where: 'id = ?',
+          whereArgs: [existing.first['id']],
+        );
+      }
+      await _untombNote(txn, bookId, chapter, verse, createdAt);
+    });
     _mutated();
   }
 
   /// Notes v2 完整存檔（含標題/額外引用/標籤）。id 為 null＝新增，回傳 id。
+  /// 寫入與清墓碑同一個交易（理由同 [saveNote]）。
   Future<int> saveNoteFull(Note note) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (note.id == null) {
-      final id = await db.insert('notes', {
-        'book_id': note.bookId,
-        'chapter': note.chapter,
-        'verse': note.verse,
-        'title': note.title,
-        'content': note.content,
-        'tags': note.tags,
-        'refs': note.refs.join(','),
-        'deleted_at': 0,
-        'created_at': now,
-        'updated_at': now,
-      });
-      await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
-      _mutated();
-      return id;
-    }
-    await db.update(
-      'notes',
-      {
-        'book_id': note.bookId,
-        'chapter': note.chapter,
-        'verse': note.verse,
-        'title': note.title,
-        'content': note.content,
-        'tags': note.tags,
-        'refs': note.refs.join(','),
-        'deleted_at': 0,
-        'updated_at': now,
-      },
-      where: 'id = ?',
-      whereArgs: [note.id],
-    );
-    await _untomb(db, 'note', _rowRef(note.bookId, note.chapter, note.verse));
+    final ref = _rowRef(note.bookId, note.chapter, note.verse);
+    final id = await db.transaction((txn) async {
+      if (note.id == null) {
+        final createdAt = await _uniqueNoteCreatedAt(txn, now);
+        final id = await txn.insert('notes', {
+          'book_id': note.bookId,
+          'chapter': note.chapter,
+          'verse': note.verse,
+          'title': note.title,
+          'content': note.content,
+          'tags': note.tags,
+          'refs': note.refs.join(','),
+          'deleted_at': 0,
+          'created_at': createdAt,
+          'updated_at': now,
+        });
+        await _untombNote(
+            txn, note.bookId, note.chapter, note.verse, createdAt);
+        return id;
+      }
+      final cur = await txn.query('notes',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [note.id]);
+      await txn.update(
+        'notes',
+        {
+          'book_id': note.bookId,
+          'chapter': note.chapter,
+          'verse': note.verse,
+          'title': note.title,
+          'content': note.content,
+          'tags': note.tags,
+          'refs': note.refs.join(','),
+          'deleted_at': 0,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [note.id],
+      );
+      await _untomb(txn, 'note', ref);
+      if (cur.isNotEmpty) {
+        await _untomb(
+            txn, 'note_item', noteItemRef(cur.first['created_at'] as int));
+      }
+      return note.id!;
+    });
     _mutated();
-    return note.id!;
+    return id;
   }
 
   /// 軟刪除到「最近刪除」（不寫墓碑；真正刪除走 purgeNote）。
+  /// 單一 UPDATE；已在最近刪除就不重寫、不觸發同步（重試安全）。
   Future<void> deleteNote(int bookId, int chapter, int verse) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.update(
+    final n = await db.update(
       'notes',
       {'deleted_at': now, 'updated_at': now},
       where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
       whereArgs: [bookId, chapter, verse],
     );
-    _mutated();
+    if (n > 0) _mutated();
   }
 
+  /// 依 id 軟刪除。已在最近刪除（或不存在）就什麼都不做：重試不會把
+  /// deleted_at 往後推，也不觸發同步。
   Future<void> softDeleteNoteById(int id) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await db.update('notes', {'deleted_at': now, 'updated_at': now},
-        where: 'id = ?', whereArgs: [id]);
-    _mutated();
+    final n = await db.update('notes', {'deleted_at': now, 'updated_at': now},
+        where: 'id = ? AND deleted_at = 0', whereArgs: [id]);
+    if (n > 0) _mutated();
   }
 
+  /// 從最近刪除還原。已還原（或不存在）就什麼都不做（重試安全）。
   Future<void> restoreNote(int id) async {
     final db = await database;
-    await db.update(
+    final n = await db.update(
         'notes',
         {'deleted_at': 0, 'updated_at': DateTime.now().millisecondsSinceEpoch},
-        where: 'id = ?', whereArgs: [id]);
-    _mutated();
+        where: 'id = ? AND deleted_at > 0', whereArgs: [id]);
+    if (n > 0) _mutated();
   }
 
   /// 從「最近刪除」永久刪除（寫墓碑，同步刪除）。
+  ///
+  /// 查詢、刪除、寫墓碑在同一個交易：墓碑寫入失敗時整筆回滾、筆記仍在最近刪除，
+  /// 不會出現「本機已刪但沒墓碑 → 下次同步從雲端下載回來」。已不存在就什麼都不做
+  /// （重試安全）。墓碑是**單則**（`note_item`，ref＝`n{created_at}`），不是整節：
+  /// 同一節的其他筆記（含別台裝置尚未同步過來、這台沒見過的）不受影響。
+  /// 雲端整節 doc 在同步上傳時改寫成剩下的筆記，或在這節已無筆記時刪掉。
   Future<void> purgeNote(int id) async {
     final db = await database;
-    final rows = await db.query('notes',
-        columns: ['book_id', 'chapter', 'verse'],
-        where: 'id = ?',
-        whereArgs: [id]);
-    await db.delete('notes', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      final r = rows.first;
-      await _tombstone(db, 'note',
-          _rowRef(r['book_id'] as int, r['chapter'] as int, r['verse'] as int));
-    }
-    _mutated();
+    final removed = await db.transaction((txn) async {
+      final rows = await txn.query('notes',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      if (rows.isEmpty) return false;
+      await txn.delete('notes', where: 'id = ?', whereArgs: [id]);
+      await _tombstone(
+          txn, 'note_item', noteItemRef(rows.first['created_at'] as int));
+      return true;
+    });
+    if (removed) _mutated();
   }
 
   /// 全部正常（未軟刪除）筆記。
@@ -690,6 +810,36 @@ class DatabaseService {
       whereArgs: [bookId, chapter],
     );
     return {for (final r in rows) r['verse'] as int: Note.fromMap(r)};
+  }
+
+  /// 某章每節的**全部**正常筆記（同一節可有多則），每節內最新（updated_at）在前。
+  /// 讀經頁用：顯示筆記數量與最新摘要，不會像 [getChapterNotes] 只留一則。
+  Future<Map<int, List<Note>>> getChapterNoteLists(
+      int bookId, int chapter) async {
+    final db = await database;
+    final rows = await db.query(
+      'notes',
+      where: 'book_id = ? AND chapter = ? AND deleted_at = 0',
+      whereArgs: [bookId, chapter],
+      orderBy: 'updated_at DESC, created_at DESC',
+    );
+    final out = <int, List<Note>>{};
+    for (final r in rows) {
+      out.putIfAbsent(r['verse'] as int, () => []).add(Note.fromMap(r));
+    }
+    return out;
+  }
+
+  /// 某一節的全部正常筆記，最新在前。
+  Future<List<Note>> getVerseNotes(int bookId, int chapter, int verse) async {
+    final db = await database;
+    final rows = await db.query(
+      'notes',
+      where: 'book_id = ? AND chapter = ? AND verse = ? AND deleted_at = 0',
+      whereArgs: [bookId, chapter, verse],
+      orderBy: 'updated_at DESC, created_at DESC',
+    );
+    return rows.map(Note.fromMap).toList();
   }
 
   // ---- Reading log（讀經紀錄）----
@@ -723,33 +873,74 @@ class DatabaseService {
 
   // ---- 章節完成（Chapter Completion，使用者主動確認）----
 
-  /// 標記某章為「已完成」（主動確認）。
-  Future<void> markChapterComplete(int bookId, int chapter) async {
+  /// 設定某章「已完成」為 [complete]（主動確認；idempotent）。
+  ///
+  /// 本體（chapter_completions）與刪除紀錄（`completion` 墓碑）在**同一個 transaction**
+  /// 寫入，同成同敗：失敗時兩邊都不動、不觸發 [onMutate]，可安全重試。
+  /// - 取消：本來就沒完成 → 不動、不記新墓碑（避免新墓碑蓋掉別台裝置尚未同步的完成）。
+  /// - 完成：已完成且無墓碑 → 不動、不改 completed_at；舊資料「完成＋墓碑」並存 →
+  ///   清墓碑並把 completed_at 更新為現在（雲端墓碑套用條件是 completed_at <= deleted_at，
+  ///   不更新的話下次同步會把剛確認的完成刪掉）。
+  Future<void> setChapterComplete(
+    int bookId,
+    int chapter,
+    bool complete,
+  ) async {
     final db = await database;
-    await db.insert(
-      'chapter_completions',
-      {
+    final ref = _completionRef(bookId, chapter);
+    const where = 'book_id = ? AND chapter = ?';
+    final args = [bookId, chapter];
+    final changed = await db.transaction((txn) async {
+      if (!complete) {
+        final deleted = await txn.delete(
+          'chapter_completions',
+          where: where,
+          whereArgs: args,
+        );
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'completion', ref);
+        return true;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final existing = await txn.query(
+        'chapter_completions',
+        columns: ['book_id'],
+        where: where,
+        whereArgs: args,
+      );
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete(
+          'tombstones',
+          where: 'kind = ? AND ref = ?',
+          whereArgs: ['completion', ref],
+        );
+        if (cleared == 0) return false;
+        await txn.update(
+          'chapter_completions',
+          {'completed_at': now},
+          where: where,
+          whereArgs: args,
+        );
+        return true;
+      }
+      await txn.insert('chapter_completions', {
         'book_id': bookId,
         'chapter': chapter,
-        'completed_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    await _untomb(db, 'completion', _completionRef(bookId, chapter));
-    _mutated();
+        'completed_at': now,
+      });
+      await _untomb(txn, 'completion', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
-  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。
-  Future<void> unmarkChapterComplete(int bookId, int chapter) async {
-    final db = await database;
-    await db.delete(
-      'chapter_completions',
-      where: 'book_id = ? AND chapter = ?',
-      whereArgs: [bookId, chapter],
-    );
-    await _tombstone(db, 'completion', _completionRef(bookId, chapter));
-    _mutated();
-  }
+  /// 標記某章為「已完成」。見 [setChapterComplete]。
+  Future<void> markChapterComplete(int bookId, int chapter) =>
+      setChapterComplete(bookId, chapter, true);
+
+  /// 取消某章的「已完成」標記（記墓碑供同步刪除）。見 [setChapterComplete]。
+  Future<void> unmarkChapterComplete(int bookId, int chapter) =>
+      setChapterComplete(bookId, chapter, false);
 
   String _completionRef(int bookId, int chapter) => 'b${bookId}_c$chapter';
 
@@ -821,20 +1012,37 @@ class DatabaseService {
 
   // ---- 雲端同步用 upsert（last-write-wins 合併）----
 
-  /// 書籤：已存在就略過（書籤沒有內容可比新舊）。
+  /// 書籤：已存在就保留較新的 created_at（書籤沒有內容可比，時間即 LWW 依據）。
+  /// 不可沿用本機較舊的時間：否則較舊的雲端墓碑會刪掉它，上傳時再把雲端
+  /// 較新的重新加入一併刪掉。
   Future<void> upsertBookmark(
-      int bookId, int chapter, int verse, int createdAt) async {
+          int bookId, int chapter, int verse, int createdAt) =>
+      _upsertVerseRowKeepNewer('bookmarks', bookId, chapter, verse, createdAt);
+
+  /// 書籤／稍後閱讀共用：新增或把 created_at 推進到較新的值（單一 transaction）。
+  Future<void> _upsertVerseRowKeepNewer(
+      String table, int bookId, int chapter, int verse, int createdAt) async {
     final db = await database;
-    await db.insert(
-      'bookmarks',
-      {
-        'book_id': bookId,
-        'chapter': chapter,
-        'verse': verse,
-        'created_at': createdAt,
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.transaction((txn) async {
+      final inserted = await txn.insert(
+        table,
+        {
+          'book_id': bookId,
+          'chapter': chapter,
+          'verse': verse,
+          'created_at': createdAt,
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      if (inserted > 0) return;
+      await txn.update(
+        table,
+        {'created_at': createdAt},
+        where:
+            'book_id = ? AND chapter = ? AND verse = ? AND created_at < ?',
+        whereArgs: [bookId, chapter, verse, createdAt],
+      );
+    });
   }
 
   /// 螢光筆：以 created_at 較新者為準。
@@ -863,18 +1071,72 @@ class DatabaseService {
     );
   }
 
-  /// 筆記：以 updated_at 較新者為準。
+  /// 筆記（雲端 → 本地合併）：以 **created_at 為身分**、updated_at 較新者為準。
+  ///
+  /// 同一節可有多則筆記（共用雲端 doc），所以不能像舊版那樣「同節第一則」就覆蓋——
+  /// 那會把別則筆記的內容蓋掉。對不到身分時：同節若有標題／內容／標籤／引用完全相同的
+  /// 筆記（舊版同步把兩台各自的筆記合併成同一份內容、但 created_at 不同），視為同一則，
+  /// 兩邊都收斂到較早的 created_at，避免升級後重複；否則新增為另一則。
+  /// 對到身分且雲端較新 → 更新內容與錨點（錨點可能在別台被改）；不動本機軟刪除狀態。
+  /// 單一 transaction。
   Future<void> upsertNote(int bookId, int chapter, int verse, String content,
       int createdAt, int updatedAt,
       {String tags = '', String title = '', String refs = ''}) async {
     final db = await database;
-    final existing = await db.query(
-      'notes',
-      where: 'book_id = ? AND chapter = ? AND verse = ?',
-      whereArgs: [bookId, chapter, verse],
-    );
-    if (existing.isEmpty) {
-      await db.insert('notes', {
+    await db.transaction((txn) async {
+      final byId = await txn.query('notes',
+          where: 'created_at = ?', whereArgs: [createdAt]);
+      if (byId.isNotEmpty) {
+        final row = byId.firstWhere(
+            (r) =>
+                r['book_id'] == bookId &&
+                r['chapter'] == chapter &&
+                r['verse'] == verse,
+            orElse: () => byId.first);
+        if ((row['updated_at'] as int) < updatedAt) {
+          await txn.update(
+            'notes',
+            {
+              'book_id': bookId,
+              'chapter': chapter,
+              'verse': verse,
+              'title': title,
+              'content': content,
+              'tags': tags,
+              'refs': refs,
+              'updated_at': updatedAt,
+            },
+            where: 'id = ?',
+            whereArgs: [row['id']],
+          );
+        }
+        return;
+      }
+      final same = await txn.query(
+        'notes',
+        where: 'book_id = ? AND chapter = ? AND verse = ? AND title = ? '
+            'AND content = ? AND tags = ? AND refs = ?',
+        whereArgs: [bookId, chapter, verse, title, content, tags, refs],
+        orderBy: 'created_at',
+        limit: 1,
+      );
+      if (same.isNotEmpty) {
+        final row = same.first;
+        final localCreated = row['created_at'] as int;
+        await txn.update(
+          'notes',
+          {
+            if (createdAt < localCreated) 'created_at': createdAt,
+            'updated_at': updatedAt > (row['updated_at'] as int)
+                ? updatedAt
+                : row['updated_at'],
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        return;
+      }
+      await txn.insert('notes', {
         'book_id': bookId,
         'chapter': chapter,
         'verse': verse,
@@ -885,20 +1147,7 @@ class DatabaseService {
         'created_at': createdAt,
         'updated_at': updatedAt,
       });
-    } else if ((existing.first['updated_at'] as int) < updatedAt) {
-      await db.update(
-        'notes',
-        {
-          'title': title,
-          'content': content,
-          'tags': tags,
-          'refs': refs,
-          'updated_at': updatedAt
-        },
-        where: 'id = ?',
-        whereArgs: [existing.first['id']],
-      );
-    }
+    });
   }
 
   // ---- 主日／證道筆記 ----
@@ -933,15 +1182,19 @@ class DatabaseService {
     return note.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗（同 [deletePrayer]）。
+  /// 墓碑寫入失敗時本體刪除一併回滾，筆記保留、可重試，不會在下次同步從雲端復活。
   Future<void> deleteSermonNote(int id) async {
     final db = await database;
-    // 先取 created_at（雲端 doc id = s{createdAt}）再刪，才能記正確墓碑
-    final rows = await db.query('sermon_notes',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'sermon', 's${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      // 先取 created_at（雲端 doc id = s{createdAt}）再刪，才能記正確墓碑
+      final rows = await txn.query('sermon_notes',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('sermon_notes', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'sermon', 's${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
@@ -1032,34 +1285,154 @@ class DatabaseService {
     return {for (final r in rows) r['plan_id'] as String: r['c'] as int};
   }
 
-  /// 勾選/取消單一讀經項目（章）。取消＝本地刪除（同 plan_progress 慣例，無墓碑）。
+  /// 勾選/取消單一讀經項目（章）。見 [setPlanItemsDone]。
   Future<void> setPlanItemDone(
       String planId, int day, int bookId, int chapter, bool done,
-      {String itemId = '', int planVersion = 1}) async {
+      {String itemId = '', int planVersion = 1}) =>
+      setPlanItemsDone(
+          planId, [PlanItemTarget(day, bookId, chapter, itemId: itemId)], done,
+          planVersion: planVersion);
+
+  /// 把多個讀經項目設為 [done]（目標狀態，idempotent；整天勾選也走這裡）。
+  ///
+  /// 進度本體（plan_item_progress）與刪除紀錄（`plan_item` 墓碑）在**同一個
+  /// transaction** 寫入，所有項目同成同敗：失敗時全部不動、不觸發 [onMutate]，
+  /// 可用同一個目標狀態安全重試。
+  /// - 取消：本來就沒勾 → 不動、不記新墓碑（避免新墓碑蓋掉別台裝置尚未同步的勾選）。
+  /// - 勾選：已勾且無墓碑 → 不動、不改 done_at；舊資料「勾選＋墓碑」並存 → 清墓碑並把
+  ///   done_at 更新為現在（雲端墓碑套用條件是 done_at <= deleted_at）。
+  /// 回傳實際變動的項目數。
+  Future<int> setPlanItemsDone(
+      String planId, List<PlanItemTarget> items, bool done,
+      {int planVersion = 1}) async {
     final db = await database;
-    if (done) {
-      await db.insert(
-        'plan_item_progress',
-        {
+    const where = 'plan_id = ? AND book_id = ? AND chapter = ?';
+    final changed = await db.transaction((txn) async {
+      var n = 0;
+      final now = DateTime.now().millisecondsSinceEpoch;
+      for (final it in items) {
+        final args = [planId, it.bookId, it.chapter];
+        final ref = planItemRef(planId, it.bookId, it.chapter);
+        if (!done) {
+          final deleted = await txn.delete('plan_item_progress',
+              where: where, whereArgs: args);
+          if (deleted == 0) continue;
+          await _tombstone(txn, 'plan_item', ref);
+          n++;
+          continue;
+        }
+        final existing = await txn.query('plan_item_progress',
+            columns: ['plan_id'], where: where, whereArgs: args);
+        if (existing.isNotEmpty) {
+          final cleared = await txn.delete('tombstones',
+              where: 'kind = ? AND ref = ?', whereArgs: ['plan_item', ref]);
+          if (cleared == 0) continue;
+          await txn.update('plan_item_progress', {'done_at': now},
+              where: where, whereArgs: args);
+          n++;
+          continue;
+        }
+        await txn.insert('plan_item_progress', {
           'plan_id': planId,
           'plan_version': planVersion,
-          'book_id': bookId,
-          'chapter': chapter,
-          'day': day,
-          'item_id': itemId,
-          'done_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    } else {
-      await db.delete(
-        'plan_item_progress',
-        where: 'plan_id = ? AND book_id = ? AND chapter = ?',
-        whereArgs: [planId, bookId, chapter],
-      );
-    }
-    _mutated();
+          'book_id': it.bookId,
+          'chapter': it.chapter,
+          'day': it.day,
+          'item_id': it.itemId,
+          'done_at': now,
+        });
+        await _untomb(txn, 'plan_item', ref);
+        n++;
+      }
+      return n;
+    });
+    if (changed > 0) _mutated();
+    return changed;
   }
+
+  /// 同步合併後收斂讀經計畫的墓碑不變量：活資料比墓碑新（別台裝置取消後又重新勾選）
+  /// 就清掉該墓碑——否則上傳時墓碑會把雲端的活資料刪掉。單一 transaction。
+  Future<int> reconcilePlanTombstones() async {
+    final db = await database;
+    final removed = await db.transaction((txn) async {
+      final a = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'plan_item' AND EXISTS (
+          SELECT 1 FROM plan_item_progress p
+          WHERE p.plan_id || '_b' || p.book_id || '_c' || p.chapter = tombstones.ref
+            AND p.done_at > tombstones.deleted_at)
+      ''');
+      final b = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'plan_day' AND EXISTS (
+          SELECT 1 FROM plan_progress p
+          WHERE p.plan_id || '_d' || p.day = tombstones.ref
+            AND p.done_at > tombstones.deleted_at)
+      ''');
+      return a + b;
+    });
+    return removed;
+  }
+
+  /// 同 [reconcilePlanTombstones]，用於個人經文標記：書籤（`bookmark`）、
+  /// 稍後閱讀（`later`）、章節完成（`completion`）、螢光筆（`highlight`）、
+  /// 經文筆記（舊版整節 `note`／單則 `note_item`）。同步下載＋套用墓碑後，
+  /// 本機活資料若比墓碑新（別台裝置刪除後，這台或另一台又重新加入），清掉該墓碑——
+  /// 否則上傳時墓碑會把雲端較新的活資料刪掉，活資料與墓碑也不再互斥。
+  /// 較舊或同時間的活資料已由 [applyTombstone] 刪掉，不受影響。單一 transaction。
+  Future<int> reconcileMarkTombstones() async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final a = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'bookmark' AND EXISTS (
+          SELECT 1 FROM bookmarks x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      final b = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'later' AND EXISTS (
+          SELECT 1 FROM later x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      final c = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'completion' AND EXISTS (
+          SELECT 1 FROM chapter_completions x
+          WHERE 'b' || x.book_id || '_c' || x.chapter = tombstones.ref
+            AND x.completed_at > tombstones.deleted_at)
+      ''');
+      final h = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'highlight' AND EXISTS (
+          SELECT 1 FROM highlights x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.created_at > tombstones.deleted_at)
+      ''');
+      // 筆記：舊版整節墓碑（同節任一則較新）與單則墓碑（同身分較新）。
+      // 含最近刪除中的筆記：它們仍是本機資料，比墓碑新就表示墓碑已過時。
+      final n = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'note' AND EXISTS (
+          SELECT 1 FROM notes x
+          WHERE 'b' || x.book_id || '_c' || x.chapter || '_v' || x.verse
+                = tombstones.ref
+            AND x.updated_at > tombstones.deleted_at)
+      ''');
+      final ni = await txn.rawDelete('''
+        DELETE FROM tombstones WHERE kind = 'note_item' AND EXISTS (
+          SELECT 1 FROM notes x
+          WHERE 'n' || x.created_at = tombstones.ref
+            AND x.updated_at > tombstones.deleted_at)
+      ''');
+      return a + b + c + h + n + ni;
+    });
+  }
+
+  /// 計畫項目的墓碑 ref（＝雲端 `plan_item_progress` doc id，與 sync_service 一致）。
+  static String planItemRef(String planId, int bookId, int chapter) =>
+      '${planId}_b${bookId}_c$chapter';
+
+  /// 舊版整天進度的墓碑 ref（＝雲端 `plan_progress` doc id）。
+  static String planDayRef(String planId, int day) => '${planId}_d$day';
 
   Future<List<Map<String, dynamic>>> getAllPlanItemProgress() async {
     final db = await database;
@@ -1076,6 +1449,12 @@ class DatabaseService {
     final already = await db.query('plan_item_progress',
         where: 'plan_id = ?', whereArgs: [planId], limit: 1);
     if (already.isNotEmpty) return 0; // 已有 v2 進度，不覆蓋
+    // 曾在 v2 取消過項目（有 plan_item 墓碑）＝使用者已在用 v2：
+    // 全部取消後不可再從舊版整天進度種回來（否則取消的進度會復活）。
+    final itemTombs = await getTombstoneMap('plan_item');
+    if (itemTombs.keys.any((r) => parsePlanItemRef(r)?.planId == planId)) {
+      return 0;
+    }
     final doneDays = await getPlanProgress(planId);
     if (doneDays.isEmpty) return 0;
     var seeded = 0;
@@ -1130,27 +1509,38 @@ class DatabaseService {
     );
   }
 
-  /// 勾選/取消某一天（整天為單位；v1 相容保留）。
+  /// 勾選/取消某一天（整天為單位；v1 相容保留）。目標狀態、idempotent；
+  /// 本體與 `plan_day` 墓碑同一個 transaction（語意同 [setPlanItemsDone]）。
   Future<void> setPlanDayDone(String planId, int day, bool done) async {
     final db = await database;
-    if (done) {
-      await db.insert(
-        'plan_progress',
-        {
-          'plan_id': planId,
-          'day': day,
-          'done_at': DateTime.now().millisecondsSinceEpoch,
-        },
-        conflictAlgorithm: ConflictAlgorithm.replace,
-      );
-    } else {
-      await db.delete(
-        'plan_progress',
-        where: 'plan_id = ? AND day = ?',
-        whereArgs: [planId, day],
-      );
-    }
-    _mutated();
+    const where = 'plan_id = ? AND day = ?';
+    final args = [planId, day];
+    final ref = planDayRef(planId, day);
+    final changed = await db.transaction((txn) async {
+      if (!done) {
+        final deleted =
+            await txn.delete('plan_progress', where: where, whereArgs: args);
+        if (deleted == 0) return false;
+        await _tombstone(txn, 'plan_day', ref);
+        return true;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final existing = await txn.query('plan_progress',
+          columns: ['day'], where: where, whereArgs: args);
+      if (existing.isNotEmpty) {
+        final cleared = await txn.delete('tombstones',
+            where: 'kind = ? AND ref = ?', whereArgs: ['plan_day', ref]);
+        if (cleared == 0) return false;
+        await txn.update('plan_progress', {'done_at': now},
+            where: where, whereArgs: args);
+        return true;
+      }
+      await txn.insert(
+          'plan_progress', {'plan_id': planId, 'day': day, 'done_at': now});
+      await _untomb(txn, 'plan_day', ref);
+      return true;
+    });
+    if (changed) _mutated();
   }
 
   // ---- 禱告事項 ----
@@ -1186,14 +1576,18 @@ class DatabaseService {
     return p.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗（同 [deleteTodo]）。
+  /// 墓碑寫入失敗時本體刪除一併回滾，禱告保留、可重試，不會在下次同步從雲端復活。
   Future<void> deletePrayer(int id) async {
     final db = await database;
-    final rows = await db.query('prayers',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('prayers', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'prayer', 'p${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.query('prayers',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('prayers', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'prayer', 'p${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
@@ -1225,14 +1619,19 @@ class DatabaseService {
     return t.id!;
   }
 
+  /// 刪除本體與寫墓碑在同一個 transaction：同成同敗。
+  /// 若墓碑寫入失敗，本體刪除一併回滾（本機資料保留、可重試），
+  /// 不會出現「本機已刪、沒有墓碑 → 下次同步雲端資料復活」。
   Future<void> deleteTodo(int id) async {
     final db = await database;
-    final rows = await db.query('todos',
-        columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
-    await db.delete('todos', where: 'id = ?', whereArgs: [id]);
-    if (rows.isNotEmpty) {
-      await _tombstone(db, 'todo', 't${rows.first['created_at']}');
-    }
+    await db.transaction((txn) async {
+      final rows = await txn.query('todos',
+          columns: ['created_at'], where: 'id = ?', whereArgs: [id]);
+      await txn.delete('todos', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await _tombstone(txn, 'todo', 't${rows.first['created_at']}');
+      }
+    });
     _mutated();
   }
 
@@ -1321,6 +1720,14 @@ class DatabaseService {
           where: 'created_at = ? AND updated_at <= ?',
           whereArgs: [createdAt, deletedAt],
         );
+      case 'note_item':
+        final createdAt = int.tryParse(ref.replaceFirst('n', ''));
+        if (createdAt == null) return 0;
+        removed = await db.delete(
+          'notes',
+          where: 'created_at = ? AND updated_at <= ?',
+          whereArgs: [createdAt, deletedAt],
+        );
       case 'completion':
         final cm = RegExp(r'^b(\d+)_c(\d+)$').firstMatch(ref);
         if (cm == null) return 0;
@@ -1332,6 +1739,22 @@ class DatabaseService {
             int.parse(cm.group(2)!),
             deletedAt,
           ],
+        );
+      case 'plan_item':
+        final pi = parsePlanItemRef(ref);
+        if (pi == null) return 0;
+        removed = await db.delete(
+          'plan_item_progress',
+          where: 'plan_id = ? AND book_id = ? AND chapter = ? AND done_at <= ?',
+          whereArgs: [pi.planId, pi.bookId, pi.chapter, deletedAt],
+        );
+      case 'plan_day':
+        final pd = RegExp(r'^(.+)_d(\d+)$').firstMatch(ref);
+        if (pd == null) return 0;
+        removed = await db.delete(
+          'plan_progress',
+          where: 'plan_id = ? AND day = ? AND done_at <= ?',
+          whereArgs: [pd.group(1)!, int.parse(pd.group(2)!), deletedAt],
         );
     }
     return removed;
@@ -1355,4 +1778,24 @@ class DatabaseService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+}
+
+/// 要設定完成狀態的讀經計畫項目（章）。
+class PlanItemTarget {
+  final int day;
+  final int bookId;
+  final int chapter;
+  final String itemId;
+  const PlanItemTarget(this.day, this.bookId, this.chapter, {this.itemId = ''});
+}
+
+/// 解析 `plan_item` 墓碑 ref（`{planId}_b{book}_c{chapter}`；planId 可含底線）。
+({String planId, int bookId, int chapter})? parsePlanItemRef(String ref) {
+  final m = RegExp(r'^(.+)_b(\d+)_c(\d+)$').firstMatch(ref);
+  if (m == null) return null;
+  return (
+    planId: m.group(1)!,
+    bookId: int.parse(m.group(2)!),
+    chapter: int.parse(m.group(3)!),
+  );
 }

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../widgets/student_ux.dart';
 
 /// 導讀 / 統整 的種類。
 enum OverviewKind { intro, summary }
@@ -30,7 +31,10 @@ class BookOverviewScreen extends ConsumerWidget {
       appBar: AppBar(title: Text('$bookName · $label')),
       body: annAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (_, _) => StudentErrorState(
+          message: '$bookName的$label暫時載入失敗，請稍後再試。',
+          onRetry: () => ref.invalidate(bookAnnotationProvider(bookId)),
+        ),
         data: (ann) {
           final hasContent = kind == OverviewKind.intro
               ? (ann?.hasIntro ?? false)

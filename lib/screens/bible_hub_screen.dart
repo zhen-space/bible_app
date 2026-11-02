@@ -40,7 +40,10 @@ class BibleHubScreen extends ConsumerWidget {
           // ---- 閱讀 ----
           _sectionTitle(context, '閱讀'),
           const SizedBox(height: 10),
-          if (lastRead != null && books != null) ...[
+          // 存的位置對不上目前的聖經資料（舊資料損壞）就不顯示，不讓頁面當掉。
+          if (lastRead != null &&
+              books != null &&
+              isValidReadingPosition(lastRead, books)) ...[
             Card(
               child: ListTile(
                 contentPadding:

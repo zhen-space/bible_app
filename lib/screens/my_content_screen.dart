@@ -99,13 +99,77 @@ class _LaterScreenState extends ConsumerState<LaterScreen> {
     super.dispose();
   }
 
+  /// 移除與復原都用 idempotent 的 setLater：重試不會把已移除的待讀又加回來，
+  /// 也不會對已不存在的節再記一次墓碑。
   Future<void> remove(Iterable<Bookmark> values) async {
+    final list = values.toList();
+    if (list.isEmpty) return;
     final db = ref.read(databaseServiceProvider);
-    for (final b in values) {
-      await db.removeLater(b.bookId, b.chapter, b.verse);
+    var removed = 0;
+    var failed = false;
+    try {
+      for (final b in list) {
+        await db.setLater(b.bookId, b.chapter, b.verse, false);
+        removed++;
+      }
+    } catch (_) {
+      failed = true;
     }
-    selection.cancel();
+    // 不論成敗都重新讀取：移除到一半失敗時，畫面要反映實際還在的待讀，
+    // 不能假裝全部移除（也不把例外丟回滑動手勢）。
     ref.invalidate(allLaterProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (!failed) {
+      selection.cancel();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('已移除 ${list.length} 則稍後閱讀'),
+          action: SnackBarAction(label: '復原', onPressed: () => _restore(list)),
+        ),
+      );
+      return;
+    }
+    // 保留選取，使用者可直接重試尚未移除的項目；已移除的移出選取，計數才與畫面一致。
+    final remaining = list.skip(removed).toList();
+    if (selection.active) selection.selectAll(remaining.map(keyOf));
+    messenger.showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 8),
+        content: Text(
+          removed == 0
+              ? '移除失敗，稍後閱讀仍保留。'
+              : '只移除了 $removed / ${list.length} 則，其餘仍保留。',
+        ),
+        action: SnackBarAction(label: '重試', onPressed: () => remove(remaining)),
+      ),
+    );
+  }
+
+  Future<void> _restore(List<Bookmark> items) async {
+    final db = ref.read(databaseServiceProvider);
+    var failed = false;
+    try {
+      for (final b in items) {
+        await db.setLater(b.bookId, b.chapter, b.verse, true);
+      }
+    } catch (_) {
+      failed = true;
+    }
+    ref.invalidate(allLaterProvider);
+    ref.invalidate(chapterMarksProvider);
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: const Text('復原失敗，畫面顯示的是目前實際狀態。'),
+          // 已加回的再加一次不會變動，重試整批是安全的。
+          action: SnackBarAction(label: '重試', onPressed: () => _restore(items)),
+        ),
+      );
   }
 
   @override

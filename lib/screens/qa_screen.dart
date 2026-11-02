@@ -7,6 +7,7 @@ import '../providers/providers.dart';
 import '../services/app_links.dart';
 import '../services/qa_service.dart';
 import '../services/verse_locator.dart';
+import '../widgets/student_ux.dart';
 import 'qa_voice_screen.dart';
 import 'study_content_screen.dart';
 
@@ -21,6 +22,13 @@ class QaScreen extends ConsumerStatefulWidget {
 class _QaScreenState extends ConsumerState<QaScreen> {
   String _category = '';
   String _query = '';
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,6 +83,7 @@ class _QaScreenState extends ConsumerState<QaScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: TextField(
+                    controller: _searchController,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
                       hintText: '搜尋問題與回答…',
@@ -99,11 +108,35 @@ class _QaScreenState extends ConsumerState<QaScreen> {
                   child: questionsAsync.when(
                     loading: () =>
                         const Center(child: CircularProgressIndicator()),
-                    error: (e, _) => Center(child: Text('載入失敗：$e')),
+                    error: (_, _) => StudentErrorState(
+                      message: '問題與回答暫時載入失敗。',
+                      onRetry: () => ref.invalidate(
+                          publishedQuestionsProvider(_category)),
+                    ),
                     data: (all) {
                       final list = _filter(all);
                       if (list.isEmpty) {
-                        return const Center(child: Text('目前沒有相符的問題'));
+                        final filtering =
+                            _query.isNotEmpty || _category.isNotEmpty;
+                        return StudentEmptyState(
+                          title: filtering ? '找不到相符的問題' : '目前還沒有問題',
+                          subtitle: filtering
+                              ? '請試試其他關鍵字或分類。'
+                              : '你可以成為第一個提出問題的人。',
+                          icon: filtering
+                              ? Icons.search_off_outlined
+                              : Icons.help_outline,
+                          actionLabel: filtering ? '清除篩選' : null,
+                          onAction: filtering
+                              ? () {
+                                  _searchController.clear();
+                                  setState(() {
+                                    _query = '';
+                                    _category = '';
+                                  });
+                                }
+                              : null,
+                        );
                       }
                       return ListView.separated(
                         itemCount: list.length,
@@ -246,7 +279,10 @@ class _QuestionDetailScreenState extends ConsumerState<QuestionDetailScreen> {
       ),
       body: qAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('載入失敗：$e')),
+        error: (_, _) => StudentErrorState(
+          message: '問題內容暫時載入失敗。',
+          onRetry: () => ref.invalidate(questionProvider(widget.id)),
+        ),
         data: (q) {
           if (q == null) return const Center(child: Text('找不到這個問題'));
           // 進入詳情：把此問題標記為已讀（追蹤未讀提示用）
@@ -1329,9 +1365,23 @@ class _MyQuestionsTab extends ConsumerWidget {
     final async = ref.watch(myQuestionsProvider);
     return async.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('載入失敗：$e')),
+      error: (_, _) => StudentErrorState(
+        message: '你的提問暫時載入失敗。',
+        onRetry: () => ref.invalidate(myQuestionsProvider),
+      ),
       data: (list) {
-        if (list.isEmpty) return const Center(child: Text('你還沒有提問'));
+        if (list.isEmpty) {
+          return StudentEmptyState(
+            title: '你還沒有提問',
+            subtitle: '遇到不明白的經文時，可以在這裡提出問題。',
+            icon: Icons.question_answer_outlined,
+            actionLabel: '提出第一個問題',
+            onAction: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AskQuestionScreen()),
+            ),
+          );
+        }
         return ListView(
           children: [
             for (final q in list)
@@ -1369,9 +1419,20 @@ class _FollowingTab extends ConsumerWidget {
     final following = ref.watch(followingQuestionsProvider);
     return following.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('載入失敗：$e')),
+      error: (_, _) => StudentErrorState(
+        message: '追蹤的問題暫時載入失敗。',
+        onRetry: () => ref.invalidate(followingQuestionsProvider),
+      ),
       data: (map) {
-        if (map.isEmpty) return const Center(child: Text('你還沒有追蹤任何問題'));
+        if (map.isEmpty) {
+          return StudentEmptyState(
+            title: '你還沒有追蹤任何問題',
+            subtitle: '追蹤感興趣的問題，有新回答時就能快速找到。',
+            icon: Icons.notifications_none,
+            actionLabel: '瀏覽問題',
+            onAction: () => Navigator.pop(context),
+          );
+        }
         final ids = map.keys.toList();
         return ListView.builder(
           itemCount: ids.length,
@@ -1417,9 +1478,20 @@ class _SavedTab extends ConsumerWidget {
     final saved = ref.watch(savedQuestionIdsProvider);
     return saved.when(
       loading: () => const Center(child: CircularProgressIndicator()),
-      error: (e, _) => Center(child: Text('載入失敗：$e')),
+      error: (_, _) => StudentErrorState(
+        message: '收藏的問題暫時載入失敗。',
+        onRetry: () => ref.invalidate(savedQuestionIdsProvider),
+      ),
       data: (ids) {
-        if (ids.isEmpty) return const Center(child: Text('你還沒有收藏任何問題'));
+        if (ids.isEmpty) {
+          return StudentEmptyState(
+            title: '你還沒有收藏任何問題',
+            subtitle: '把想重讀的回答加入收藏，之後可以快速回來查看。',
+            icon: Icons.bookmark_border,
+            actionLabel: '瀏覽問題',
+            onAction: () => Navigator.pop(context),
+          );
+        }
         final list = ids.toList();
         return ListView.builder(
           itemCount: list.length,

@@ -139,7 +139,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   上傳／寫入雲端）以 `onStep` 回報進度到狀態列；`syncNow` 有 45 秒逾時（卡住會停在
   該步驟並轉明確失敗訊息，不再永遠轉圈）——診斷同步卡點就靠這行狀態字。
 - **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
-  各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
+  各模組（Q&A 引用、知識庫、搜尋人物→生平頁、**讀經頁節面板「相關」交叉引用**）一律走這裡，勿自寫跳轉。
+  `openVerseRef` 回傳是否開啟（解析不了→false，讀經頁顯示「找不到這段經文：…」）；範圍含跨章（約1:1-2:3）定位到起點；一律臨時瀏覽（不覆蓋繼續閱讀、不記閱讀紀錄）。
+  讀經頁 `_logRead`（`markChapterRead`）失敗靜默略過、不擋開章翻章；離開讀經頁停朗讀用 `TtsController.stopOnDispose`（dispose 期間不改 provider）。
 - **長章渲染＋記住位置**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）。
   記住位置走 `ScrollController` 位移：`lastRead` 存 book:chapter:**offset**，捲動時
   debounce 存 offset，「繼續閱讀」用 initialOffset 還原捲動位置（首屏後 jumpTo）。
@@ -160,15 +162,17 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## P0 前台改版（本輪 #1b–#7，branch `agent/p0-reading-foundation`）
 
+**繼續閱讀載入狀態**：`lastReadProvider` 讀取是非同步，另有 `lastReadLoadProvider`（loading/ready/failed）；首頁讀到前顯示載入中、讀取失敗顯示「上次閱讀位置暫時無法載入／再試一次」（`reload()`），只有 ready 且沒有位置才給「開始第一次閱讀」（避免一點就把真位置覆蓋成創 1）。讀取晚到不蓋掉期間已 `set` 的新位置；格式壞掉視同沒有位置；寫入失敗靜默（記憶體照更新）。儲存走可注入的 `lastReadStoreProvider`（預設 `PrefsLastReadStore`，key 不變 `last_read`）。`isValidReadingPosition` 擋掉對不上目前聖經資料的位置（首頁／聖經頁不再 RangeError）。
+
 三種閱讀概念**正式分離**（#1b）：**Reading History**＝`reading_log`（造訪，開章即記，臨時瀏覽不記）；**Reading Position**＝`lastReadProvider`（繼續閱讀，SharedPreferences）；**Chapter Completion**＝`chapter_completions`（v9，使用者主動按讀經頁「完成本章」才算）。**打開章節≠完成章節**。信仰地圖／已讀統計改用 completions（升版時由 reading_log 種入，保留舊進度）。
 
 - **Reading Plans v2**（#2）：`plan_item_progress`（v10）逐「讀經項目（章）」勾選；今日進度（第一個未完成的天）vs 整體進度分離；漏讀保留並標記；舊 `plan_progress`（整天）保留相容，開啟計畫時一次性 lazy 種入 item 進度。官方 Published 計畫內容需後端（未做）。
 - **Daily Verse v2**（#3）：正式來源＝Firestore `daily_verses/{YYYY-MM-DD}`（`published==true`，`ContentService.fetchPublishedDailyVerse`＋`publishedDailyVerseProvider`，快取 SharedPreferences）；`dailyVersePool` 降為 fallback。發佈 UI 需後台（未做）。
 - **Verse Actions v2**（#4）：`later` 表（v11，稍後閱讀）；讀經頁**逐節模式多選**（長按選取、批次螢光筆/書籤/稍後讀/複製/分享）；複製/分享分「純經文／經文＋出處」（`utils/share_utils.dart`）。共用單節面板 `screens/verse_action_sheet.dart`（每日經文等非讀經頁入口用）。
-- **Notes v2**（#5）：`notes` 加 `title`/`refs`/`deleted_at`（v12）；可選標題、多節引用、軟刪除（最近刪除，還原/永久刪除）；`screens/notes_screen.dart`（最近/書卷/標籤/搜尋＋編輯器自動儲存＋引用點開臨時閱讀）。逐節快速筆記 `saveNote` 不動 title/refs。
+- **Notes v2**（#5）：`notes` 加 `title`/`refs`/`deleted_at`（v12）；可選標題、多節引用、軟刪除（最近刪除，還原/永久刪除）；`screens/notes_screen.dart`（最近/書卷/標籤/搜尋＋編輯器自動儲存＋引用點開臨時閱讀）。逐節快速筆記 `saveNote` 不動 title/refs。**讀經頁同節多則**：`chapterMarksProvider.notes`＝`Map<int,List<Note>>`（`getChapterNoteLists`，最新在前）；經節顯示筆記數（>1 顯示數字，語意標籤「n 則筆記」）、節面板「我的筆記 · n 則＋最新摘要」；`screens/verse_notes_sheet.dart` 同節清單（選一則編輯／移到最近刪除／新增）＋單則編輯器，一律以 **id** 寫（新增＝`saveNoteFull(id:null)` 新的一則、編輯只改選中那則並保留 title/refs、刪除＝`softDeleteNoteById`）；讀經頁不再用整節的 `saveNote`/`deleteNote`。共用單節面板 `verse_action_sheet.dart`（每日經文卡「…」、搜尋結果「更多經文操作」）同樣走 `openVerseNotes`／`VerseNotesSummaryTile`（`getVerseNotes`），App 介面已無整節筆記寫入；面板讀個人標記失敗時照開、書籤／稍後讀／筆記停用並可重試。面板的螢光筆／書籤／稍後讀一律寫目標狀態（`setHighlight`／`setBookmark`／`setLater`，不再用 `toggleBookmark`），經 `_writeMark`：同一節同一種標記寫入中不重複寫（按鈕停用、重試略過）、失敗後 refresh 回實際狀態＋SnackBar「重試」；每次開面板只處理第一個動作（不會連點多寫或多 pop 一層）；讀取中連點入口只開一個面板。搜尋結果列左滑書籤（精確／相關兩條路徑皆走 `SearchScreen._writeBookmark`）同樣改為 `setBookmark` 目標狀態＋同一節寫入中 guard（重複滑動直接回彈、不寫；列的滑動設定在寫入中不變），失敗後重讀書籤＋SnackBar「重試」寫同一目標。讀經頁（ChapterScreen）單節面板的螢光筆／書籤也走 `_writeMark`（`setHighlight`／`setBookmark` 目標狀態、同一節同一種標記寫入中 guard＋按鈕停用、每次開面板只處理第一個動作、失敗 SnackBar「重試」）；多選批次螢光筆／書籤走 `_bulkWrite`（逐節寫目標狀態，失敗時只保留**尚未寫入**的節為選取＋「只標記了 n / m 節…」、重試只補剩下的；寫入中批次按鈕停用；批次書籤改 `setBookmark(true)`，不再切換）。螢光筆色塊語意名稱＝`AppTheme.highlightDefaultName`（或使用者命名）。寫入／刪除失敗不關閉、保留內容、重讀實際資料並可重試。
 - **My Content**（#6）：`screens/my_content_screen.dart` 統一入口（經文筆記/螢光筆/書籤/稍後閱讀/證道筆記/禱告，各自獨立 model）；`LaterScreen` 待讀清單。App shell「筆記」tab 改為「內容」→ MyContentScreen（`notes_hub_screen.dart` 退出導航，未刪）。
 - **Prayer v2**（#7）：`prayers` 加 title/prayer_date/refs/status(praying/answered/ended)/reminder_at/answered_at/answered_reflection（v13）；舊 category/subcategory/content 保留相容。提醒只存時間（真推播需 FCM，未接）。
-- **同步/墓碑**：新增 tombstone kind `completion`、`later`；`chapter_completions`/`plan_item_progress`/`later` 都進 `sync_service`（LWW）。notes 軟刪除是**本地 trash**（purge 才寫墓碑同步刪除）。plan 進度沿用舊慣例（取消＝本地刪除、無墓碑）。
+- **同步/墓碑**：新增 tombstone kind `completion`、`later`；`chapter_completions`/`plan_item_progress`/`later` 都進 `sync_service`（LWW）。notes 軟刪除是**本地 trash**（purge 才寫墓碑同步刪除）。plan 進度取消**也寫墓碑**：kind `plan_item`（ref＝雲端 doc id `{planId}_b{book}_c{ch}`）／`plan_day`（`{planId}_d{day}`，v1 相容）；`setPlanItemsDone`／`setPlanDayDone` 為目標狀態、idempotent，本體＋墓碑同一 transaction（整天勾選整批同成同敗）；sync 下載擋被刪、套用後 `reconcilePlanTombstones` 清掉比活資料舊的墓碑（他處重新勾選不被誤刪）；有 v2 取消墓碑的計畫不再從舊版整天進度 seed。書籤／稍後閱讀／章節完成同理：sync 套用墓碑後 `reconcileMarkTombstones` 清掉比活資料舊的 `bookmark`/`later`/`completion` 墓碑（他處重新加入不被上傳誤刪）；`upsertBookmark`/`upsertLater` 下載時保留較新的 created_at（不沿用本機舊時間被舊墓碑刪掉）。螢光筆也納入 `reconcileMarkTombstones`（`highlight`）。**經文筆記**：跨裝置身分＝`created_at`（新增時本機保證唯一）；雲端仍是 `users/{uid}/notes/b{book}_c{ch}_v{v}`（路徑／doc id／規則不變），同一節多則寫進該 doc 的 `notes` 陣列，頂層保留最新一則供舊版 App 讀；舊版只有頂層的 doc 照樣讀。永久刪除只寫**單則**墓碑 kind `note_item`（ref `n{created_at}`），不再寫整節 `note` 墓碑（會誤刪同節其他、別台未同步的筆記）；舊整節墓碑仍套用並一起協調。`upsertNote` 以 created_at 對身分（不再「同節第一則」覆蓋），對不到時同節同內容視為同一則（舊同步合併的遺留，收斂到較早 created_at）。上傳時雲端有、本機這節一則都沒有（含最近刪除）→ 刪整節 doc。
 - **#8（Published-only 授權：annotations/knowledge/public_notes 仍 `allow read: if true`、SharedPreferences/asset fallback）與 #9（Q&A 安全）留給「後端 × Codex」**，本輪未動。`firestore.rules` 已加 `daily_verses` 讀規則（**未 deploy**）。
 
 ## #8/#9 Published-content workflow ＋ Q&A safety（branch `agent/p0-backend-published-workflow`）

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/church.dart';
 import '../providers/providers.dart';
+import '../widgets/student_ux.dart';
 
 /// Me → 教會。完整 membership 狀態（none/pending/active/rejected/revoked）。
 /// **authorization-first**：pending/rejected/revoked 皆不授權；前端不得 self-approve/switch/revoke。
@@ -20,7 +21,10 @@ class ChurchMembershipScreen extends ConsumerWidget {
           ? _pad(const Text('登入後才能設定教會。公開內容不受影響。'))
           : membershipAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => _pad(Text('載入失敗：$e')),
+              error: (_, _) => StudentErrorState(
+                message: '教會會籍暫時載入失敗。',
+                onRetry: () => ref.invalidate(myMembershipProvider),
+              ),
               data: (m) => _body(context, ref, m),
             ),
     );
@@ -145,6 +149,13 @@ class ChurchPickerScreen extends ConsumerStatefulWidget {
 
 class _ChurchPickerScreenState extends ConsumerState<ChurchPickerScreen> {
   String _q = '';
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -155,6 +166,7 @@ class _ChurchPickerScreenState extends ConsumerState<ChurchPickerScreen> {
         Padding(
           padding: const EdgeInsets.all(12),
           child: TextField(
+            controller: _searchController,
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),
               hintText: '搜尋教會名稱',
@@ -167,16 +179,32 @@ class _ChurchPickerScreenState extends ConsumerState<ChurchPickerScreen> {
         Expanded(
           child: churchesAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(child: Text('載入失敗：$e')),
+            error: (_, _) => StudentErrorState(
+              message: '教會清單暫時載入失敗。',
+              onRetry: () => ref.invalidate(activeChurchesProvider),
+            ),
             data: (churches) {
               final list = churches
                   .where((c) => _q.isEmpty || c.name.contains(_q))
                   .toList();
               if (list.isEmpty) {
-                return const Center(
-                    child: Padding(
-                        padding: EdgeInsets.all(32),
-                        child: Text('目前沒有可加入的教會。')));
+                if (_q.isNotEmpty && churches.isNotEmpty) {
+                  return StudentEmptyState(
+                    title: '找不到符合「$_q」的教會',
+                    subtitle: '請試試其他名稱或地區關鍵字。',
+                    icon: Icons.search_off_outlined,
+                    actionLabel: '清除搜尋',
+                    onAction: () {
+                      _searchController.clear();
+                      setState(() => _q = '');
+                    },
+                  );
+                }
+                return const StudentEmptyState(
+                  title: '目前沒有可加入的教會',
+                  subtitle: '之後再回來看看。',
+                  icon: Icons.church_outlined,
+                );
               }
               return ListView(
                 children: [

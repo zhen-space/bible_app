@@ -5,6 +5,7 @@ import '../models/models.dart';
 import '../providers/providers.dart';
 import 'book_overview_screen.dart';
 import '../theme/app_theme.dart';
+import '../widgets/student_ux.dart';
 import 'chapter_screen.dart';
 
 /// 書卷列表（舊約/新約 分頁 + 章節格）。從首頁「讀聖經」進入。
@@ -26,7 +27,10 @@ class BooksScreen extends ConsumerWidget {
         ),
         body: booksAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
-          error: (e, _) => Center(child: Text('載入經文失敗：$e')),
+          error: (_, _) => StudentErrorState(
+            message: '經文書卷暫時載入失敗，請檢查連線後再試一次。',
+            onRetry: () => ref.invalidate(booksProvider),
+          ),
           data: (books) => TabBarView(
             children: [
               _BookList(

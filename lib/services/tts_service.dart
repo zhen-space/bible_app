@@ -69,6 +69,18 @@ class TtsController extends Notifier<TtsState> {
     await _tts?.stop();
   }
 
+  /// 給畫面 dispose 用：**立刻**停止朗讀，但把狀態歸零延到這一幀結束後——
+  /// 元件卸載（dispose）期間不能改 provider 狀態（Riverpod 會 assert），
+  /// 例如從讀經頁返回、或換到別頁時。沒在朗讀就不動狀態。
+  void stopOnDispose() {
+    _active = false;
+    _tts?.stop();
+    if (!state.playing && state.verse == null) return;
+    Future.microtask(() {
+      if (ref.mounted && !_active) state = const TtsState();
+    });
+  }
+
   /// 播放中→停止；停止中→從頭播放。
   Future<void> toggle(List<String> verses) async {
     if (state.playing) {

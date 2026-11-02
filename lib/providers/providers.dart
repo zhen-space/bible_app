@@ -231,12 +231,50 @@ final englishReadyProvider = FutureProvider<bool>((ref) async {
   return true;
 });
 
+/// 「繼續閱讀」位置的讀取狀態。讀取完成前不能把「還沒讀到」當成「從沒讀過」，
+/// 否則首頁會先顯示「開始第一次閱讀」，一點就把真正的位置覆蓋成創世記 1 章。
+enum LastReadLoad { loading, ready, failed }
+
+class LastReadLoadNotifier extends Notifier<LastReadLoad> {
+  @override
+  LastReadLoad build() => LastReadLoad.loading;
+
+  void set(LastReadLoad value) => state = value;
+}
+
+final lastReadLoadProvider =
+    NotifierProvider<LastReadLoadNotifier, LastReadLoad>(
+        LastReadLoadNotifier.new);
+
+/// 閱讀位置的儲存（預設 SharedPreferences；測試可換成慢速／失敗的假實作）。
+abstract class LastReadStore {
+  Future<String?> read();
+  Future<void> write(String value);
+}
+
+class PrefsLastReadStore implements LastReadStore {
+  const PrefsLastReadStore();
+  static const key = 'last_read';
+
+  @override
+  Future<String?> read() async =>
+      (await SharedPreferences.getInstance()).getString(key);
+
+  @override
+  Future<void> write(String value) async =>
+      (await SharedPreferences.getInstance()).setString(key, value);
+}
+
+final lastReadStoreProvider =
+    Provider<LastReadStore>((ref) => const PrefsLastReadStore());
+
 /// 上次閱讀位置（書卷+章+**捲動位移**），持久化。
 /// offset＝離開時的捲動像素位置，用來還原「讀到的畫面」而不只是章頂。
 /// 用 offset（而非節號）是因為它對逐節／段落兩種模式都適用、且渲染穩定。
 class LastReadNotifier
     extends Notifier<({int bookId, int chapter, double offset})?> {
-  static const _key = 'last_read';
+  /// 讀取完成前已經有新位置（開章／翻章／捲動）→ 晚到的舊值不能蓋掉它。
+  bool _touched = false;
 
   @override
   ({int bookId, int chapter, double offset})? build() {
@@ -246,9 +284,9 @@ class LastReadNotifier
 
   Future<void> _load() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final v = prefs.getString(_key);
-      if (v != null) {
+      final v = await ref.read(lastReadStoreProvider).read();
+      if (!ref.mounted) return;
+      if (v != null && !_touched) {
         final parts = v.split(':');
         state = (
           bookId: int.parse(parts[0]),
@@ -257,25 +295,62 @@ class LastReadNotifier
           offset: parts.length > 2 ? (double.tryParse(parts[2]) ?? 0) : 0,
         );
       }
+      ref.read(lastReadLoadProvider.notifier).set(LastReadLoad.ready);
+    } on FormatException {
+      // 存的格式壞了：視為沒有位置（可以重新開始），不是暫時性錯誤。
+      if (ref.mounted) {
+        ref.read(lastReadLoadProvider.notifier).set(LastReadLoad.ready);
+      }
+    } catch (_) {
+      if (ref.mounted) {
+        ref.read(lastReadLoadProvider.notifier).set(LastReadLoad.failed);
+      }
+    }
+  }
+
+  /// 讀取失敗後「再試一次」。
+  Future<void> reload() async {
+    ref.read(lastReadLoadProvider.notifier).set(LastReadLoad.loading);
+    await _load();
+  }
+
+  /// 寫入失敗（儲存空間不足、瀏覽器封鎖）只影響下次開 App，不擋現在的閱讀：
+  /// 記憶體中的位置照樣更新。
+  Future<void> _write(int bookId, int chapter, double offset) async {
+    try {
+      await ref
+          .read(lastReadStoreProvider)
+          .write('$bookId:$chapter:${offset.toStringAsFixed(1)}');
     } catch (_) {}
   }
 
   /// 換章時呼叫（offset 預設 0＝章頂）。
   Future<void> set(int bookId, int chapter, [double offset = 0]) async {
+    _touched = true;
     state = (bookId: bookId, chapter: chapter, offset: offset);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, '$bookId:$chapter:${offset.toStringAsFixed(1)}');
+    await _write(bookId, chapter, offset);
   }
 
   /// 捲動時更新位移（章沒變才更新，避免蓋掉剛換的章）。
   Future<void> setOffset(int bookId, int chapter, double offset) async {
     final s = state;
     if (s == null || s.bookId != bookId || s.chapter != chapter) return;
+    _touched = true;
     state = (bookId: bookId, chapter: chapter, offset: offset);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, '$bookId:$chapter:${offset.toStringAsFixed(1)}');
+    await _write(bookId, chapter, offset);
   }
 }
+
+/// 存的位置是否還對得上目前的聖經資料（書卷存在、章在範圍內）。對不上就當作沒有位置，
+/// 不讓首頁／聖經頁因為壞掉的舊資料當掉。
+bool isValidReadingPosition(
+  ({int bookId, int chapter, double offset}) pos,
+  List<Book> books,
+) =>
+    pos.bookId >= 1 &&
+    pos.bookId <= books.length &&
+    pos.chapter >= 1 &&
+    pos.chapter <= books[pos.bookId - 1].chapterCount;
 
 final lastReadProvider = NotifierProvider<LastReadNotifier,
     ({int bookId, int chapter, double offset})?>(LastReadNotifier.new);
@@ -286,7 +361,7 @@ final chapterMarksProvider = FutureProvider.family<ChapterMarks,
   final db = ref.watch(databaseServiceProvider);
   final bookmarks = await db.getBookmarkedVerses(args.bookId, args.chapter);
   final highlights = await db.getChapterHighlights(args.bookId, args.chapter);
-  final notes = await db.getChapterNotes(args.bookId, args.chapter);
+  final notes = await db.getChapterNoteLists(args.bookId, args.chapter);
   final later = await db.getLaterVerses(args.bookId, args.chapter);
   return ChapterMarks(
       bookmarks: bookmarks, highlights: highlights, notes: notes, later: later);
@@ -295,7 +370,9 @@ final chapterMarksProvider = FutureProvider.family<ChapterMarks,
 class ChapterMarks {
   final Set<int> bookmarks;
   final Map<int, HighlightColor> highlights;
-  final Map<int, Note> notes;
+
+  /// 每節的全部筆記（同一節可有多則），最新在前。
+  final Map<int, List<Note>> notes;
   final Set<int> later;
 
   const ChapterMarks({
@@ -339,6 +416,18 @@ class SearchHistoryNotifier extends Notifier<List<String>> {
     state = const [];
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_key);
+  }
+
+  Future<void> remove(String query) async {
+    final next = state.where((entry) => entry != query).toList();
+    if (next.length == state.length) return;
+    state = next;
+    final prefs = await SharedPreferences.getInstance();
+    if (next.isEmpty) {
+      await prefs.remove(_key);
+    } else {
+      await prefs.setStringList(_key, next);
+    }
   }
 }
 

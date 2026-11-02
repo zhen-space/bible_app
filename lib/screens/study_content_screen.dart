@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/study_content.dart';
 import '../providers/providers.dart';
 import '../services/app_links.dart';
+import '../widgets/student_ux.dart';
 
 /// 學生「研讀內容」——**正式資料來源＝study_content（published+student）**，
 /// 絕不 fallback knowledge/data；沒有就顯示正常空狀態。
@@ -29,7 +30,10 @@ class StudentStudyContentScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('研讀內容')),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _StudyEmpty('研讀內容載入失敗，請稍後再試。'),
+        error: (_, _) => StudentErrorState(
+          message: '研讀內容暫時載入失敗。',
+          onRetry: () => ref.invalidate(authorizedStudyContentProvider),
+        ),
         data: (items) {
           if (items.isEmpty) {
             return const _StudyEmpty('目前尚無已發布的研讀內容。');
@@ -292,7 +296,10 @@ class StudentTopicsScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('主題')),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _StudyEmpty('主題載入失敗，請稍後再試。'),
+        error: (_, _) => StudentErrorState(
+          message: '主題暫時載入失敗。',
+          onRetry: () => ref.invalidate(authorizedTopicsProvider),
+        ),
         data: (topics) => topics.isEmpty
             ? const _StudyEmpty('目前尚無已發布的主題。')
             : ListView(
@@ -336,7 +343,11 @@ class StudentTopicContentScreen extends ConsumerWidget {
       appBar: AppBar(title: Text(topic.title.isEmpty ? '主題' : topic.title)),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _StudyEmpty('載入失敗，請稍後再試。'),
+        error: (_, _) => StudentErrorState(
+          message: '主題研讀內容暫時載入失敗。',
+          onRetry: () =>
+              ref.invalidate(authorizedStudyContentByTopicProvider(topic.id)),
+        ),
         data: (items) => items.isEmpty
             ? const _StudyEmpty('此主題目前尚無已發布的研讀內容。')
             : ListView(
@@ -384,7 +395,10 @@ class SavedStudyContentScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('已儲存的研讀內容')),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _StudyEmpty('載入失敗，請稍後再試。'),
+        error: (_, _) => StudentErrorState(
+          message: '已儲存的研讀內容暫時載入失敗。',
+          onRetry: () => ref.invalidate(resolvedSavedStudyContentProvider),
+        ),
         data: (rows) => rows.isEmpty
             ? const _StudyEmpty('尚未儲存任何研讀內容。')
             : ListView(

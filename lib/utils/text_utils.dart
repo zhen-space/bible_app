@@ -2,6 +2,31 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../data/entities.dart';
+import 'query_utils.dart';
+
+/// 搜尋多個詞時採 AND，比對不分英文字母大小寫。
+bool matchesAllQueryTerms(String query, Iterable<String> fields) {
+  final terms = queryTerms(query);
+  if (terms.isEmpty) return false;
+  final searchable = fields.join(' ').toLowerCase();
+  return terms.every(searchable.contains);
+}
+
+/// 取出正文中第一個實際命中的查詢詞所在句，供搜尋結果解釋命中原因。
+///
+/// 查詢詞順序沿用 [queryTerms]；回傳正文中的原始大小寫與文字。正文沒有命中
+///（例如只命中標題或標籤）時回傳 null，讓呼叫端保留原本 metadata。
+String? queryMatchSentence(String query, String body) {
+  final lowerBody = body.toLowerCase();
+  for (final term in queryTerms(query)) {
+    final index = lowerBody.indexOf(term);
+    if (index >= 0) {
+      final matchedText = body.substring(index, index + term.length);
+      return sentenceWithMatch(body, matchedText);
+    }
+  }
+  return null;
+}
 
 /// 取出內容中「包含關鍵詞的那一句」。
 /// 以句末標點（。！？；換行）為界；找不到關鍵詞時回傳開頭一段。

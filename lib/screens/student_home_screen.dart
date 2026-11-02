@@ -85,7 +85,29 @@ class StudentHomeScreen extends ConsumerWidget {
                 onRetry: () => ref.invalidate(booksProvider),
               ),
               data: (books) {
-                if (lastRead == null) return _StartReadingCard(books: books);
+                if (lastRead == null) {
+                  // 位置還沒讀出來：不能先顯示「開始第一次閱讀」，
+                  // 否則一點就把真正的位置覆蓋成創世記 1 章。
+                  switch (ref.watch(lastReadLoadProvider)) {
+                    case LastReadLoad.loading:
+                      return Semantics(
+                        label: '正在載入上次閱讀位置',
+                        child: const _LoadingBlock(height: 112),
+                      );
+                    case LastReadLoad.failed:
+                      return _InlineError(
+                        label: '上次閱讀位置暫時無法載入',
+                        onRetry: () =>
+                            ref.read(lastReadProvider.notifier).reload(),
+                      );
+                    case LastReadLoad.ready:
+                      return _StartReadingCard(books: books);
+                  }
+                }
+                // 存的位置對不上目前的聖經資料（舊資料損壞）→ 當作沒有位置，不當掉。
+                if (!isValidReadingPosition(lastRead, books)) {
+                  return _StartReadingCard(books: books);
+                }
                 final book = books[lastRead.bookId - 1];
                 return _ContinueCard(
                   book: book,
@@ -560,7 +582,7 @@ class _InlineError extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Card(
     child: ListTile(
-      title: Text(label),
+      title: Semantics(liveRegion: true, child: Text(label)),
       trailing: TextButton(onPressed: onRetry, child: const Text('再試一次')),
     ),
   );

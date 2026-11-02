@@ -198,6 +198,22 @@ class AppTheme {
     }
   }
 
+  /// 螢光筆顏色的預設唸法（使用者沒命名時給螢幕閱讀器用）。
+  static String highlightDefaultName(HighlightColor c) {
+    switch (c) {
+      case HighlightColor.yellow:
+        return '黃色';
+      case HighlightColor.green:
+        return '綠色';
+      case HighlightColor.blue:
+        return '藍色';
+      case HighlightColor.pink:
+        return '粉紅色';
+      case HighlightColor.orange:
+        return '橘色';
+    }
+  }
+
   static Color highlightSwatch(HighlightColor c) {
     switch (c) {
       case HighlightColor.yellow:
