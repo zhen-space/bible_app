@@ -9,15 +9,6 @@ import '../utils/share_utils.dart';
 import 'chapter_screen.dart';
 import 'verse_notes_sheet.dart';
 
-/// 螢光筆顏色的預設唸法（使用者沒命名時給螢幕閱讀器用）。
-const _colorNames = {
-  HighlightColor.yellow: '黃色',
-  HighlightColor.green: '綠色',
-  HighlightColor.blue: '藍色',
-  HighlightColor.pink: '粉紅色',
-  HighlightColor.orange: '橘色',
-};
-
 /// 正在讀取個人標記、還沒開出來的面板（同一節只讀一次，避免連點開出兩層）。
 /// 只在讀取期間佔用；面板開著時入口已被遮罩擋住，不靠這個旗標。
 final _opening = <String>{};
@@ -228,7 +219,7 @@ Future<void> showVerseActionSheet(
                       Semantics(
                         button: true,
                         selected: currentColor == c,
-                        label: '螢光筆 ${labels[c] ?? _colorNames[c]}',
+                        label: '螢光筆 ${labels[c] ?? AppTheme.highlightDefaultName(c)}',
                         child: InkWell(
                         customBorder: const CircleBorder(),
                         onTap: hlBusy

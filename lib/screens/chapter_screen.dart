@@ -297,33 +297,125 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   List<int> get _selectedSorted => _selected.toList()..sort();
 
-  /// 多選批次：對選中的每一節套用螢光筆（null＝移除）。
-  Future<void> _bulkHighlight(HighlightColor? color) async {
-    final db = ref.read(databaseServiceProvider);
-    final verses = _selectedSorted;
+  /// 單節標記寫入中（`kind:verse`）：同一節同一種標記不重複寫。
+  final _markWrites = <String>{};
+
+  /// 多選批次寫入中：批次螢光筆／書籤按鈕停用，避免連點重複寫入。
+  bool _bulkWriting = false;
+
+  /// 單節寫一個標記的目標狀態（`setHighlight`／`setBookmark`，皆 idempotent、
+  /// 本體＋墓碑同一交易）。寫入中就略過；不論成敗都重讀標記，畫面顯示實際狀態；
+  /// 失敗時 SnackBar（螢幕閱讀器會念）＋「重試」寫同一個目標，不會把狀態翻回去。
+  Future<void> _writeMark(
+    String key,
+    Future<void> Function() write,
+    String failMessage,
+  ) async {
+    if (!_markWrites.add(key)) return;
+    var failed = false;
     try {
-      for (final v in verses) {
-        await db.setHighlight(_bookId, _chapter, v, color);
-      }
+      await write();
+    } catch (_) {
+      failed = true;
     } finally {
-      _refreshMarks();
+      _markWrites.remove(key);
+      if (mounted) _refreshMarks();
     }
-    _clearSelection();
+    if (!failed || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(failMessage),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => _writeMark(key, write, failMessage),
+          ),
+        ),
+      );
   }
 
-  /// 多選批次：加入書籤（已有的略過）。
-  Future<void> _bulkBookmark(Set<int> alreadyBookmarked) async {
-    final db = ref.read(databaseServiceProvider);
+  /// 多選批次逐節寫入；全部成功才清選取。失敗時只保留**尚未寫入**的節為選取，
+  /// 告知寫了幾節，「重試」只補剩下的（各寫入皆為目標狀態，重試安全）。
+  Future<void> _bulkWrite({
+    required List<int> verses,
+    required Future<void> Function(int verse) write,
+    required String Function(int done, int total) failMessage,
+    required Future<void> Function(List<int> remaining) retry,
+  }) async {
+    if (verses.isEmpty || _bulkWriting) return;
+    setState(() => _bulkWriting = true);
+    var done = 0;
+    var failed = false;
     try {
-      for (final v in _selectedSorted) {
-        if (!alreadyBookmarked.contains(v)) {
-          await db.toggleBookmark(_bookId, _chapter, v);
-        }
+      for (final v in verses) {
+        await write(v);
+        done++;
       }
+    } catch (_) {
+      failed = true;
     } finally {
-      _refreshMarks();
+      if (mounted) {
+        setState(() => _bulkWriting = false);
+        _refreshMarks();
+      } else {
+        _bulkWriting = false;
+      }
     }
-    _clearSelection();
+    if (!mounted) return;
+    if (!failed) {
+      _clearSelection();
+      return;
+    }
+    final remaining = verses.skip(done).toList();
+    setState(() {
+      _selected
+        ..clear()
+        ..addAll(remaining);
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 8),
+          content: Text(failMessage(done, verses.length)),
+          action: SnackBarAction(
+            label: '重試',
+            onPressed: () => retry(remaining),
+          ),
+        ),
+      );
+  }
+
+  /// 多選批次：對選中的每一節套用螢光筆（null＝移除）。
+  Future<void> _bulkHighlight(HighlightColor? color, [List<int>? only]) {
+    final db = ref.read(databaseServiceProvider);
+    final remove = color == null;
+    return _bulkWrite(
+      verses: only ?? _selectedSorted,
+      write: (v) => db.setHighlight(_bookId, _chapter, v, color),
+      failMessage: (done, total) => done == 0
+          ? (remove ? '移除螢光筆失敗，螢光筆仍保留。' : '螢光筆設定失敗，經文沒有變更。')
+          : (remove
+                ? '只移除了 $done / $total 節的螢光筆，其餘仍保留。'
+                : '只標記了 $done / $total 節，其餘沒有變更。'),
+      retry: (remaining) => _bulkHighlight(color, remaining),
+    );
+  }
+
+  /// 多選批次：加入書籤。寫目標狀態 `setBookmark(true)`（已有的不動），
+  /// 不再用切換，重試或狀態過時都不會把已有的書籤移除。
+  Future<void> _bulkBookmark([List<int>? only]) {
+    final db = ref.read(databaseServiceProvider);
+    return _bulkWrite(
+      verses: only ?? _selectedSorted,
+      write: (v) => db.setBookmark(_bookId, _chapter, v, true),
+      failMessage: (done, total) => done == 0
+          ? '加入書籤失敗，這幾節沒有加入書籤。'
+          : '只加入了 $done / $total 節書籤，其餘尚未加入。',
+      retry: (remaining) => _bulkBookmark(remaining),
+    );
   }
 
   /// 多選批次：加入稍後閱讀。addLater 是 idempotent（已存在不動），
@@ -865,13 +957,13 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
           IconButton(
             icon: const Icon(Icons.brush_outlined),
             tooltip: '螢光筆',
-            onPressed: () => _showBulkHighlightMenu(),
+            onPressed: _bulkWriting ? null : () => _showBulkHighlightMenu(),
           ),
           IconButton(
             icon: const Icon(Icons.bookmark_add_outlined),
             tooltip: '書籤',
-            // 已有書籤會略過，所以需要已知的書籤狀態。
-            onPressed: marksKnown ? () => _bulkBookmark(marks.bookmarks) : null,
+            // 個人標記狀態未知時一併停用（與單節書籤一致）。
+            onPressed: marksKnown && !_bulkWriting ? () => _bulkBookmark() : null,
           ),
           IconButton(
             icon: const Icon(Icons.watch_later_outlined),
@@ -904,15 +996,20 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               for (final c in HighlightColor.values)
-                InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _bulkHighlight(c);
-                  },
-                  child: CircleAvatar(
-                    radius: 18,
-                    backgroundColor: AppTheme.highlightSwatch(c),
+                Semantics(
+                  button: true,
+                  label:
+                      '螢光筆 ${ref.read(highlightLabelsProvider)[c] ?? AppTheme.highlightDefaultName(c)}',
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      _bulkHighlight(c);
+                    },
+                    child: CircleAvatar(
+                      radius: 18,
+                      backgroundColor: AppTheme.highlightSwatch(c),
+                    ),
                   ),
                 ),
               IconButton(
@@ -1110,6 +1207,12 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     final db = ref.read(databaseServiceProvider);
     final highlightLabels = ref.read(highlightLabelsProvider);
     final isBookmarked = marks.bookmarks.contains(verseNo);
+    final hlKey = 'highlight:$verseNo';
+    final bmKey = 'bookmark:$verseNo';
+    final hlBusy = _markWrites.contains(hlKey);
+    final bmBusy = _markWrites.contains(bmKey);
+    // 每次開面板只處理第一個寫入動作：關面板中的連點不會寫兩次，也不會多 pop 一層。
+    var acted = false;
     final verseNotes = marks.notes[verseNo] ?? const <Note>[];
     // 點開一律附英文（不受對照開關影響，需要英文已載入）——先確保載入
     ref.read(bibleRepositoryProvider).loadEnglish();
@@ -1130,6 +1233,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (ctx) {
+        void panelWrite(
+          String key,
+          Future<void> Function() write,
+          String failMessage,
+        ) {
+          if (acted) return;
+          acted = true;
+          Navigator.pop(ctx);
+          _writeMark(key, write, failMessage);
+        }
+
         final scheme = Theme.of(ctx).colorScheme;
         Widget quickAction(IconData icon, String label, VoidCallback? onTap) =>
             InkWell(
@@ -1252,27 +1366,34 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            InkWell(
-                              customBorder: const CircleBorder(),
-                              onTap: () async {
-                                Navigator.pop(ctx);
-                                try {
-                                  await db.setHighlight(
-                                    _bookId,
-                                    _chapter,
-                                    verseNo,
-                                    c,
-                                  );
-                                } finally {
-                                  _refreshMarks();
-                                }
-                              },
-                              child: CircleAvatar(
-                                radius: 16,
-                                backgroundColor: AppTheme.highlightSwatch(c),
-                                child: marks.highlights[verseNo] == c
-                                    ? const Icon(Icons.check, size: 16)
-                                    : null,
+                            Semantics(
+                              button: true,
+                              selected: marks.highlights[verseNo] == c,
+                              label:
+                                  '螢光筆 ${highlightLabels[c] ?? AppTheme.highlightDefaultName(c)}',
+                              child: InkWell(
+                                customBorder: const CircleBorder(),
+                                onTap: hlBusy
+                                    ? null
+                                    : () => panelWrite(
+                                        hlKey,
+                                        () => db.setHighlight(
+                                          _bookId,
+                                          _chapter,
+                                          verseNo,
+                                          c,
+                                        ),
+                                        marks.highlights[verseNo] == null
+                                            ? '加上螢光筆失敗，經文沒有標記。'
+                                            : '更換螢光筆失敗，顏色沒有變更。',
+                                      ),
+                                child: CircleAvatar(
+                                  radius: 16,
+                                  backgroundColor: AppTheme.highlightSwatch(c),
+                                  child: marks.highlights[verseNo] == c
+                                      ? const Icon(Icons.check, size: 16)
+                                      : null,
+                                ),
                               ),
                             ),
                             if (highlightLabels[c] != null)
@@ -1289,19 +1410,18 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                         IconButton(
                           icon: const Icon(Icons.format_color_reset),
                           tooltip: '移除螢光筆',
-                          onPressed: () async {
-                            Navigator.pop(ctx);
-                            try {
-                              await db.setHighlight(
-                                _bookId,
-                                _chapter,
-                                verseNo,
-                                null,
-                              );
-                            } finally {
-                              _refreshMarks();
-                            }
-                          },
+                          onPressed: hlBusy
+                              ? null
+                              : () => panelWrite(
+                                  hlKey,
+                                  () => db.setHighlight(
+                                    _bookId,
+                                    _chapter,
+                                    verseNo,
+                                    null,
+                                  ),
+                                  '移除螢光筆失敗，螢光筆仍保留。',
+                                ),
                         ),
                     ],
                   ),
@@ -1315,19 +1435,20 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                           ? Icons.bookmark_remove
                           : Icons.bookmark_add_outlined,
                       isBookmarked ? '移除書籤' : '書籤',
-                      marksKnown
-                          ? () async {
-                              Navigator.pop(ctx);
-                              try {
-                                await db.toggleBookmark(
-                                  _bookId,
-                                  _chapter,
-                                  verseNo,
-                                );
-                              } finally {
-                                _refreshMarks();
-                              }
-                            }
+                      marksKnown && !bmBusy
+                          ? () => panelWrite(
+                              bmKey,
+                              // 目標狀態（非切換）：重試不會把狀態翻回去。
+                              () => db.setBookmark(
+                                _bookId,
+                                _chapter,
+                                verseNo,
+                                !isBookmarked,
+                              ),
+                              isBookmarked
+                                  ? '移除書籤失敗，書籤仍保留。'
+                                  : '加入書籤失敗，這節沒有加入書籤。',
+                            )
                           : null,
                     ),
                     quickAction(

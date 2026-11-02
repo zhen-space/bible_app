@@ -17,6 +17,19 @@ class _MarksDatabaseService extends DatabaseService {
     toggleCalls++;
   }
 
+  /// 讀經頁單節書籤寫目標狀態（非切換）：記下每次要寫成什麼。
+  final bookmarkTargets = <bool>[];
+
+  @override
+  Future<void> setBookmark(
+    int bookId,
+    int chapter,
+    int verse,
+    bool bookmarked,
+  ) async {
+    bookmarkTargets.add(bookmarked);
+  }
+
   @override
   Future<void> markChapterRead(int bookId, int chapter) async {}
 
@@ -96,6 +109,7 @@ void main() {
     await tester.tap(find.text('書籤'));
     await tester.pumpAndSettle();
     expect(db.toggleCalls, 0);
+    expect(db.bookmarkTargets, isEmpty);
     expect(find.text('個人標記暫時無法載入，書籤與筆記請稍後再試。'), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -126,6 +140,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('移除書籤'));
     await tester.pumpAndSettle();
-    expect(db.toggleCalls, 1);
+    expect(db.toggleCalls, 0, reason: '不再用切換');
+    expect(db.bookmarkTargets, [false], reason: '已加入 → 寫「移除」這個目標狀態');
   });
 }
