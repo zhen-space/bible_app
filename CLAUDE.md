@@ -139,7 +139,9 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
   上傳／寫入雲端）以 `onStep` 回報進度到狀態列；`syncNow` 有 45 秒逾時（卡住會停在
   該步驟並轉明確失敗訊息，不再永遠轉圈）——診斷同步卡點就靠這行狀態字。
 - **原子化跳轉**：`services/app_links.dart`（`AppLinks.openVerseRef`/`openPerson`）。
-  各模組（Q&A 引用、知識庫、搜尋人物→生平頁）一律走這裡，勿自寫跳轉。
+  各模組（Q&A 引用、知識庫、搜尋人物→生平頁、**讀經頁節面板「相關」交叉引用**）一律走這裡，勿自寫跳轉。
+  `openVerseRef` 回傳是否開啟（解析不了→false，讀經頁顯示「找不到這段經文：…」）；範圍含跨章（約1:1-2:3）定位到起點；一律臨時瀏覽（不覆蓋繼續閱讀、不記閱讀紀錄）。
+  讀經頁 `_logRead`（`markChapterRead`）失敗靜默略過、不擋開章翻章；離開讀經頁停朗讀用 `TtsController.stopOnDispose`（dispose 期間不改 provider）。
 - **長章渲染＋記住位置**：逐節模式用 `ListView.builder` 懶載入（詩119 176 節不卡）。
   記住位置走 `ScrollController` 位移：`lastRead` 存 book:chapter:**offset**，捲動時
   debounce 存 offset，「繼續閱讀」用 initialOffset 還原捲動位置（首屏後 jumpTo）。

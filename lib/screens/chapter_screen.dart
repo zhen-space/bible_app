@@ -7,9 +7,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/models.dart';
 import '../providers/providers.dart';
+import '../services/app_links.dart';
 import '../services/content_service.dart';
 import '../services/tts_service.dart';
-import '../services/verse_locator.dart';
 import '../utils/text_utils.dart';
 import '../utils/share_utils.dart';
 import '../theme/app_theme.dart';
@@ -143,8 +143,9 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     _scroll.removeListener(_onScroll);
     _scroll.dispose();
     HardwareKeyboard.instance.removeHandler(_handleChapterKey);
-    // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref）
-    _ttsCtrl?.stop();
+    // 離開這一章就停止朗讀（用 initState 抓好的 notifier，避免 dispose 中讀 ref；
+    // 狀態歸零延到這一幀後，dispose 期間改 provider 會被 Riverpod 擋下）
+    _ttsCtrl?.stopOnDispose();
     super.dispose();
   }
 
@@ -210,8 +211,17 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
 
   /// 記錄「造訪」到 Reading History（reading_log）。**不等於完成**——
   /// 完成是使用者主動按「完成本章」（見 _setComplete）。
+  ///
+  /// 這是背景紀錄：寫入失敗（例如本機儲存空間不足、IndexedDB 被封鎖）不影響讀經、
+  /// 翻章與「繼續閱讀」，也不跳錯誤訊息打斷閱讀；下次開這一章會再記一次。
   Future<void> _logRead() async {
-    await ref.read(databaseServiceProvider).markChapterRead(_bookId, _chapter);
+    try {
+      await ref
+          .read(databaseServiceProvider)
+          .markChapterRead(_bookId, _chapter);
+    } catch (_) {
+      // 閱讀紀錄只是統計用途，失敗就略過。
+    }
   }
 
   /// 使用者主動確認「完成／取消完成」本章。只在正常閱讀（非臨時瀏覽）出現。
@@ -561,16 +571,14 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
     return true;
   }
 
-  /// 依節位字串跳轉（交叉引用用）。
-  void _jumpToRef(List<Book> books, String ref) {
-    final loc = VerseLocator.parse(ref, books);
-    if (loc == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChapterScreen(bookId: loc.bookId, chapter: loc.chapter),
-      ),
-    );
+  /// 依節位字串跳轉（交叉引用用）。走 [AppLinks.openVerseRef]：支援範圍
+  /// （約1:1-3、約1:1-2:3 定位到起點）、定位並閃示該節，且是**臨時瀏覽**——
+  /// 不覆蓋「繼續閱讀」、不記閱讀紀錄。解析不了時告知使用者，停在原章。
+  void _jumpToRef(String ref) {
+    if (AppLinks.openVerseRef(context, this.ref, ref)) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text('找不到這段經文：$ref')));
   }
 
   @override
@@ -1640,7 +1648,7 @@ class _ChapterScreenState extends ConsumerState<ChapterScreen> {
                                     label: Text(r),
                                     onPressed: () {
                                       Navigator.pop(ctx);
-                                      _jumpToRef(books, r);
+                                      _jumpToRef(r);
                                     },
                                   ),
                               ],
