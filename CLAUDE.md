@@ -162,6 +162,8 @@ assets/annotations/annotations.json  註解內容（見「註解內容模組」�
 
 ## P0 前台改版（本輪 #1b–#7，branch `agent/p0-reading-foundation`）
 
+**繼續閱讀載入狀態**：`lastReadProvider` 讀取是非同步，另有 `lastReadLoadProvider`（loading/ready/failed）；首頁讀到前顯示載入中、讀取失敗顯示「上次閱讀位置暫時無法載入／再試一次」（`reload()`），只有 ready 且沒有位置才給「開始第一次閱讀」（避免一點就把真位置覆蓋成創 1）。讀取晚到不蓋掉期間已 `set` 的新位置；格式壞掉視同沒有位置；寫入失敗靜默（記憶體照更新）。儲存走可注入的 `lastReadStoreProvider`（預設 `PrefsLastReadStore`，key 不變 `last_read`）。`isValidReadingPosition` 擋掉對不上目前聖經資料的位置（首頁／聖經頁不再 RangeError）。
+
 三種閱讀概念**正式分離**（#1b）：**Reading History**＝`reading_log`（造訪，開章即記，臨時瀏覽不記）；**Reading Position**＝`lastReadProvider`（繼續閱讀，SharedPreferences）；**Chapter Completion**＝`chapter_completions`（v9，使用者主動按讀經頁「完成本章」才算）。**打開章節≠完成章節**。信仰地圖／已讀統計改用 completions（升版時由 reading_log 種入，保留舊進度）。
 
 - **Reading Plans v2**（#2）：`plan_item_progress`（v10）逐「讀經項目（章）」勾選；今日進度（第一個未完成的天）vs 整體進度分離；漏讀保留並標記；舊 `plan_progress`（整天）保留相容，開啟計畫時一次性 lazy 種入 item 進度。官方 Published 計畫內容需後端（未做）。
