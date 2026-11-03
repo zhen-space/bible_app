@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:bible_app/models/models.dart';
+import 'package:bible_app/data/reading_plans.dart';
 import 'package:bible_app/providers/providers.dart';
 import 'package:bible_app/screens/bible_hub_screen.dart';
 import 'package:bible_app/screens/chapter_screen.dart';
 import 'package:bible_app/screens/student_home_screen.dart';
+import 'package:bible_app/services/reading_plan_today.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,13 +75,26 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-List<Override> _overrides(_FakeStore store) => [
+List<Override> _overrides(
+  _FakeStore store, {
+  ReadingPlanToday? today,
+  Future<List<Note>> Function()? loadNotes,
+  Future<VerseRef?> Function()? loadDaily,
+  Future<ReadingPlanToday?> Function()? loadToday,
+}) => [
   lastReadStoreProvider.overrideWithValue(store),
   booksProvider.overrideWith((ref) async => _books),
   databaseServiceProvider.overrideWithValue(FakeNotesDb([])),
+  allNotesProvider.overrideWith(
+    (ref) => loadNotes?.call() ?? Future.value(const <Note>[]),
+  ),
   publishedDailyVerseProvider.overrideWith((ref) async => null),
-  dailyVerseProvider.overrideWith((ref) async => null),
-  readingPlanTodayProvider.overrideWith((ref) async => null),
+  dailyVerseProvider.overrideWith(
+    (ref) => loadDaily?.call() ?? Future.value(null),
+  ),
+  readingPlanTodayProvider.overrideWith(
+    (ref) => loadToday?.call() ?? Future.value(today),
+  ),
   churchOnboardingVisibleProvider.overrideWith((ref) async => false),
   chapterAnnotationProvider.overrideWith(
     (ref, args) async =>
@@ -103,6 +118,79 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(StudentHomeScreen)));
 
 void main() {
+  testWidgets('375px 下拉重新整理會等首頁資料真正載入完成', (tester) async {
+    _phone(tester);
+    var notesLoads = 0;
+    var dailyLoads = 0;
+    var todayLoads = 0;
+    final notesGate = Completer<List<Note>>();
+    final dailyGate = Completer<VerseRef?>();
+    final todayGate = Completer<ReadingPlanToday?>();
+
+    Future<List<Note>> loadNotes() async =>
+        ++notesLoads == 1 ? const <Note>[] : notesGate.future;
+    Future<VerseRef?> loadDaily() async =>
+        ++dailyLoads == 1 ? null : dailyGate.future;
+    Future<ReadingPlanToday?> loadToday() async =>
+        ++todayLoads == 1 ? null : todayGate.future;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(
+          _FakeStore(null),
+          loadNotes: loadNotes,
+          loadDaily: loadDaily,
+          loadToday: loadToday,
+        ),
+        child: const MaterialApp(home: Scaffold(body: StudentHomeScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.fling(find.byType(ListView), const Offset(0, 320), 1000);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+    expect(notesLoads, 2);
+    expect(dailyLoads, 2);
+    expect(todayLoads, 2);
+
+    notesGate.complete(const <Note>[]);
+    dailyGate.complete(null);
+    todayGate.complete(null);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RefreshProgressIndicator), findsNothing);
+  });
+
+  testWidgets('375px 今日讀經進度可由讀屏辨識完成章數', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final today = ReadingPlanToday(
+      plan: readingPlans.first,
+      day: 1,
+      chapters: const [ChapterRef(1, 1), ChapterRef(1, 2)],
+      completed: 1,
+      planCompleted: false,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(_FakeStore(null), today: today),
+        child: const MaterialApp(home: Scaffold(body: StudentHomeScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text(today.plan.name), 220);
+    await tester.pumpAndSettle();
+
+    final progress = find.byType(LinearProgressIndicator);
+    expect(progress, findsOneWidget);
+    expect(tester.getSemantics(progress).label, contains('今日讀經進度 1／2 章'));
+    handle.dispose();
+  });
+
   testWidgets('375px 位置讀取中：顯示載入中，不出現「開始第一次閱讀」；讀到後顯示繼續閱讀', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
@@ -214,6 +302,54 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('回到上次閱讀位置'), findsNothing);
     expect(find.text('閱讀聖經'), findsOneWidget);
+  });
+
+  testWidgets('375px 聖經頁位置讀取中：不閃出錯誤的繼續閱讀卡', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final store = _FakeStore('43:3:120.0')..gate = Completer<void>();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(store),
+        child: const MaterialApp(home: Scaffold(body: BibleHubScreen())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('正在載入上次閱讀位置'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsNothing);
+
+    store.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('約翰福音 第 3 章'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsOneWidget);
+    handle.dispose();
+  });
+
+  testWidgets('375px 聖經頁位置讀取失敗：顯示可朗讀錯誤並可重試', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final store = _FakeStore('43:2:0.0')..failRead = true;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(store),
+        child: const MaterialApp(home: Scaffold(body: BibleHubScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.bySemanticsLabel('上次閱讀位置暫時無法載入'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsNothing);
+
+    store.failRead = false;
+    await tester.tap(find.widgetWithText(TextButton, '再試一次'));
+    await tester.pumpAndSettle();
+    expect(find.text('約翰福音 第 2 章'), findsOneWidget);
+    expect(store.reads, 2);
+    handle.dispose();
   });
 
   testWidgets('375px 格式壞掉的舊位置：當作沒有位置，不顯示錯誤', (tester) async {

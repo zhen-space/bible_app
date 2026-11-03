@@ -29,12 +29,18 @@ class StudentHomeScreen extends ConsumerWidget {
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async {
-          ref.invalidate(allNotesProvider);
-          ref.invalidate(dailyVerseProvider);
           for (final plan in readingPlans) {
             ref.invalidate(planItemProgressProvider(plan.id));
           }
-          ref.invalidate(readingPlanTodayProvider);
+          // 讓下拉重新整理指示器持續到首頁三個動態區塊真的載入完成，
+          // 避免手勢一放開就消失、使用者誤以為資料已經更新。
+          await Future.wait([
+            ref.refresh(allNotesProvider.future).catchError((_) => []),
+            ref.refresh(dailyVerseProvider.future).catchError((_) => null),
+            ref
+                .refresh(readingPlanTodayProvider.future)
+                .catchError((_) => null),
+          ]);
         },
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -335,8 +341,15 @@ class _TodayPlanCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              LinearProgressIndicator(
-                value: today.planCompleted ? 1 : progress,
+              Semantics(
+                label: today.planCompleted
+                    ? '讀經計畫已完成'
+                    : '今日讀經進度 ${today.completed}／$total 章',
+                child: ExcludeSemantics(
+                  child: LinearProgressIndicator(
+                    value: today.planCompleted ? 1 : progress,
+                  ),
+                ),
               ),
             ],
           ),
