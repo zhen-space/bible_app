@@ -75,13 +75,26 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-List<Override> _overrides(_FakeStore store, {ReadingPlanToday? today}) => [
+List<Override> _overrides(
+  _FakeStore store, {
+  ReadingPlanToday? today,
+  Future<List<Note>> Function()? loadNotes,
+  Future<VerseRef?> Function()? loadDaily,
+  Future<ReadingPlanToday?> Function()? loadToday,
+}) => [
   lastReadStoreProvider.overrideWithValue(store),
   booksProvider.overrideWith((ref) async => _books),
   databaseServiceProvider.overrideWithValue(FakeNotesDb([])),
+  allNotesProvider.overrideWith(
+    (ref) => loadNotes?.call() ?? Future.value(const <Note>[]),
+  ),
   publishedDailyVerseProvider.overrideWith((ref) async => null),
-  dailyVerseProvider.overrideWith((ref) async => null),
-  readingPlanTodayProvider.overrideWith((ref) async => today),
+  dailyVerseProvider.overrideWith(
+    (ref) => loadDaily?.call() ?? Future.value(null),
+  ),
+  readingPlanTodayProvider.overrideWith(
+    (ref) => loadToday?.call() ?? Future.value(today),
+  ),
   churchOnboardingVisibleProvider.overrideWith((ref) async => false),
   chapterAnnotationProvider.overrideWith(
     (ref, args) async =>
@@ -105,6 +118,52 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(StudentHomeScreen)));
 
 void main() {
+  testWidgets('375px 下拉重新整理會等首頁資料真正載入完成', (tester) async {
+    _phone(tester);
+    var notesLoads = 0;
+    var dailyLoads = 0;
+    var todayLoads = 0;
+    final notesGate = Completer<List<Note>>();
+    final dailyGate = Completer<VerseRef?>();
+    final todayGate = Completer<ReadingPlanToday?>();
+
+    Future<List<Note>> loadNotes() async =>
+        ++notesLoads == 1 ? const <Note>[] : notesGate.future;
+    Future<VerseRef?> loadDaily() async =>
+        ++dailyLoads == 1 ? null : dailyGate.future;
+    Future<ReadingPlanToday?> loadToday() async =>
+        ++todayLoads == 1 ? null : todayGate.future;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(
+          _FakeStore(null),
+          loadNotes: loadNotes,
+          loadDaily: loadDaily,
+          loadToday: loadToday,
+        ),
+        child: const MaterialApp(home: Scaffold(body: StudentHomeScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.fling(find.byType(ListView), const Offset(0, 320), 1000);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(RefreshProgressIndicator), findsOneWidget);
+    expect(notesLoads, 2);
+    expect(dailyLoads, 2);
+    expect(todayLoads, 2);
+
+    notesGate.complete(const <Note>[]);
+    dailyGate.complete(null);
+    todayGate.complete(null);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(RefreshProgressIndicator), findsNothing);
+  });
+
   testWidgets('375px 今日讀經進度可由讀屏辨識完成章數', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
