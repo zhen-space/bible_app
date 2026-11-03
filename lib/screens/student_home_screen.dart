@@ -335,8 +335,15 @@ class _TodayPlanCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              LinearProgressIndicator(
-                value: today.planCompleted ? 1 : progress,
+              Semantics(
+                label: today.planCompleted
+                    ? '讀經計畫已完成'
+                    : '今日讀經進度 ${today.completed}／$total 章',
+                child: ExcludeSemantics(
+                  child: LinearProgressIndicator(
+                    value: today.planCompleted ? 1 : progress,
+                  ),
+                ),
               ),
             ],
           ),

@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:bible_app/models/models.dart';
+import 'package:bible_app/data/reading_plans.dart';
 import 'package:bible_app/providers/providers.dart';
 import 'package:bible_app/screens/bible_hub_screen.dart';
 import 'package:bible_app/screens/chapter_screen.dart';
 import 'package:bible_app/screens/student_home_screen.dart';
+import 'package:bible_app/services/reading_plan_today.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,13 +75,13 @@ void _phone(WidgetTester tester) {
   addTearDown(tester.view.resetDevicePixelRatio);
 }
 
-List<Override> _overrides(_FakeStore store) => [
+List<Override> _overrides(_FakeStore store, {ReadingPlanToday? today}) => [
   lastReadStoreProvider.overrideWithValue(store),
   booksProvider.overrideWith((ref) async => _books),
   databaseServiceProvider.overrideWithValue(FakeNotesDb([])),
   publishedDailyVerseProvider.overrideWith((ref) async => null),
   dailyVerseProvider.overrideWith((ref) async => null),
-  readingPlanTodayProvider.overrideWith((ref) async => null),
+  readingPlanTodayProvider.overrideWith((ref) async => today),
   churchOnboardingVisibleProvider.overrideWith((ref) async => false),
   chapterAnnotationProvider.overrideWith(
     (ref, args) async =>
@@ -103,6 +105,33 @@ ProviderContainer _container(WidgetTester tester) =>
     ProviderScope.containerOf(tester.element(find.byType(StudentHomeScreen)));
 
 void main() {
+  testWidgets('375px 今日讀經進度可由讀屏辨識完成章數', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final today = ReadingPlanToday(
+      plan: readingPlans.first,
+      day: 1,
+      chapters: const [ChapterRef(1, 1), ChapterRef(1, 2)],
+      completed: 1,
+      planCompleted: false,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(_FakeStore(null), today: today),
+        child: const MaterialApp(home: Scaffold(body: StudentHomeScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text(today.plan.name), 220);
+    await tester.pumpAndSettle();
+
+    final progress = find.byType(LinearProgressIndicator);
+    expect(progress, findsOneWidget);
+    expect(tester.getSemantics(progress).label, contains('今日讀經進度 1／2 章'));
+    handle.dispose();
+  });
+
   testWidgets('375px 位置讀取中：顯示載入中，不出現「開始第一次閱讀」；讀到後顯示繼續閱讀', (tester) async {
     _phone(tester);
     final handle = tester.ensureSemantics();
