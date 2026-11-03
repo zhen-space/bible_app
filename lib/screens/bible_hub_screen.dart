@@ -17,6 +17,7 @@ class BibleHubScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final lastRead = ref.watch(lastReadProvider);
+    final lastReadLoad = ref.watch(lastReadLoadProvider);
     final books = ref.watch(booksProvider).value;
     final outline = Theme.of(context).colorScheme.outline;
 
@@ -40,6 +41,19 @@ class BibleHubScreen extends ConsumerWidget {
           // ---- 閱讀 ----
           _sectionTitle(context, '閱讀'),
           const SizedBox(height: 10),
+          if (lastRead == null && lastReadLoad == LastReadLoad.loading) ...[
+            Semantics(
+              label: '正在載入上次閱讀位置',
+              child: const LinearProgressIndicator(minHeight: 2),
+            ),
+            const SizedBox(height: 10),
+          ] else if (lastRead == null &&
+              lastReadLoad == LastReadLoad.failed) ...[
+            _LastReadLoadError(
+              onRetry: () => ref.read(lastReadProvider.notifier).reload(),
+            ),
+            const SizedBox(height: 10),
+          ],
           // 存的位置對不上目前的聖經資料（舊資料損壞）就不顯示，不讓頁面當掉。
           if (lastRead != null &&
               books != null &&
@@ -103,6 +117,32 @@ class BibleHubScreen extends ConsumerWidget {
           trailing: const Icon(Icons.chevron_right),
           onTap: () => Navigator.of(context)
               .push(MaterialPageRoute(builder: (_) => screen())),
+        ),
+      );
+}
+
+class _LastReadLoadError extends StatelessWidget {
+  const _LastReadLoadError({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        label: '上次閱讀位置暫時無法載入',
+        container: true,
+        excludeSemantics: true,
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(
+              children: [
+                const Icon(Icons.error_outline),
+                const SizedBox(width: 10),
+                const Expanded(child: Text('上次閱讀位置暫時無法載入')),
+                TextButton(onPressed: onRetry, child: const Text('再試一次')),
+              ],
+            ),
+          ),
         ),
       );
 }

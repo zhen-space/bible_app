@@ -216,6 +216,54 @@ void main() {
     expect(find.text('閱讀聖經'), findsOneWidget);
   });
 
+  testWidgets('375px 聖經頁位置讀取中：不閃出錯誤的繼續閱讀卡', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final store = _FakeStore('43:3:120.0')..gate = Completer<void>();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(store),
+        child: const MaterialApp(home: Scaffold(body: BibleHubScreen())),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.bySemanticsLabel('正在載入上次閱讀位置'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsNothing);
+
+    store.gate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('約翰福音 第 3 章'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsOneWidget);
+    handle.dispose();
+  });
+
+  testWidgets('375px 聖經頁位置讀取失敗：顯示可朗讀錯誤並可重試', (tester) async {
+    _phone(tester);
+    final handle = tester.ensureSemantics();
+    final store = _FakeStore('43:2:0.0')..failRead = true;
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: _overrides(store),
+        child: const MaterialApp(home: Scaffold(body: BibleHubScreen())),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.bySemanticsLabel('上次閱讀位置暫時無法載入'), findsOneWidget);
+    expect(find.text('回到上次閱讀位置'), findsNothing);
+
+    store.failRead = false;
+    await tester.tap(find.widgetWithText(TextButton, '再試一次'));
+    await tester.pumpAndSettle();
+    expect(find.text('約翰福音 第 2 章'), findsOneWidget);
+    expect(store.reads, 2);
+    handle.dispose();
+  });
+
   testWidgets('375px 格式壞掉的舊位置：當作沒有位置，不顯示錯誤', (tester) async {
     _phone(tester);
     final store = _FakeStore('abc');
