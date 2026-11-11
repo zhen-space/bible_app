@@ -18,6 +18,7 @@ const List<BibleEntity> entities = [
   BibleEntity('亞當', EntityType.person),
   BibleEntity('夏娃', EntityType.person),
   BibleEntity('挪亞', EntityType.person),
+  BibleEntity('瑪挪亞', EntityType.person),
   BibleEntity('亞伯拉罕', EntityType.person, aka: ['亞伯蘭']),
   BibleEntity('以撒', EntityType.person),
   BibleEntity('雅各', EntityType.person, aka: ['以色列']),
@@ -34,11 +35,17 @@ const List<BibleEntity> entities = [
   BibleEntity('所羅門', EntityType.person),
   BibleEntity('以利亞', EntityType.person),
   BibleEntity('以利亞撒', EntityType.person), // Eleazar，勿與「以利亞」混（最長匹配靠它）
+  BibleEntity('以利亞實', EntityType.person),
+  BibleEntity('以利亞敬', EntityType.person),
+  BibleEntity('以利亞薩', EntityType.person),
   BibleEntity('以利沙', EntityType.person),
+  BibleEntity('以利沙瑪', EntityType.person),
   BibleEntity('以賽亞', EntityType.person),
   BibleEntity('耶利米', EntityType.person),
   BibleEntity('但以理', EntityType.person),
   BibleEntity('約拿', EntityType.person),
+  BibleEntity('約拿單', EntityType.person),
+  BibleEntity('約拿達', EntityType.person),
   BibleEntity('以斯帖', EntityType.person),
   BibleEntity('尼希米', EntityType.person),
   BibleEntity('以斯拉', EntityType.person),
@@ -54,13 +61,19 @@ const List<BibleEntity> entities = [
   BibleEntity('馬大', EntityType.person),
   // 地點
   BibleEntity('伊甸園', EntityType.place),
+  BibleEntity('雅各井', EntityType.place),
+  BibleEntity('約瑟門', EntityType.place),
+  BibleEntity('大衛城', EntityType.place),
   BibleEntity('埃及', EntityType.place),
   BibleEntity('迦南', EntityType.place),
   BibleEntity('西奈', EntityType.place, aka: ['西乃']),
+  BibleEntity('西奈山', EntityType.place, aka: ['西乃山']),
   BibleEntity('耶路撒冷', EntityType.place),
   BibleEntity('伯利恆', EntityType.place),
   BibleEntity('拿撒勒', EntityType.place),
   BibleEntity('加利利', EntityType.place),
+  BibleEntity('加利利海', EntityType.place),
+  BibleEntity('撒馬利亞', EntityType.place),
   BibleEntity('約旦河', EntityType.place, aka: ['約但河']),
   BibleEntity('巴比倫', EntityType.place),
   BibleEntity('尼尼微', EntityType.place),
@@ -68,6 +81,7 @@ const List<BibleEntity> entities = [
   BibleEntity('羅馬', EntityType.place),
   BibleEntity('哥林多', EntityType.place),
   BibleEntity('以弗所', EntityType.place),
+  BibleEntity('撒挪亞', EntityType.place),
   // 事件
   BibleEntity('創造', EntityType.event),
   BibleEntity('洪水', EntityType.event, aka: ['方舟']),
@@ -89,10 +103,12 @@ List<BibleEntity> searchEntities(String query) {
   final q = query.trim();
   if (q.isEmpty) return const [];
   return entities
-      .where((e) =>
-          e.name.contains(q) ||
-          q.contains(e.name) ||
-          e.aka.any((a) => a.contains(q) || q.contains(a)))
+      .where(
+        (e) =>
+            e.name.contains(q) ||
+            q.contains(e.name) ||
+            e.aka.any((a) => a.contains(q) || q.contains(a)),
+      )
       .toList();
 }
 
@@ -152,10 +168,12 @@ bool queryOnlyInsideLongerName(String text, String query) {
   final names = properNameMatches(text);
   var idx = text.indexOf(q);
   while (idx >= 0) {
-    final insideLonger = names.any((m) =>
-        m.start <= idx &&
-        idx + q.length <= m.end &&
-        (m.end - m.start) > q.length);
+    final insideLonger = names.any(
+      (m) =>
+          m.start <= idx &&
+          idx + q.length <= m.end &&
+          (m.end - m.start) > q.length,
+    );
     if (!insideLonger) return false; // 有一次獨立出現（或就是該專名本身）
     idx = text.indexOf(q, idx + 1);
   }
